@@ -10,6 +10,7 @@ struct ManifestEntry { path: String, sha256: String }
 
 pub fn write_workspace(relative:&str,content_b64:&str)->Result<()>{
     validate(relative)?;
+    if is_reserved(relative) { return Err(anyhow!("reserved workspace path")); }
     let bytes=base64::engine::general_purpose::STANDARD.decode(content_b64)?;
     if bytes.len()>4*1024*1024{return Err(anyhow!("workspace file exceeds 4 MiB"));}
     let root=open_dir("/workspace")?;
@@ -52,7 +53,8 @@ pub fn diff_workspace()->Result<serde_json::Value>{
         if meta.file_type().is_symlink(){return Err(anyhow!("workspace contains symlink: {}",item.path().display()));}
         if meta.is_dir(){continue;}if !meta.is_file(){return Err(anyhow!("workspace contains special file"));}
         let path=item.path().strip_prefix(root)?.to_string_lossy().replace('\\',"/");
-        if path.starts_with(".light-agent-"){continue;}validate(&path)?;
+        if is_reserved(&path) { continue; }
+        validate(&path)?;
         if meta.len()>4*1024*1024{return Err(anyhow!("workspace file exceeds 4 MiB"));}
         let mut bytes=Vec::new();fs::File::open(item.path())?.take(4*1024*1024+1).read_to_end(&mut bytes)?;
         if bytes.len()>4*1024*1024{return Err(anyhow!("workspace file grew beyond limit"));}
@@ -67,6 +69,9 @@ pub fn diff_workspace()->Result<serde_json::Value>{
     Ok(serde_json::json!({"changes":changes}))
 }
 
+fn is_reserved(path:&str)->bool {
+    path.split('/').any(|part| part==".git" || part==".light-agent" || part.starts_with(".light-agent-"))
+}
 fn validate(path:&str)->Result<()>{
     if path.is_empty()||path.len()>1024||path.starts_with('/')||path.contains('\0')||path.contains('\\'){return Err(anyhow!("invalid relative path"));}
     for part in Path::new(path).components(){if !matches!(part,std::path::Component::Normal(_)){return Err(anyhow!("path traversal rejected"));}}
@@ -97,4 +102,12 @@ fn open_dir_chain(root_fd:i32,parts:&[&str])->Result<fs::File>{
 const RESOLVE_NO_MAGICLINKS:u64=0x02;const RESOLVE_NO_SYMLINKS:u64=0x04;const RESOLVE_BENEATH:u64=0x08;
 
 #[cfg(test)]
-mod tests{use super::*;#[test]fn rejects_parent_paths(){assert!(validate("../etc/passwd").is_err());}#[test]fn rejects_absolute_paths(){assert!(validate("/etc/passwd").is_err());}#[test]fn accepts_relative_paths(){assert!(validate("src/main.c").is_ok());}}
+mod tests {
+    use super::*;
+    #[test] fn rejects_parent_paths(){assert!(validate("../etc/passwd").is_err());}
+    #[test] fn rejects_absolute_paths(){assert!(validate("/etc/passwd").is_err());}
+    #[test] fn accepts_relative_paths(){assert!(validate("src/main.c").is_ok());}
+    #[test] fn excludes_git_metadata(){assert!(is_reserved(".git/config"));}
+    #[test] fn excludes_light_agent_metadata(){assert!(is_reserved(".light-agent/state"));}
+    #[test] fn allows_normal_dotfiles(){assert!(!is_reserved(".github/workflows/ci.yml"));}
+}

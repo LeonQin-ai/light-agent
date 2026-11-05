@@ -122,7 +122,8 @@ impl AppState {
         loop{
             if tokio::time::Instant::now()>=health_deadline{return Err(anyhow!("Guest Agent did not become ready on vsock port 5000"));}
             if let Ok(reply)=vsock::request(&record.vsock_path,5000,serde_json::json!({"op":"health"})).await{
-                if reply.get("ok").and_then(|v|v.as_bool())==Some(true){break;}
+                if reply.get("ok").and_then(|v|v.as_bool())==Some(true)
+                && reply.get("result").and_then(|v|v.get("cognitive_ready")).and_then(|v|v.as_bool())==Some(true) { break; }
             }
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }

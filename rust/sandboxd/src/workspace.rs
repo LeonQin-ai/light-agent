@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use base64::Engine;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::{fs, io::{Read, Write}, os::fd::{AsRawFd, FromRawFd}, path::{Path, PathBuf}};
+use std::{fs, io::{Read, Write}, os::fd::{AsRawFd, FromRawFd}, path::Path};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -115,7 +115,7 @@ fn open_parent(root_fd: i32, path: &str) -> Result<(fs::File, String)> {
     let c = std::ffi::CString::new(parent.to_string_lossy().as_bytes())?;
     let how = OpenHow { flags: (libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64, mode: 0, resolve: RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS };
     let fd = unsafe { libc::syscall(libc::SYS_openat2, root_fd, c.as_ptr(), &how, std::mem::size_of::<OpenHow>()) as i32 };
-    if fd < 0 { return Err(std::io::Error::last_os_error().context("open workspace parent")); }
+    if fd < 0 { return Err(anyhow!("open workspace parent: {}", std::io::Error::last_os_error())); }
     Ok((unsafe { fs::File::from_raw_fd(fd) }, basename))
 }
 fn hash_at(parent_fd: i32, name: &str) -> Result<Option<String>> {
@@ -145,6 +145,9 @@ fn lock_workspace(root_fd: i32) -> Result<fs::File> {
 fn validate_relative(path: &str) -> Result<()> {
     if path.is_empty() || path.len() > 1024 || path.starts_with('/') || path.contains('\0') || path.contains('\\') {
         return Err(anyhow!("invalid relative path"));
+    }
+    if path.split('/').any(|part| part == ".git" || part == ".light-agent" || part.starts_with(".light-agent-")) {
+        return Err(anyhow!("reserved workspace metadata path"));
     }
     for part in Path::new(path).components() {
         if !matches!(part, std::path::Component::Normal(_)) { return Err(anyhow!("path traversal rejected")); }
