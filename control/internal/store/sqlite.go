@@ -86,17 +86,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_id ON runtime_instances(runtime_id
 func (s *SQLite) ensureColumn(ctx context.Context, table, column, definition string) error {
 	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+table+")")
 	if err != nil { return fmt.Errorf("inspect %s schema: %w", table, err) }
-	defer rows.Close()
+	found := false
 	for rows.Next() {
 		var cid, notNull, primaryKey int
 		var name, dataType string
 		var defaultValue sql.NullString
 		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
 			return fmt.Errorf("read %s schema: %w", table, err)
 		}
-		if name == column { return nil }
+		if name == column { found = true; break }
 	}
-	if err := rows.Err(); err != nil { return fmt.Errorf("iterate %s schema: %w", table, err) }
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate %s schema: %w", table, err)
+	}
+	if err := rows.Close(); err != nil { return fmt.Errorf("close %s schema query: %w", table, err) }
+	if found { return nil }
 	if _, err := s.db.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column+" "+definition); err != nil {
 		return fmt.Errorf("add %s.%s: %w", table, column, err)
 	}
