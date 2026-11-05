@@ -1,3 +1,26 @@
 package feishu
-import("net/http";"net/http/httptest";"path/filepath";"strings";"testing";"github.com/LeonQin-ai/light-agent/control/internal/store")
-func TestURLVerification(t *testing.T){s,e:=store.Open(filepath.Join(t.TempDir(),"db"));if e!=nil{t.Fatal(e)};defer s.Close();h:=New(s,Config{Token:"token",EncryptKey:"key",Allowed:map[string]struct{}{"ou_ok":{}}});r:=httptest.NewRequest(http.MethodPost,"/webhooks/feishu",strings.NewReader(`{"type":"url_verification","token":"token","challenge":"abc"}`));w:=httptest.NewRecorder();h.ServeHTTP(w,r);if w.Code!=200||!strings.Contains(w.Body.String(),"abc"){t.Fatalf("response %d %s",w.Code,w.Body.String())}}
+
+import(
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/LeonQin-ai/light-agent/control/internal/store"
+)
+
+func TestURLVerification(t *testing.T){
+	st,err:=store.Open(filepath.Join(t.TempDir(),"feishu.db"));if err!=nil{t.Fatal(err)};defer st.Close()
+	handler:=New(st,Config{Token:"verify-token",EncryptKey:"encrypt-key",Allowed:map[string]struct{}{"ou_allowed":{}}})
+	req:=httptest.NewRequest(http.MethodPost,"/webhooks/feishu",strings.NewReader(`{"type":"url_verification","token":"verify-token","challenge":"challenge-123"}`))
+	res:=httptest.NewRecorder();handler.ServeHTTP(res,req)
+	if res.Code!=http.StatusOK||!strings.Contains(res.Body.String(),"challenge-123"){t.Fatalf("unexpected response: status=%d body=%s",res.Code,res.Body.String())}
+}
+func TestWebhookDisabledWithoutAllowlist(t *testing.T){
+	st,err:=store.Open(filepath.Join(t.TempDir(),"feishu.db"));if err!=nil{t.Fatal(err)};defer st.Close()
+	handler:=New(st,Config{Token:"token",EncryptKey:"key"})
+	req:=httptest.NewRequest(http.MethodPost,"/webhooks/feishu",strings.NewReader("{}"))
+	res:=httptest.NewRecorder();handler.ServeHTTP(res,req)
+	if res.Code!=http.StatusServiceUnavailable{t.Fatalf("status=%d, want 503",res.Code)}
+}

@@ -1,14 +1,15 @@
 # Implementation roadmap
 
-| Milestone | Scope | Exit criteria |
+| Milestone | Scope | Status / exit criteria |
 |---|---|---|
-| M0 | Repo baseline, dependency pin, models, lifecycle/RPC contracts, CI | Reproducible build/test and versioned contracts |
-| M1 | Feishu ingress, durable inbox, Agent Registry, Task API, audit, Mock Coordinator | Duplicate events/tasks idempotent; ACK after durable commit |
-| M2 | C11 SuperAgent cold sleep/wake | Memory/Session/Journal restore, single-flight, generation fencing |
-| M3 | Rust cos-sandboxd + Firecracker/Jailer | Per-VM cgroup/TAP/vsock/volume, Guest ready, cleanup |
-| M4 | Rust Guest cos-execd | cgroup v2, namespaces, seccomp, limits, cancellation, fail-closed |
-| M5 | Host File Broker | vsock, read-only source, private overlay, path defense, diff commit |
-| M6 | Multi-Agent DAG | concurrency/depth/budget limits, cancellation, conflict handling |
-| M7 | Snapshot and warm-pool | compatibility, cold-boot fallback, tenant-clean pool, P50/P95 |
+| M0 | Repo baseline, dependency pin, models, lifecycle/RPC contracts, CI | Implemented baseline; CI green |
+| M1 | Feishu ingress, durable inbox, Agent Registry, Task API, audit, Mock Coordinator | Initial implementation; idempotency, cancellation guards and CI tests |
+| M2a | Durable Runtime registry and lifecycle contract | Implemented: single-flight reservation, generation fencing, sleep admission, injectable Driver |
+| M2b | Restricted C11 SuperAgent driver | Pending: isolate C11 tool capabilities, persistent state restore, task submission and graceful shutdown |
+| M3 | Rust cos-sandboxd + Firecracker/Jailer | Pending: per-VM cgroup/TAP/vsock/volume, Guest ready handshake, deterministic cleanup |
+| M4 | Rust Guest cos-execd | Pending: cgroup v2, namespaces, seccomp, limits, cancellation and fail-closed |
+| M5 | Host File Broker | Pending: vsock protocol, read-only source, private overlay, path/symlink defense and diff commit |
+| M6 | Multi-Agent DAG | Pending: concurrency/depth/budget limits, cancellation propagation and conflict handling |
+| M7 | Snapshot and warm-pool optimization | Deferred: compatibility checks, cold-boot fallback, tenant-clean pool and P50/P95 measurement |
 
-Before production validate on real Linux/KVM: Firecracker/Jailer and Guest kernel compatibility, cgroup v2, seccomp, vsock reconnect/cancel, File Broker traversal/symlink/race defense, Guest escape and resource exhaustion.
+Before production validate on a real Linux/KVM host: Firecracker/Jailer and Guest kernel compatibility, Host and Guest cgroup v2, seccomp compatibility, vsock reconnect/cancellation, File Broker traversal/symlink/race defenses, Guest escape and resource exhaustion.

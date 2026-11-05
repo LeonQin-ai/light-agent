@@ -1,0 +1,51 @@
+package lifecycle
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"testing"
+
+	"github.com/LeonQin-ai/light-agent/control/internal/model"
+	"github.com/LeonQin-ai/light-agent/control/internal/store"
+)
+
+type fakeDriver struct{ starts,stops int; startErr,stopErr error }
+func(f *fakeDriver)Start(context.Context,model.Agent,model.Runtime)error{f.starts++;return f.startErr}
+func(f *fakeDriver)Stop(context.Context,model.Agent,model.Runtime)error{f.stops++;return f.stopErr}
+
+func TestWakeIsSingleFlightAndSleepIsGuarded(t *testing.T){
+	st,err:=store.Open(filepath.Join(t.TempDir(),"lifecycle.db"));if err!=nil{t.Fatal(err)};defer st.Close()
+	ctx:=context.Background();agent,err:=st.CreateAgent(ctx,"tenant","supervisor");if err!=nil{t.Fatal(err)}
+	driver:=&fakeDriver{};manager:=New(st,driver)
+	first,err:=manager.Wake(ctx,agent.ID);if err!=nil{t.Fatal(err)}
+	second,err:=manager.Wake(ctx,agent.ID);if err!=nil{t.Fatal(err)}
+	if driver.starts!=1||first.ID!=second.ID||second.State!=model.RuntimeReady{t.Fatalf("wake not single-flight: starts=%d first=%+v second=%+v",driver.starts,first,second)}
+	if _,err=st.CreateTask(ctx,agent.ID,"queued","{}");err!=nil{t.Fatal(err)}
+	if _,err=manager.Sleep(ctx,agent.ID);!errors.Is(err,store.ErrConflict){t.Fatalf("sleep with queued task err=%v, want conflict",err)}
+	task,err:=st.ClaimNextTask(ctx);if err!=nil{t.Fatal(err)}
+	if err=st.SetAgentState(ctx,agent.ID,model.AgentActive);err!=nil{t.Fatal(err)}
+	if err=st.CompleteTask(ctx,task.ID,"ok");err!=nil{t.Fatal(err)}
+	stopped,err:=manager.Sleep(ctx,agent.ID);if err!=nil{t.Fatal(err)}
+	if driver.stops!=1||stopped.State!=model.RuntimeStopped{t.Fatalf("sleep failed: stops=%d runtime=%+v",driver.stops,stopped)}
+}
+
+func TestWakeFailureCanRetryWithNewGeneration(t *testing.T){
+	st,err:=store.Open(filepath.Join(t.TempDir(),"retry.db"));if err!=nil{t.Fatal(err)};defer st.Close()
+	ctx:=context.Background();agent,err:=st.CreateAgent(ctx,"tenant","supervisor");if err!=nil{t.Fatal(err)}
+	driver:=&fakeDriver{startErr:errors.New("boot failed")};manager:=New(st,driver)
+	if _,err=manager.Wake(ctx,agent.ID);err==nil{t.Fatal("expected start failure")}
+	driver.startErr=nil
+	runtime,err:=manager.Wake(ctx,agent.ID);if err!=nil{t.Fatal(err)}
+	if runtime.State!=model.RuntimeReady||runtime.Generation!=2{t.Fatalf("retry did not advance generation: %+v",runtime)}
+}
+
+func TestStaleRuntimeCannotBecomeReady(t *testing.T){
+	st,err:=store.Open(filepath.Join(t.TempDir(),"stale.db"));if err!=nil{t.Fatal(err)};defer st.Close()
+	ctx:=context.Background();agent,err:=st.CreateAgent(ctx,"tenant","supervisor");if err!=nil{t.Fatal(err)}
+	old,started,err:=st.BeginWake(ctx,agent.ID);if err!=nil||!started{t.Fatalf("begin wake: %v %v",started,err)}
+	if err=st.FailRuntime(ctx,old,"simulated crash");err!=nil{t.Fatal(err)}
+	current,started,err:=st.BeginWake(ctx,agent.ID);if err!=nil||!started{t.Fatalf("retry wake: %v %v",started,err)}
+	if err=st.MarkRuntimeReady(ctx,old);!errors.Is(err,store.ErrConflict){t.Fatalf("stale generation accepted: %v",err)}
+	if err=st.MarkRuntimeReady(ctx,current);err!=nil{t.Fatal(err)}
+}
