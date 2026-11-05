@@ -2,6 +2,7 @@ package httpapi
 
 import(
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -24,6 +25,8 @@ func TestAPITokenRequiredWhenConfigured(t *testing.T){
 	h:=newTestHandler(t,"test-secret")
 	req:=httptest.NewRequest(http.MethodPost,"/v1/agents",bytes.NewBufferString(`{"tenant_id":"tenant-1"}`))
 	res:=httptest.NewRecorder();h.ServeHTTP(res,req);if res.Code!=401{t.Fatalf("unauthenticated status=%d",res.Code)}
+	req=httptest.NewRequest(http.MethodPost,"/v1/agents",bytes.NewBufferString(`{"tenant_id":"tenant-1"}`));req.Header.Set("Authorization","test-secret")
+	res=httptest.NewRecorder();h.ServeHTTP(res,req);if res.Code!=401{t.Fatalf("raw token without Bearer prefix status=%d",res.Code)}
 	req=httptest.NewRequest(http.MethodPost,"/v1/agents",bytes.NewBufferString(`{"tenant_id":"tenant-1"}`));req.Header.Set("Authorization","Bearer test-secret")
 	res=httptest.NewRecorder();h.ServeHTTP(res,req);if res.Code!=201{t.Fatalf("authenticated status=%d body=%s",res.Code,res.Body.String())}
 }
@@ -36,4 +39,15 @@ func TestNoHostExecEndpoint(t *testing.T){
 	h:=newTestHandler(t,"")
 	req:=httptest.NewRequest(http.MethodPost,"/v1/host/exec",bytes.NewBufferString(`{"command":"id"}`))
 	res:=httptest.NewRecorder();h.ServeHTTP(res,req);if res.Code!=404{t.Fatalf("unexpected Host exec route: %d",res.Code)}
+}
+
+func TestRuntimeWakeFailsClosedWithoutDriver(t *testing.T){
+	st,err:=store.Open(filepath.Join(t.TempDir(),"runtime.db"));if err!=nil{t.Fatal(err)};defer st.Close()
+	agent,err:=st.CreateAgent(context.Background(),"tenant-1","supervisor");if err!=nil{t.Fatal(err)}
+	handler:=New(st,nil,nil,"")
+	req:=httptest.NewRequest(http.MethodPost,"/v1/agents/"+agent.ID+"/wake",nil)
+	res:=httptest.NewRecorder();handler.ServeHTTP(res,req)
+	if res.Code!=http.StatusServiceUnavailable{t.Fatalf("wake status=%d body=%s",res.Code,res.Body.String())}
+	runtime,err:=st.GetRuntime(context.Background(),agent.ID);if err!=nil{t.Fatal(err)}
+	if runtime.State!="ABSENT"{t.Fatalf("failed-closed wake mutated runtime state: %+v",runtime)}
 }

@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_state_created ON tasks(state, created_at);
 CREATE TABLE IF NOT EXISTS event_inbox (
  event_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES agents(id),
- task_id TEXT NOT NULL REFERENCES tasks(id), received_at TEXT NOT NULL
+ task_id TEXT NOT NULL REFERENCES tasks(id), source TEXT NOT NULL DEFAULT 'feishu',
+ received_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS runtime_instances (
  agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
@@ -70,6 +71,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_id ON runtime_instances(runtime_id
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrate sqlite: %w", err)
+	}
+	// CREATE TABLE IF NOT EXISTS does not evolve databases created by earlier
+	// M1 builds. Add columns that newer queries require without dropping data.
+	if err := s.ensureColumn(ctx, "tasks", "error_code", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "event_inbox", "source", "TEXT NOT NULL DEFAULT 'feishu'"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLite) ensureColumn(ctx context.Context, table, column, definition string) error {
+	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil { return fmt.Errorf("inspect %s schema: %w", table, err) }
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("read %s schema: %w", table, err)
+		}
+		if name == column { return nil }
+	}
+	if err := rows.Err(); err != nil { return fmt.Errorf("iterate %s schema: %w", table, err) }
+	if _, err := s.db.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column+" "+definition); err != nil {
+		return fmt.Errorf("add %s.%s: %w", table, column, err)
 	}
 	return nil
 }
@@ -237,7 +266,7 @@ VALUES(?,'feishu:p2p','supervisor','IDLE',?,?,?,0,?,?,?,?)`,
 	_, err = tx.ExecContext(ctx, `INSERT INTO tasks(id,agent_id,request_id,state,payload,created_at,updated_at)
 VALUES(?,?,?,'QUEUED',?,?,?)`, taskID,agentID,eventID,string(payload),now,now)
 	if err != nil { return model.Task{}, false, err }
-	_, err = tx.ExecContext(ctx, "INSERT INTO event_inbox(event_id,agent_id,task_id,received_at) VALUES(?,?,?,?)", eventID,agentID,taskID,now)
+	_, err = tx.ExecContext(ctx, "INSERT INTO event_inbox(event_id,agent_id,task_id,source,received_at) VALUES(?,?,?,'feishu',?)", eventID,agentID,taskID,now)
 	if err != nil { return model.Task{}, false, err }
 	task, err := scanTask(tx.QueryRowContext(ctx, `SELECT id,agent_id,request_id,state,payload,result,error_code,created_at,updated_at FROM tasks WHERE id=?`, taskID))
 	if err != nil { return model.Task{}, false, err }
