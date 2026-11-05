@@ -1,0 +1,23 @@
+[Unit]
+Description=Cognitive OS SuperAgent Runtime (inside Firecracker Guest)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent
+Group=agent
+WorkingDirectory=/workspace
+EnvironmentFile=/etc/light-agent/guest.env
+ExecStart=/usr/local/bin/cognitive-os-agent --state /var/lib/cognitive-os-agent --workspace /workspace serve 8080
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/workspace /var/lib/cognitive-os-agent /home/agent /tmp
+ProtectHome=read-only
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
