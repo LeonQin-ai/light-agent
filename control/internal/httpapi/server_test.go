@@ -51,3 +51,12 @@ func TestRuntimeWakeFailsClosedWithoutDriver(t *testing.T){
 	runtime,err:=st.GetRuntime(context.Background(),agent.ID);if err!=nil{t.Fatal(err)}
 	if runtime.State!="ABSENT"{t.Fatalf("failed-closed wake mutated runtime state: %+v",runtime)}
 }
+
+func TestCreateAgentRejectsInvalidInput(t *testing.T){
+	h:=newTestHandler(t,"")
+	for _,body:=range []string{`{}`,`{"tenant_id":"tenant-1","role":"worker"}`}{
+		req:=httptest.NewRequest(http.MethodPost,"/v1/agents",bytes.NewBufferString(body))
+		res:=httptest.NewRecorder();h.ServeHTTP(res,req)
+		if res.Code!=http.StatusBadRequest{t.Fatalf("body=%s status=%d response=%s",body,res.Code,res.Body.String())}
+	}
+}

@@ -20,7 +20,7 @@ A hybrid Agent Operating Runtime built on Cognitive OS. Agent identity and memor
 5. Host files are exposed only through authorized broker capabilities; source is read-only by default.
 6. Agent Identity, Memory, Session, Task Journal, Workspace metadata and policy versions persist independently of processes and VM snapshots.
 
-## Current implementation
+See [docs/cognitive-os-integration.md](docs/cognitive-os-integration.md) for the pinned C11 adapter boundary and required Host capability restrictions.\n\n## Current implementation
 - M0: Go module, docs, protobuf contracts and CI.
 - M1: Go Control Plane, SQLite Agent/Task/Event inbox, Feishu direct-message ingress, idempotency and non-executing Mock Coordinator.
 - M2 foundation: durable Runtime records, single-flight wake reservation, generation fencing, sleep admission checks and injectable lifecycle Driver contract.

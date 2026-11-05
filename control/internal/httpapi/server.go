@@ -57,7 +57,10 @@ func(s *Server)health(w http.ResponseWriter,_ *http.Request){writeJSON(w,200,map
 func(s *Server)createAgent(w http.ResponseWriter,r *http.Request){
 	var req struct{TenantID string `json:"tenant_id"`;Role string `json:"role"`}
 	if err:=decodeJSON(w,r,&req);err!=nil{writeError(w,400,"invalid_request",err.Error());return}
-	agent,err:=s.store.CreateAgent(r.Context(),strings.TrimSpace(req.TenantID),strings.TrimSpace(req.Role))
+	tenantID,role:=strings.TrimSpace(req.TenantID),strings.TrimSpace(req.Role)
+	if tenantID==""{writeError(w,400,"invalid_request","tenant_id is required");return}
+	if role!=""&&role!="supervisor"{writeError(w,400,"invalid_request","only supervisor identities may be created through this API");return}
+	agent,err:=s.store.CreateAgent(r.Context(),tenantID,role)
 	if err!=nil{writeStoreError(w,err);return}
 	writeJSON(w,201,agent)
 }
