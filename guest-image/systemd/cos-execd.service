@@ -1,0 +1,23 @@
+[Unit]
+Description=Light Agent Guest Executor over virtio-vsock
+After=local-fs.target
+Before=cognitive-os-agent.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=/etc/light-agent/guest.env
+Environment=COSEXECD_CGROUP_ROOT=/sys/fs/cgroup/system.slice/cos-execd.service
+ExecStart=/usr/local/bin/cos-execd --port 5000
+Restart=always
+RestartSec=1
+Delegate=yes
+NoNewPrivileges=no
+ProtectSystem=strict
+ReadWritePaths=/workspace /var/lib/light-agent /sys/fs/cgroup/system.slice/cos-execd.service
+PrivateTmp=yes
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

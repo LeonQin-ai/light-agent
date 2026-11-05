@@ -1,4 +1,4 @@
-name: Go CI
+name: Go and Rust CI
 on:
   push:
     branches: ["main", "feat/**"]
@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 jobs:
-  test:
+  go:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,3 +19,10 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
       - run: go build ./control/cmd/light-agentd
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --manifest-path rust/Cargo.toml --workspace
+      - run: cargo build --manifest-path rust/Cargo.toml --workspace --release

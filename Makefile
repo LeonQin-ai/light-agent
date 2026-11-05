@@ -1,5 +1,7 @@
 GO ?= go
-.PHONY: test build run fmt vet
+CARGO ?= cargo
+.PHONY: test build run fmt vet rust-test rust-build
+
 test:
 	$(GO) test ./...
 build:
@@ -10,3 +12,7 @@ fmt:
 	gofmt -w $$(find control -name '*.go')
 vet:
 	$(GO) vet ./...
+rust-test:
+	$(CARGO) test --manifest-path rust/Cargo.toml --workspace
+rust-build:
+	$(CARGO) build --manifest-path rust/Cargo.toml --workspace --release
