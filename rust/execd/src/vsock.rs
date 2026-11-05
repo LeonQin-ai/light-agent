@@ -13,7 +13,7 @@ pub fn serve(port:u32)->Result<()>{
     if fd<0{return Err(std::io::Error::last_os_error().into());}
     let addr=SockAddrVm{family:libc::AF_VSOCK as u16,reserved1:0,port,cid:u32::MAX,flags:0,zero:[0;3]};
     let rc=unsafe{libc::bind(fd,&addr as *const _ as *const libc::sockaddr,std::mem::size_of::<SockAddrVm>() as libc::socklen_t)};
-    if rc<0{unsafe{libc::close(fd)};return Err(std::io::Error::last_os_error().context("bind AF_VSOCK"));}
+    if rc<0{unsafe{libc::close(fd)};return Err(std::io::Error::last_os_error()).context("bind AF_VSOCK");}
     if unsafe{libc::listen(fd,128)}<0{unsafe{libc::close(fd)};return Err(std::io::Error::last_os_error().into());}
     loop{
         let client=unsafe{libc::accept4(fd,std::ptr::null_mut(),std::ptr::null_mut(),libc::SOCK_CLOEXEC)};

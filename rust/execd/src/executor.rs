@@ -31,7 +31,7 @@ pub fn execute(req:ExecRequest)->Result<ExecResponse>{
         });
     }
     let mut child=command.spawn().with_context(||format!("spawn {}",req.executable))?;
-    let pid=child.id().ok_or_else(||anyhow!("child PID unavailable"))? as i32;
+    let pid=child.id() as i32;
     if let Some(path)=&cgroup{if let Err(e)=fs::write(path.join("cgroup.procs"),pid.to_string()){unsafe{libc::kill(-pid,libc::SIGKILL);}let _=child.wait();let _=fs::remove_dir(path);return Err(e).context("attach task to cgroup");}}
     let stdout=child.stdout.take().unwrap();let stderr=child.stderr.take().unwrap();
     let out_thread=thread::spawn(move||read_bounded(stdout,output_limit));let err_thread=thread::spawn(move||read_bounded(stderr,output_limit));
@@ -50,7 +50,7 @@ fn prepare_cgroup(memory:u64,pids:u64,cpu:u64)->Result<Option<std::path::PathBuf
     Ok(Some(path))
 }
 fn read_bounded<R:Read>(mut reader:R,limit:usize)->Vec<u8>{let mut out=Vec::new();let mut buf=[0u8;8192];loop{match reader.read(&mut buf){Ok(0)|Err(_)=>break,Ok(n)=>{let keep=limit.saturating_sub(out.len()).min(n);out.extend_from_slice(&buf[..keep]);}}}out}
-fn set_limit(resource:i32,value:u64)->std::io::Result<()>{let lim=libc::rlimit{rlim_cur:value as libc::rlim_t,rlim_max:value as libc::rlim_t};if unsafe{libc::setrlimit(resource,&lim)}!=0{Err(std::io::Error::last_os_error())}else{Ok(())}}
+fn set_limit(resource:u32,value:u64)->std::io::Result<()>{let lim=libc::rlimit{rlim_cur:value as libc::rlim_t,rlim_max:value as libc::rlim_t};if unsafe{libc::setrlimit(resource,&lim)}!=0{Err(std::io::Error::last_os_error())}else{Ok(())}}
 #[cfg(target_os="linux")]
 fn install_seccomp()->std::io::Result<()>{
     let denied:&[i64]=&[libc::SYS_mount,libc::SYS_umount2,libc::SYS_pivot_root,libc::SYS_ptrace,libc::SYS_bpf,libc::SYS_kexec_load,libc::SYS_init_module,libc::SYS_finit_module,libc::SYS_delete_module,libc::SYS_reboot,libc::SYS_swapon,libc::SYS_swapoff,libc::SYS_open_by_handle_at,libc::SYS_userfaultfd,libc::SYS_perf_event_open,libc::SYS_keyctl,libc::SYS_add_key,libc::SYS_request_key,libc::SYS_setns];
