@@ -1,0 +1,19 @@
+syntax = "proto3";
+package lightagent.v1;
+option go_package = "github.com/LeonQin-ai/light-agent/gen/lightagent/v1;lightagentv1";
+// VM lifecycle only. Never add Host command execution here.
+service SandboxManager {
+  rpc CreateVM(CreateVMRequest) returns (VM);
+  rpc StartVM(VMRequest) returns (Operation);
+  rpc StopVM(VMRequest) returns (Operation);
+  rpc DestroyVM(VMRequest) returns (Operation);
+  rpc GetVM(VMRequest) returns (VM);
+  rpc SnapshotVM(VMRequest) returns (Snapshot);
+  rpc RestoreVM(RestoreRequest) returns (VM);
+}
+message CreateVMRequest { string worker_id=1; string image_digest=2; uint32 vcpu_count=3; uint64 memory_bytes=4; string workspace_volume_id=5; string network_policy_id=6; }
+message VMRequest { string vm_id=1; }
+message RestoreRequest { string snapshot_id=1; }
+message VM { string vm_id=1; string worker_id=2; string state=3; string vsock_path=4; string image_digest=5; }
+message Operation { string operation_id=1; string state=2; }
+message Snapshot { string snapshot_id=1; string vm_id=2; string state=3; }

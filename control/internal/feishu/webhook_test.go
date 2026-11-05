@@ -1,0 +1,3 @@
+package feishu
+import("net/http";"net/http/httptest";"path/filepath";"strings";"testing";"github.com/LeonQin-ai/light-agent/control/internal/store")
+func TestURLVerification(t *testing.T){s,e:=store.Open(filepath.Join(t.TempDir(),"db"));if e!=nil{t.Fatal(e)};defer s.Close();h:=New(s,Config{Token:"token",EncryptKey:"key",Allowed:map[string]struct{}{"ou_ok":{}}});r:=httptest.NewRequest(http.MethodPost,"/webhooks/feishu",strings.NewReader(`{"type":"url_verification","token":"token","challenge":"abc"}`));w:=httptest.NewRecorder();h.ServeHTTP(w,r);if w.Code!=200||!strings.Contains(w.Body.String(),"abc"){t.Fatalf("response %d %s",w.Code,w.Body.String())}}

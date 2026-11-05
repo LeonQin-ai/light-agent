@@ -1,0 +1,4 @@
+package httpapi
+import("bytes";"net/http";"net/http/httptest";"path/filepath";"testing";"github.com/LeonQin-ai/light-agent/control/internal/store")
+func TestAgentAndMessageAPI(t *testing.T){s,e:=store.Open(filepath.Join(t.TempDir(),"db"));if e!=nil{t.Fatal(e)};defer s.Close();h:=New(s,nil);r:=httptest.NewRequest(http.MethodPost,"/v1/agents",bytes.NewBufferString(`{"tenant_id":"t1"}`));w:=httptest.NewRecorder();h.ServeHTTP(w,r);if w.Code!=201{t.Fatalf("create: %d %s",w.Code,w.Body.String())}}
+func TestNoHostExecEndpoint(t *testing.T){s,e:=store.Open(filepath.Join(t.TempDir(),"db"));if e!=nil{t.Fatal(e)};defer s.Close();h:=New(s,nil);r:=httptest.NewRequest(http.MethodPost,"/v1/host/exec",bytes.NewBufferString(`{"command":"id"}`));w:=httptest.NewRecorder();h.ServeHTTP(w,r);if w.Code!=404{t.Fatalf("unexpected Host exec route: %d",w.Code)}}
