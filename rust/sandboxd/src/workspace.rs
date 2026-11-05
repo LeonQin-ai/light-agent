@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use base64::Engine;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -55,7 +55,7 @@ pub fn commit_file(root: &str, path: &str, expected: Option<&str>, content_b64: 
     let how = OpenHow { flags: (libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC) as u64, mode: 0o640, resolve: RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS };
     let fd = unsafe { libc::syscall(libc::SYS_openat2, parent_fd.as_raw_fd(), tmp_c.as_ptr(), &how, std::mem::size_of::<OpenHow>()) as i32 };
     if fd < 0 { return Err(std::io::Error::last_os_error().into()); }
-    let mut file = unsafe { fs::File::from_raw_fd(fd) };
+    let file = unsafe { fs::File::from_raw_fd(fd) };
     file.write_all(&bytes)?;
     file.sync_all()?;
     let target_c = std::ffi::CString::new(basename.as_str())?;
@@ -145,6 +145,9 @@ fn lock_workspace(root_fd: i32) -> Result<fs::File> {
 fn validate_relative(path: &str) -> Result<()> {
     if path.is_empty() || path.len() > 1024 || path.starts_with('/') || path.contains('\0') || path.contains('\\') {
         return Err(anyhow!("invalid relative path"));
+    }
+    if path.split('/').any(|part| part == ".git" || part == ".light-agent" || part.starts_with(".light-agent-")) {
+        return Err(anyhow!("reserved workspace metadata path"));
     }
     for part in Path::new(path).components() {
         if !matches!(part, std::path::Component::Normal(_)) { return Err(anyhow!("path traversal rejected")); }
