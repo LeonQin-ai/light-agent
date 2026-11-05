@@ -10,9 +10,9 @@ import (
 	"github.com/LeonQin-ai/light-agent/control/internal/store"
 )
 
-type fakeDriver struct{ starts,stops int; startErr,stopErr error }
-func(f *fakeDriver)Start(context.Context,model.Agent,model.Runtime)error{f.starts++;return f.startErr}
-func(f *fakeDriver)Stop(context.Context,model.Agent,model.Runtime)error{f.stops++;return f.stopErr}
+type fakeDriver struct{ starts,stops int; startErr,stopErr error; startGeneration,stopGeneration uint64; startAgentState,stopAgentState model.AgentState }
+func(f *fakeDriver)Start(_ context.Context,a model.Agent,r model.Runtime)error{f.starts++;f.startGeneration=a.Generation;f.startAgentState=a.State;return f.startErr}
+func(f *fakeDriver)Stop(_ context.Context,a model.Agent,r model.Runtime)error{f.stops++;f.stopGeneration=a.Generation;f.stopAgentState=a.State;return f.stopErr}
 
 func TestWakeIsSingleFlightAndSleepIsGuarded(t *testing.T){
 	st,err:=store.Open(filepath.Join(t.TempDir(),"lifecycle.db"));if err!=nil{t.Fatal(err)};defer st.Close()
@@ -21,6 +21,7 @@ func TestWakeIsSingleFlightAndSleepIsGuarded(t *testing.T){
 	first,err:=manager.Wake(ctx,agent.ID);if err!=nil{t.Fatal(err)}
 	second,err:=manager.Wake(ctx,agent.ID);if err!=nil{t.Fatal(err)}
 	if driver.starts!=1||first.ID!=second.ID||second.State!=model.RuntimeReady{t.Fatalf("wake not single-flight: starts=%d first=%+v second=%+v",driver.starts,first,second)}
+	if driver.startGeneration!=first.Generation||driver.startAgentState!=model.AgentWaking{t.Fatalf("driver received stale Agent generation/state: generation=%d state=%s runtime=%+v",driver.startGeneration,driver.startAgentState,first)}
 	if _,err=st.CreateTask(ctx,agent.ID,"queued","{}");err!=nil{t.Fatal(err)}
 	if _,err=manager.Sleep(ctx,agent.ID);!errors.Is(err,store.ErrConflict){t.Fatalf("sleep with queued task err=%v, want conflict",err)}
 	task,err:=st.ClaimNextTask(ctx);if err!=nil{t.Fatal(err)}
@@ -28,6 +29,7 @@ func TestWakeIsSingleFlightAndSleepIsGuarded(t *testing.T){
 	if err=st.CompleteTask(ctx,task.ID,"ok");err!=nil{t.Fatal(err)}
 	stopped,err:=manager.Sleep(ctx,agent.ID);if err!=nil{t.Fatal(err)}
 	if driver.stops!=1||stopped.State!=model.RuntimeStopped{t.Fatalf("sleep failed: stops=%d runtime=%+v",driver.stops,stopped)}
+	if driver.stopGeneration!=stopped.Generation||driver.stopAgentState!=model.AgentSleepPending{t.Fatalf("driver received stale sleep generation/state: generation=%d state=%s runtime=%+v",driver.stopGeneration,driver.stopAgentState,stopped)}
 }
 
 func TestWakeFailureCanRetryWithNewGeneration(t *testing.T){

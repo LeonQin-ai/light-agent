@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/LeonQin-ai/light-agent/control/internal/lifecycle"
+	"github.com/LeonQin-ai/light-agent/control/internal/model"
 	"github.com/LeonQin-ai/light-agent/control/internal/store"
 )
 
@@ -71,12 +72,16 @@ func(s *Server)getRuntime(w http.ResponseWriter,r *http.Request){
 func(s *Server)wakeAgent(w http.ResponseWriter,r *http.Request){
 	if s.manager==nil{writeError(w,503,"runtime_driver_unavailable","no trusted SuperAgent runtime driver is configured");return}
 	runtime,err:=s.manager.Wake(r.Context(),r.PathValue("id"));if err!=nil{writeLifecycleError(w,err);return}
-	writeJSON(w,200,runtime)
+	status:=http.StatusOK
+	if runtime.State==model.RuntimeStarting{status=http.StatusAccepted}
+	writeJSON(w,status,runtime)
 }
 func(s *Server)sleepAgent(w http.ResponseWriter,r *http.Request){
 	if s.manager==nil{writeError(w,503,"runtime_driver_unavailable","no trusted SuperAgent runtime driver is configured");return}
 	runtime,err:=s.manager.Sleep(r.Context(),r.PathValue("id"));if err!=nil{writeLifecycleError(w,err);return}
-	writeJSON(w,200,runtime)
+	status:=http.StatusOK
+	if runtime.State==model.RuntimeStopping{status=http.StatusAccepted}
+	writeJSON(w,status,runtime)
 }
 func(s *Server)submitMessage(w http.ResponseWriter,r *http.Request){
 	var req struct{RequestID string `json:"request_id"`;Content string `json:"content"`}

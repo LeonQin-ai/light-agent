@@ -26,6 +26,10 @@ func (m *Manager) Wake(ctx context.Context, agentID string) (model.Runtime,error
 	agent,err:=m.store.GetAgent(ctx,agentID);if err!=nil{return model.Runtime{},err}
 	runtime,started,err:=m.store.BeginWake(ctx,agentID);if err!=nil{return model.Runtime{},err}
 	if !started { return runtime,nil }
+	// BeginWake has already committed the new fencing generation. Pass that
+	// generation to the driver, not the stale Agent snapshot read beforehand.
+	agent.Generation=runtime.Generation
+	agent.State=model.AgentWaking
 	if err=m.driver.Start(ctx,agent,runtime);err!=nil {
 		_ = m.store.FailRuntime(context.WithoutCancel(ctx),runtime,err.Error())
 		return model.Runtime{},err
@@ -46,6 +50,8 @@ func (m *Manager) Sleep(ctx context.Context,agentID string)(model.Runtime,error)
 	agent,err:=m.store.GetAgent(ctx,agentID);if err!=nil{return model.Runtime{},err}
 	runtime,stopping,err:=m.store.BeginSleep(ctx,agentID);if err!=nil{return model.Runtime{},err}
 	if !stopping { return runtime,nil }
+	agent.Generation=runtime.Generation
+	agent.State=model.AgentSleepPending
 	if err=m.driver.Stop(ctx,agent,runtime);err!=nil {
 		_ = m.store.FailRuntime(context.WithoutCancel(ctx),runtime,err.Error())
 		return model.Runtime{},err
