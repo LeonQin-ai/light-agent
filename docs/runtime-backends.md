@@ -1,4 +1,4 @@
-# Runtime backends: Docker, hardened Sandbox and Firecracker
+# Risk-tiered execution: Container, MicroVM and WASM
 
 ## Decision for hosts without nested virtualization
 
@@ -6,15 +6,16 @@ A 4-vCPU/8-GiB VM without usable `/dev/kvm` cannot run Firecracker. Do not try t
 
 The word "Sandbox" is a security profile, not a synonym for Docker. A plain Docker container uses namespaces/cgroups and shares the host kernel. It is useful for packaging and ordinary isolation, but should not be described as a VM-strength boundary.
 
-## Supported deployment modes
+## Risk tiers and execution backends
 
-| Mode | Runtime | KVM required | Isolation properties | Intended use |
+| Risk tier | Execution boundary | KVM required | Intended use |
 |---|---|---:|---|---|
-| `docker` | Docker Engine + runc | No | OCI namespaces/cgroups, shared host kernel | Trusted tools, development, compatibility |
-| `sandbox` | Docker Engine + gVisor `runsc` | No for the standard ptrace platform | Userspace Sentry mediates guest syscalls; smaller host-kernel attack surface than runc | Untrusted Agent commands on nested-virt-disabled VMs |
-| `firecracker` | Firecracker + Jailer | Yes | Hardware-virtualized MicroVM boundary | Stronger isolation on KVM-capable hosts |
+| Trusted internal work | Docker Engine + runc | No | Approved internal tools and services; shared Host kernel |
+| External/untrusted code | Firecracker + Jailer | Yes | Independent Guest kernel; preferred strong boundary for arbitrary code |
+| Lightweight extensions | WASM runtime (Wasmtime/WasmEdge) | No | Capability-scoped plugins, transforms and compute functions |
+| Untrusted work without KVM | Docker Engine + gVisor `runsc` | No for the standard ptrace platform | Compatibility fallback only when policy explicitly permits; not equivalent to MicroVM |
 
-The `sandbox` mode must fail closed if `runsc` is requested but unavailable. It must not silently switch to `runc`. Firecracker likewise fails closed when KVM is unavailable.
+Backend selection is a security-policy decision, not a performance-only preference. A MicroVM-required task must fail closed or be routed to a remote KVM worker pool when local KVM is unavailable. It must never silently downgrade to runc or runsc. gVisor may be selected only when the task policy explicitly allows that weaker boundary. WASM is appropriate only when the task fits the WASI/capability model; it is not a drop-in replacement for arbitrary Linux processes.
 
 gVisor is still not a hardware VM: it shares the host kernel for the Sentry's host-facing operations and has compatibility/performance trade-offs. For high-risk multi-tenant workloads, use Firecracker on a KVM-capable host or a separate worker host.
 
@@ -23,7 +24,7 @@ gVisor is still not a hardware VM: it shares the host kernel for the Sentry's ho
 - Go Control Plane: Docker service; owns Agent identity, durable task queue, Feishu/API ingress, quotas and policy.
 - Cognitive OS SuperAgent: long-lived service/container; can plan, manage Agent identities and request approved capabilities. It has no Host shell, Docker socket or arbitrary Host filesystem access.
 - Rust Sandbox Manager: trusted Host-side daemon. It alone talks to Docker Engine or Firecracker. Expose only an authenticated loopback/mTLS API; never expose the Docker socket to Agents.
-- Worker: one ephemeral container per execution unit in `docker` or `sandbox` mode; one Firecracker Guest per execution unit in `firecracker` mode.
+- Worker: one ephemeral runc container for approved internal work; one Firecracker Guest for external arbitrary code; one WASM instance for constrained plugins/functions. gVisor is an explicitly approved alternative for hosts without KVM.
 - Rust cos-execd: runs inside the Worker image and accepts structured executable + argv requests. Never accept an arbitrary Host shell command string.
 - Workspace Broker: only grants a per-task workspace capability. Source is read-only by default; writes go to a private overlay and are committed after validation.
 
@@ -48,10 +49,14 @@ Do not bind-mount an arbitrary Host directory. The broker should create a dedica
 ## Configuration contract
 
 The intended configuration is:
-- `LIGHT_AGENT_EXECUTION_BACKEND=docker|sandbox|firecracker`
+- `LIGHT_AGENT_EXECUTION_BACKEND=docker|microvm|wasm|gvisor`
 - `LIGHT_AGENT_DOCKER_SOCKET=unix:///var/run/docker.sock`
 - `LIGHT_AGENT_DOCKER_RUNTIME=runc|runsc`
 - `LIGHT_AGENT_SANDBOX_REQUIRE_GVISOR=true`
+- `LIGHT_AGENT_WASM_RUNTIME=wasmtime|wasmedge`
+- `LIGHT_AGENT_WASM_FUEL_LIMIT=<integer>`
+- `LIGHT_AGENT_WASM_MEMORY_LIMIT=128MiB`
+- `LIGHT_AGENT_WASM_ALLOWED_CAPABILITIES=clock,random,workspace-read`
 - `LIGHT_AGENT_WORKER_IMAGE=<immutable image digest>`
 - `LIGHT_AGENT_WORKER_CPU_LIMIT=1.0`
 - `LIGHT_AGENT_WORKER_MEMORY_LIMIT=1g`
@@ -69,10 +74,12 @@ The number of logical Agent identities can be much larger than the number of run
 ## Acceptance tests
 
 1. Docker mode creates, executes, cancels and destroys an OCI Worker without KVM.
-2. Sandbox mode refuses startup if `runsc` is absent and proves the created container uses `runsc`.
-3. Worker has no Docker socket, /dev/kvm, Host PID namespace or Host rootfs.
-4. CPU/memory/PID limits are observable and enforced.
-5. Network is denied by default; only explicit allowlisted egress works.
-6. Container exit, daemon restart and API timeout reconcile state without duplicate execution.
-7. Workspace traversal, symlink, reserved metadata and concurrent-commit tests pass.
-8. Firecracker mode continues to require KVM and remains an optional backend.
+2. gVisor mode refuses startup if `runsc` is absent and proves the created container uses `runsc`.
+3. MicroVM-required tasks are never downgraded to containers; unavailable local KVM causes fail-closed or explicit remote-worker routing.
+4. WASM plugins cannot access undeclared filesystem, network or host capabilities; fuel and memory limits are enforced.
+5. Worker has no Docker socket, /dev/kvm, Host PID namespace or Host rootfs.
+6. CPU/memory/PID limits are observable and enforced.
+7. Network is denied by default; only explicit allowlisted egress works.
+8. Container exit, daemon restart and API timeout reconcile state without duplicate execution.
+9. Workspace traversal, symlink, reserved metadata and concurrent-commit tests pass.
+10. Firecracker mode continues to require KVM and remains an optional backend.

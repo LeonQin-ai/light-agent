@@ -19,10 +19,11 @@ Before production validate on a real Linux/KVM host: Firecracker/Jailer and Gues
 
 | Milestone | Scope | Exit criteria |
 |---|---|---|
-| M3-D | Docker/runc Worker provider | Create/exec/cancel/destroy OCI Worker; non-root, no capabilities, read-only rootfs, cgroups and default-deny network |
-| M3-S | Docker/gVisor Worker provider | Explicit `runsc` runtime selection; startup preflight; fail closed if unavailable; prove runtime in container metadata |
-| M3-F | Firecracker provider | Existing KVM/Jailer path validated on KVM-capable hosts |
+| M3-D | Docker/runc trusted Worker provider | Create/exec/cancel/destroy OCI Worker; non-root, no capabilities, read-only rootfs, cgroups and default-deny network |
+| M3-S | gVisor alternative provider | Explicit `runsc` runtime selection for approved no-KVM isolation profiles; startup preflight; fail closed if unavailable; never silently downgrade a MicroVM-required task |
+| M3-F | Firecracker MicroVM provider | External/untrusted code execution; existing KVM/Jailer path validated on KVM-capable hosts; no-KVM tasks route remotely or fail closed |
+| M3-W | WASM plugin provider | Wasmtime/WasmEdge, explicit WASI imports, capability allowlist, fuel/memory/time limits and plugin ABI |
 | M3-I | Unified execution provider API | Go scheduler selects docker/sandbox/firecracker; lifecycle reconciliation, quotas and audit consistent across providers |
 | M3-E2E | Feishu-to-Worker end-to-end | Feishu task reaches Cognitive OS, runs in selected backend, returns result and cleans up without Host command execution |
 
-The Compose file currently deploys only the Go Control Plane. It deliberately does not mount the Docker socket. A trusted Host Sandbox Manager must be the only Docker API client.
+See [execution-policy.md](execution-policy.md) for the three-tier trust model (Docker, MicroVM, WASM), no-KVM routing and policy-engine requirements. The Compose file currently deploys only the Go Control Plane. It deliberately does not mount the Docker socket. A trusted Host Sandbox Manager must be the only Docker API client.
