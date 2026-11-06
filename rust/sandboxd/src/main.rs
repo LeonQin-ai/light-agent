@@ -31,6 +31,7 @@ async fn main() -> Result<()> {
         .route("/v1/containers/:id", get(api::get_container).delete(api::destroy_container))
         .route("/v1/containers/:id/start", post(api::start_container))
         .route("/v1/containers/:id/stop", post(api::stop_container))
+        .route("/v1/containers/:id/cancel", post(api::stop_container))
         .route("/v1/containers/:id/exec", post(api::exec_container))
         .route("/v1/vms", post(api::create_vm))
         .route("/v1/vms/:id", get(api::get_vm).delete(api::destroy_vm))

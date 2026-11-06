@@ -64,12 +64,13 @@ curl -fsS -X POST http://127.0.0.1:9090/v1/containers/<container-id>/exec \\
   -d '{"executable":"/usr/bin/python3","argv":["-c","print(1+1)"],"cwd":"","timeout_ms":15000,"memory_bytes":536870912,"max_output_bytes":1048576,"cpu_quota_micros":100000,"max_pids":64,"network":false}'
 \`\`\`
 
-Stop and destroy:
+Stop/cancel and destroy:
 
 \`\`\`bash
-curl -fsS -X POST http://127.0.0.1:9090/v1/containers/<container-id>/stop \\
+# stop or cancel terminates the Worker container; any in-flight exec is interrupted
+curl -fsS -X POST http://127.0.0.1:9090/v1/containers/<container-id>/cancel \
   -H "Authorization: Bearer $LIGHT_AGENT_SANDBOX_API_TOKEN"
-curl -fsS -X DELETE http://127.0.0.1:9090/v1/containers/<container-id> \\
+curl -fsS -X DELETE http://127.0.0.1:9090/v1/containers/<container-id> \
   -H "Authorization: Bearer $LIGHT_AGENT_SANDBOX_API_TOKEN"
 \`\`\`
 

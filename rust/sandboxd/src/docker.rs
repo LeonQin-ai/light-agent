@@ -85,6 +85,7 @@ pub struct DockerProvider {
     persist_lock: Arc<Mutex<()>>,
     operation_lock: Arc<tokio::sync::Mutex<()>>,
     container_locks: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    exec_locks: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 impl DockerProvider {
@@ -104,6 +105,7 @@ impl DockerProvider {
             persist_lock: Arc::new(Mutex::new(())),
             operation_lock: Arc::new(tokio::sync::Mutex::new(())),
             container_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            exec_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         };
         Ok(provider)
     }
@@ -255,7 +257,7 @@ impl DockerProvider {
     }
 
     pub async fn exec(&self, id: &str, req: ContainerExecRequest) -> Result<Value> {
-        let lock = self.lock_for(id).await;
+        let lock = self.exec_lock_for(id).await;
         let _guard = lock.lock().await;
         let record = self.get(id)?;
         if record.state != "RUNNING" {
@@ -348,6 +350,7 @@ impl DockerProvider {
         self.persist()?;
         drop(_guard);
         self.container_locks.lock().await.remove(id);
+        self.exec_locks.lock().await.remove(id);
         Ok(())
     }
 
@@ -441,6 +444,13 @@ impl DockerProvider {
 
     async fn lock_for(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> {
         let mut locks = self.container_locks.lock().await;
+        locks.entry(id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+
+    async fn exec_lock_for(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.exec_locks.lock().await;
         locks.entry(id.to_string())
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
             .clone()
