@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LeonQin-ai/light-agent/control/internal/execution"
 	"github.com/LeonQin-ai/light-agent/control/internal/lifecycle"
 	"github.com/LeonQin-ai/light-agent/control/internal/model"
 	"github.com/LeonQin-ai/light-agent/control/internal/store"
@@ -18,12 +19,18 @@ type Server struct {
 	store store.Store
 	manager *lifecycle.Manager
 	apiToken string
+	capabilities execution.Snapshot
 	mux *http.ServeMux
 }
 
 func New(st store.Store, manager *lifecycle.Manager, feishuWebhook http.Handler, apiToken string) *Server {
-	s:=&Server{store:st,manager:manager,apiToken:apiToken,mux:http.NewServeMux()}
+	return NewWithCapabilities(st,manager,feishuWebhook,apiToken,execution.Snapshot{Platform:execution.PlatformUnknown,ProbeVersion:"not-probed"})
+}
+
+func NewWithCapabilities(st store.Store, manager *lifecycle.Manager, feishuWebhook http.Handler, apiToken string, capabilities execution.Snapshot) *Server {
+	s:=&Server{store:st,manager:manager,apiToken:apiToken,capabilities:capabilities,mux:http.NewServeMux()}
 	s.mux.HandleFunc("GET /healthz",s.health)
+	s.mux.HandleFunc("GET /v1/runtime/capabilities",s.getCapabilities)
 	s.mux.HandleFunc("POST /v1/agents",s.createAgent)
 	s.mux.HandleFunc("GET /v1/agents/{id}",s.getAgent)
 	s.mux.HandleFunc("GET /v1/agents/{id}/runtime",s.getRuntime)
@@ -53,6 +60,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter,r *http.Request) {
 }
 
 func(s *Server)health(w http.ResponseWriter,_ *http.Request){writeJSON(w,200,map[string]string{"status":"ok"})}
+
+func(s *Server)getCapabilities(w http.ResponseWriter,_ *http.Request){writeJSON(w,http.StatusOK,s.capabilities)}
 
 func(s *Server)createAgent(w http.ResponseWriter,r *http.Request){
 	var req struct{TenantID string `json:"tenant_id"`;Role string `json:"role"`}

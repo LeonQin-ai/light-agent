@@ -14,6 +14,7 @@ import(
 
 	"github.com/LeonQin-ai/light-agent/control/internal/config"
 	"github.com/LeonQin-ai/light-agent/control/internal/dispatcher"
+	"github.com/LeonQin-ai/light-agent/control/internal/execution"
 	"github.com/LeonQin-ai/light-agent/control/internal/feishu"
 	"github.com/LeonQin-ai/light-agent/control/internal/httpapi"
 	"github.com/LeonQin-ai/light-agent/control/internal/store"
@@ -31,9 +32,21 @@ func main(){
 	ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM);defer stop()
 	go dispatcher.New(st,logger).Run(ctx)
 	webhook:=feishu.New(st,feishu.Config{Token:cfg.FeishuVerificationToken,EncryptKey:cfg.FeishuEncryptKey,Allowed:cfg.FeishuAllowedOpenIDs})
+	probeCtx,probeCancel:=context.WithTimeout(ctx,3*time.Second)
+	capabilities:=execution.Detect(probeCtx,execution.ProbeOptions{DockerSocket:cfg.DockerSocket,WASMRuntime:cfg.WASMRuntime})
+if cfg.SandboxManagerURL != "" {
+		hostCapabilities, fetchErr := execution.FetchHostCapabilities(probeCtx, cfg.SandboxManagerURL, cfg.SandboxManagerToken)
+		if fetchErr != nil {
+			logger.Error("Host Sandbox Manager capability probe failed; retaining process-scope snapshot", "error", fetchErr)
+		} else {
+			capabilities = hostCapabilities
+		}
+	}
+	probeCancel()
+	logger.Info("execution capabilities detected","platform",capabilities.Platform,"observation_scope",capabilities.ObservationScope,"kvm",capabilities.KVM.Available,"docker",capabilities.Docker.Available,"firecracker_ready",capabilities.Firecracker.Ready,"gvisor_ready",capabilities.GVisor.Ready,"wasm_ready",capabilities.WASM.Ready)
 	// Runtime endpoints remain fail-closed until a restricted C11 SuperAgent
 	// driver is configured. User workloads are never executed by this process.
-	server:=httpapi.HTTPServer(cfg.ListenAddr,httpapi.New(st,nil,webhook,cfg.APIAuthToken))
+	server:=httpapi.HTTPServer(cfg.ListenAddr,httpapi.NewWithCapabilities(st,nil,webhook,cfg.APIAuthToken,capabilities))
 	go func(){logger.Info("light-agent control plane listening","addr",cfg.ListenAddr,"db",cfg.DBPath);if err:=server.ListenAndServe();err!=nil&&!errors.Is(err,http.ErrServerClosed){logger.Error("http server failed","error",err);stop()}}()
 	<-ctx.Done()
 	shutdownCtx,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel()

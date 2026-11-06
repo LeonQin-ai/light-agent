@@ -1,4 +1,5 @@
 mod api;
+mod capabilities;
 mod config;
 mod firecracker;
 mod state;
@@ -23,6 +24,7 @@ async fn main() -> Result<()> {
     }
     let state = AppState::load(cfg.clone()).context("load sandbox state")?;
     let protected = Router::new()
+        .route("/v1/capabilities", get(api::host_capabilities))
         .route("/v1/vms", post(api::create_vm))
         .route("/v1/vms/:id", get(api::get_vm).delete(api::destroy_vm))
         .route("/v1/vms/:id/start", post(api::start_vm))

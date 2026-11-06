@@ -7,7 +7,7 @@ A hybrid Agent Operating Runtime built on Cognitive OS. Agent identity and memor
 ## Components
 - Go Control Plane (Host): Feishu ingress, Agent Registry, Task API, durable inbox and lifecycle coordination.
 - C11 Cognitive OS: SuperAgent reasoning, Memory, Context, Policy and DAG orchestration; runs as a restricted service/container and never receives unrestricted Host command execution.
-- Rust Sandbox Manager (Host): trusted execution broker; Firecracker/Jailer provider exists, Docker/runc and Docker/gVisor providers are planned.
+- Rust Sandbox Manager (Host): trusted execution broker; Firecracker/Jailer provider exists, Docker/runc and Docker/gVisor providers are planned. Authenticated `/v1/capabilities` reports Host platform and visible runtime prerequisites.
 - Docker deployment: hardened Compose profile for the Go Control Plane; Agents never receive the Docker socket.
 - Firecracker MicroVM (optional): high-isolation Worker runtime on KVM-capable nodes.
 - WASM runtime (planned): constrained plugin and compute-function execution.
@@ -30,7 +30,7 @@ A hybrid Agent Operating Runtime built on Cognitive OS. Agent identity and memor
 - M4 foundation: Rust cos-execd with structured exec, timeouts, bounded output, namespaces, seccomp, rlimits and optional cgroup v2.
 - M5 foundation: workspace snapshot sync and SHA-256 conflict-checked file commit.
 
-The production Go Runtime Driver and task dispatcher wiring are the next integration step. Standalone no-KVM behavior and local degraded modes are specified in `docs/local-degraded-sandbox.md`. Docker deployment files and backend design are in `deploy/` and `docs/runtime-backends.md`. Docker/runc and Docker/gVisor Worker providers are not implemented yet. Firecracker hardware validation is mandatory before production use.
+The production Go Runtime Driver and task dispatcher wiring are the next integration step. Standalone no-KVM behavior and local degraded modes are specified in `docs/local-degraded-sandbox.md`. Docker deployment files and backend design are in `deploy/` and `docs/runtime-backends.md`. Docker/runc and Docker/gVisor Worker providers are not implemented yet. Go risk-policy resolution and capability probing are implemented as foundations; execution dispatch is not wired into the task dispatcher yet. Firecracker, gVisor and WASM remain not-ready until their runtime preflights pass.
 
 ## Quick start
 Requirements: Go 1.23+, Rust stable. For a VM without nested virtualization, use `deploy/compose.yaml` for the Control Plane and follow `docs/runtime-backends.md`. Firecracker execution additionally requires Linux/KVM. Run make test, make rust-test, make build and make rust-build.

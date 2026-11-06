@@ -32,6 +32,10 @@ fn constant_time_eq(a:&[u8],b:&[u8])->bool{
 
 pub async fn health() -> Json<Value> { Json(json!({"status":"ok","service":"cos-sandboxd"})) }
 
+pub async fn host_capabilities() -> Json<crate::capabilities::HostCapabilitySnapshot> {
+    Json(crate::capabilities::detect())
+}
+
 #[derive(Deserialize)]
 pub struct CreateVm {
     pub worker_id: String,
