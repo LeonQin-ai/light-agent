@@ -1,13 +1,14 @@
 # Light Agent
 
-SuperAgent Bot + On-Demand Sleep/Wake + Firecracker MicroVM.
+SuperAgent Bot + On-Demand Sleep/Wake + pluggable Docker / gVisor Sandbox / Firecracker execution backends.
 
 A hybrid Agent Operating Runtime built on Cognitive OS. Agent identity and memory persist; runtimes are disposable. Host controls and authorizes; every Agent runtime and untrusted workload runs inside a Firecracker Guest.
 
 ## Components
 - Go Control Plane (Host): Feishu ingress, Agent Registry, Task API, durable inbox and lifecycle coordination.
 - C11 Cognitive OS: SuperAgent reasoning, Memory, Context, Policy and DAG orchestration; deployed inside a Firecracker Guest, never as an unrestricted Host process.
-- Rust cos-sandboxd (Host): Firecracker/Jailer lifecycle, cgroups, vsock, workspace sync and conflict-checked commit.
+- Rust Sandbox Manager (Host): trusted execution broker; Firecracker/Jailer provider exists, Docker/runc and Docker/gVisor providers are planned.
+- Docker deployment: hardened Compose profile for the Go Control Plane; Agents never receive the Docker socket.
 - Firecracker MicroVM (Guest): Cognitive OS SuperAgent and Worker Agent runtime.
 - Rust cos-execd (Guest): structured command execution with namespaces, seccomp, rlimits, optional cgroup v2 and process-tree cancellation.
 - Host Workspace Broker: bounded snapshot transfer over vsock, read-only source semantics, private Guest workspace and SHA-256 optimistic commit.
@@ -28,10 +29,10 @@ A hybrid Agent Operating Runtime built on Cognitive OS. Agent identity and memor
 - M4 foundation: Rust cos-execd with structured exec, timeouts, bounded output, namespaces, seccomp, rlimits and optional cgroup v2.
 - M5 foundation: workspace snapshot sync and SHA-256 conflict-checked file commit.
 
-The production Go Runtime Driver and task dispatcher wiring are the next integration step. Hardware validation is mandatory before production use.
+The production Go Runtime Driver and task dispatcher wiring are the next integration step. Docker deployment files and backend design are in `deploy/` and `docs/runtime-backends.md`. Docker/runc and Docker/gVisor Worker providers are not implemented yet. Firecracker hardware validation is mandatory before production use.
 
 ## Quick start
-Requirements: Go 1.23+, Rust stable, Linux/KVM for actual VM start. Copy .env.sandbox.example and follow docs/sandbox-deployment.md. Run make test, make rust-test, make build and make rust-build.
+Requirements: Go 1.23+, Rust stable. For a VM without nested virtualization, use `deploy/compose.yaml` for the Control Plane and follow `docs/runtime-backends.md`. Firecracker execution additionally requires Linux/KVM. Run make test, make rust-test, make build and make rust-build.
 
 The Control Plane API is loopback-only by default. If binding to a non-loopback address, configure LIGHT_AGENT_API_TOKEN; send it as Authorization: Bearer <token>. Health and Feishu webhook routes are separate.
 

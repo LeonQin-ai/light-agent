@@ -1,0 +1,40 @@
+services:
+  light-agentd:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.control
+    image: light-agent/control-plane:dev
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: "65532:65532"
+    environment:
+      LIGHT_AGENT_LISTEN_ADDR: 0.0.0.0:8080
+      LIGHT_AGENT_DB_PATH: /var/lib/light-agent/light-agent.db
+      LIGHT_AGENT_LOG_LEVEL: ${LIGHT_AGENT_LOG_LEVEL:-info}
+      LIGHT_AGENT_API_TOKEN: ${LIGHT_AGENT_API_TOKEN:?set LIGHT_AGENT_API_TOKEN}
+      FEISHU_VERIFICATION_TOKEN: ${FEISHU_VERIFICATION_TOKEN:-}
+      FEISHU_ENCRYPT_KEY: ${FEISHU_ENCRYPT_KEY:-}
+      FEISHU_ALLOWED_OPEN_IDS: ${FEISHU_ALLOWED_OPEN_IDS:-}
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - light-agent-data:/var/lib/light-agent
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    networks:
+      - light-agent-internal
+
+volumes:
+  light-agent-data:
+
+networks:
+  light-agent-internal:
+    internal: true
