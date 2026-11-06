@@ -1,5 +1,9 @@
 # Risk-tiered execution: Container, MicroVM and WASM
 
+## Platform classification and capability detection
+
+Do not classify all virtual machines as lacking MicroVM support. A physical host may lack KVM because firmware/modules/permissions are unavailable, while a VM may expose nested KVM. Probe the actual runtime capabilities independently of platform class. See [host-capability.md](host-capability.md) for exact Linux detection and scheduling rules.
+
 ## Decision for hosts without nested virtualization
 
 A 4-vCPU/8-GiB VM without usable `/dev/kvm` cannot run Firecracker. Do not try to emulate KVM or silently downgrade a requested MicroVM. Light Agent must support OCI/Docker execution as a first-class backend and retain Firecracker as an optional backend for hosts that have KVM.

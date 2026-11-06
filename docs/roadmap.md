@@ -23,7 +23,8 @@ Before production validate on a real Linux/KVM host: Firecracker/Jailer and Gues
 | M3-S | gVisor alternative provider | Explicit `runsc` runtime selection for approved no-KVM isolation profiles; startup preflight; fail closed if unavailable; never silently downgrade a MicroVM-required task |
 | M3-F | Firecracker MicroVM provider | External/untrusted code execution; existing KVM/Jailer path validated on KVM-capable hosts; no-KVM tasks route remotely or fail closed |
 | M3-W | WASM plugin provider | Wasmtime/WasmEdge, explicit WASI imports, capability allowlist, fuel/memory/time limits and plugin ABI |
-| M3-I | Unified execution provider API | Go scheduler selects docker/sandbox/firecracker; lifecycle reconciliation, quotas and audit consistent across providers |
+| M3-H | Host Capability Manager | Detect bare metal/VM/container separately from Docker, KVM, Firecracker, gVisor, WASM and cgroup capabilities; versioned snapshots and preflight |
+| M3-I | Unified execution provider API | Go scheduler selects docker/microvm/wasm/gvisor based on trust policy and node capabilities; remote worker routing, lifecycle reconciliation, quotas and audit |
 | M3-E2E | Feishu-to-Worker end-to-end | Feishu task reaches Cognitive OS, runs in selected backend, returns result and cleans up without Host command execution |
 
 See [execution-policy.md](execution-policy.md) for the three-tier trust model (Docker, MicroVM, WASM), no-KVM routing and policy-engine requirements. The Compose file currently deploys only the Go Control Plane. It deliberately does not mount the Docker socket. A trusted Host Sandbox Manager must be the only Docker API client.

@@ -18,6 +18,10 @@ Firecracker requires KVM. It is the preferred boundary for arbitrary external co
 
 WASM is appropriate only for code that can operate through an explicit WASI or host-function capability interface. It does not provide a general Linux environment and is not a replacement for full compilers, arbitrary shell commands or tools requiring unrestricted syscalls. Enforce fuel/instruction budget, linear-memory limit, wall-clock timeout and explicit imports/capabilities.
 
+## Deployment platform detection and capability policy
+
+Platform class (`bare_metal`, `virtual_machine`, `container`, `unknown`) and runtime capabilities (`docker_oci`, `kvm`, `firecracker`, `gvisor_runsc`, `wasm`, `cgroup_v2`) must be detected independently. Physical hardware does not guarantee KVM availability, and a VM may expose nested KVM. Use verified probes; see [host-capability.md](host-capability.md) for the detection contract and scheduler matrix.
+
 ## No-KVM deployment policy
 
 On a VM without nested virtualization or usable `/dev/kvm`:
