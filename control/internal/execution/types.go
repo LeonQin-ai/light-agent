@@ -66,6 +66,7 @@ type FirecrackerCapability struct {
 }
 
 type Snapshot struct {
+	RegistryVersion uint64             `json:"registry_version,omitempty"`
 	ObservationScope string                `json:"observation_scope"`
 	NodeID       string                `json:"node_id,omitempty"`
 	Platform     Platform              `json:"platform"`

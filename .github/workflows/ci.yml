@@ -24,7 +24,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --manifest-path rust/Cargo.toml --workspace
-      - run: cargo build --manifest-path rust/Cargo.toml --workspace --release
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: true
+      - run: cargo test --locked --manifest-path rust/Cargo.toml --workspace
+      - run: cargo build --locked --manifest-path rust/Cargo.toml --workspace --release
       - name: Build Docker Worker image
         run: docker build -f deploy/Dockerfile.worker -t light-agent/worker:ci .
+      - name: Verify Control Plane to Docker Worker lifecycle
+        run: |
+          go build -o bin/light-agentd ./control/cmd/light-agentd
+          image="$(docker image inspect light-agent/worker:ci --format '{{.Id}}')"
+          sudo python3 scripts/smoke-docker.py \
+            --sandboxd "$PWD/rust/target/release/cos-sandboxd" \
+            --control "$PWD/bin/light-agentd" \
+            --image "$image" \
+            --work-dir "$RUNNER_TEMP/light-agent-smoke-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"

@@ -68,6 +68,13 @@ CREATE TABLE IF NOT EXISTS runtime_instances (
  updated_at TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_id ON runtime_instances(runtime_id) WHERE runtime_id <> '';
+CREATE TABLE IF NOT EXISTS capability_observations (
+ version INTEGER PRIMARY KEY AUTOINCREMENT,
+ recorded_at TEXT NOT NULL, snapshot_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS task_workers (
+ task_id TEXT PRIMARY KEY REFERENCES tasks(id), container_id TEXT NOT NULL UNIQUE
+);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrate sqlite: %w", err)
@@ -196,6 +203,7 @@ func (s *SQLite) ClaimNextTask(ctx context.Context) (model.Task, error) {
 	if err != nil { return model.Task{}, err }
 	n, err := res.RowsAffected()
 	if err != nil || n != 1 { return model.Task{}, ErrConflict }
+	if _, err = tx.ExecContext(ctx, "UPDATE agents SET state='ACTIVE',updated_at=? WHERE id=(SELECT agent_id FROM tasks WHERE id=?)", timestamp(), id); err != nil { return model.Task{}, err }
 	task, err := scanTask(tx.QueryRowContext(ctx, `SELECT id,agent_id,request_id,state,payload,result,error_code,created_at,updated_at
 FROM tasks WHERE id=?`, id))
 	if err != nil { return model.Task{}, err }
@@ -222,13 +230,11 @@ AND NOT EXISTS (SELECT 1 FROM tasks WHERE agent_id=? AND state='RUNNING')`, now,
 }
 
 func (s *SQLite) CancelTask(ctx context.Context, id string) (model.Task, error) {
-	res, err := s.db.ExecContext(ctx, "UPDATE tasks SET state='CANCELLED',updated_at=? WHERE id=? AND state='QUEUED'", timestamp(), id)
-	if err != nil { return model.Task{}, err }
-	n, err := res.RowsAffected()
-	if err != nil { return model.Task{}, err }
+	err := s.finishTask(ctx, id, "CANCELLED", "", "")
+	if err != nil && !errors.Is(err, ErrConflict) { return model.Task{}, err }
 	task, err := s.GetTask(ctx, id)
 	if err != nil { return model.Task{}, err }
-	if n == 0 && task.State != model.TaskCancelled { return model.Task{}, ErrConflict }
+	if task.State != model.TaskCancelled { return model.Task{}, ErrConflict }
 	return task, nil
 }
 

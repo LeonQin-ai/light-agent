@@ -6,6 +6,7 @@ import (
  "net/http"
  "net/http/httptest"
  "testing"
+ "strings"
 )
 func TestDockerWorkerClientLifecycleProtocol(t *testing.T){
  var calls []string
@@ -32,4 +33,16 @@ func TestDockerWorkerClientLifecycleProtocol(t *testing.T){
 }
 func TestDockerWorkerClientRejectsRemotePlainHTTP(t *testing.T){
  if _,err:=NewDockerWorkerClient("http://10.0.0.2:9090","token");err==nil{t.Fatal("expected non-loopback HTTP rejection")}
+}
+
+func TestDockerWorkerClientReportsStructuredManagerErrors(t *testing.T) {
+ server:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+  w.WriteHeader(http.StatusInternalServerError)
+  _,_=w.Write([]byte(`{"error":"container mount denied"}`))
+ }))
+ defer server.Close()
+ client,err:=NewDockerWorkerClient(server.URL,"private-token")
+ if err!=nil {t.Fatal(err)}
+ err=client.Start(context.Background(),"worker")
+ if err==nil||!strings.Contains(err.Error(),"container mount denied")||strings.Contains(err.Error(),"private-token") {t.Fatalf("unexpected error: %v",err)}
 }

@@ -102,7 +102,7 @@ A Docker/runc container still shares the Host kernel. Treat it as a useful bound
 
 - No per-workspace disk quota is configured by this provider. Put `LIGHT_AGENT_WORKSPACE_BASE` on a quota-controlled filesystem and monitor free space.
 - Docker block-I/O throttling is not configured yet.
-- The provider exposes a direct authenticated Rust API. Go task-dispatcher integration, task-tier admission and remote-worker routing are separate follow-up work.
+- The provider exposes a direct authenticated Rust API plus Go synchronous and durable trusted-task admission. Remote-worker routing and restricted Cognitive OS message orchestration remain follow-up work.
 - This provider is runc only. It is not a gVisor provider and must not be used as an automatic fallback for MicroVM-required tasks.
 
 ## Go Control Plane execution entrypoint
@@ -137,4 +137,13 @@ curl -fsS -X POST http://127.0.0.1:8080/v1/execution/run \
 
 The scheduler resolves the backend against the authenticated Host capability snapshot. Docker/runc is selected only for `trusted_internal`. `external_untrusted` is denied unless a preflight-ready Firecracker MicroVM is available; the current Go scheduler intentionally does not downgrade it to Docker. `constrained_extension` requires a ready WASM provider, which is not wired yet.
 
-The endpoint is synchronous and currently intended for short-lived tasks. Durable queue dispatch, async task status, retries/reconciliation and Feishu-to-Worker integration remain separate milestones.
+This endpoint is synchronous and intended for short-lived tasks. For durable queue dispatch, async status, running cancellation and interrupted-task reconciliation, use `/v1/agents/{id}/executions` as documented in [durable-execution.md](durable-execution.md). Feishu-to-Worker reasoning integration remains pending.
+
+Operator-preloaded local image IDs (`sha256:<64-hex>`) are also accepted as immutable
+references, allowing offline validation without a registry push. Tags remain
+rejected, and the provider never pulls a missing image.
+
+The deployment Dockerfile pins Rust 1.99.1 and builds with the committed Cargo
+lockfile. Build environments using an approved image mirror can override
+`RUST_BUILD_IMAGE` and `WORKER_RUNTIME_IMAGE` build arguments; these are build-time
+operator settings and are never accepted in task requests.

@@ -20,6 +20,7 @@ type Server struct {
 	manager *lifecycle.Manager
 	apiToken string
 	capabilities execution.Snapshot
+	capabilitySource execution.CapabilitySource
 	scheduler *execution.Scheduler
 	mux *http.ServeMux
 }
@@ -40,10 +41,23 @@ func NewWithCapabilities(st store.Store, manager *lifecycle.Manager, feishuWebho
 	s.mux.HandleFunc("POST /v1/agents/{id}/wake",s.wakeAgent)
 	s.mux.HandleFunc("POST /v1/agents/{id}/sleep",s.sleepAgent)
 	s.mux.HandleFunc("POST /v1/agents/{id}/messages",s.submitMessage)
+	s.mux.HandleFunc("POST /v1/agents/{id}/executions",s.submitExecution)
 	s.mux.HandleFunc("GET /v1/tasks/{id}",s.getTask)
 	s.mux.HandleFunc("POST /v1/tasks/{id}/cancel",s.cancelTask)
 	if feishuWebhook!=nil { s.mux.Handle("POST /webhooks/feishu",feishuWebhook) }
 	return s
+}
+
+// NewWithCapabilitySource reads refreshed capabilities for every decision.
+func NewWithCapabilitySource(st store.Store, manager *lifecycle.Manager, feishuWebhook http.Handler, apiToken string, source execution.CapabilitySource, scheduler *execution.Scheduler) *Server {
+	s := NewWithCapabilities(st, manager, feishuWebhook, apiToken, execution.Snapshot{}, scheduler)
+	s.capabilitySource = source
+	return s
+}
+
+func (s *Server) currentCapabilities() execution.Snapshot {
+	if s.capabilitySource != nil { return s.capabilitySource.CurrentSnapshot() }
+	return s.capabilities
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter,r *http.Request) {
@@ -64,7 +78,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter,r *http.Request) {
 
 func(s *Server)health(w http.ResponseWriter,_ *http.Request){writeJSON(w,200,map[string]string{"status":"ok"})}
 
-func(s *Server)getCapabilities(w http.ResponseWriter,_ *http.Request){writeJSON(w,http.StatusOK,s.capabilities)}
+func(s *Server)getCapabilities(w http.ResponseWriter,_ *http.Request){writeJSON(w,http.StatusOK,s.currentCapabilities())}
 
 func(s *Server)createAgent(w http.ResponseWriter,r *http.Request){
 	var req struct{TenantID string `json:"tenant_id"`;Role string `json:"role"`}
@@ -153,7 +167,7 @@ func(s *Server)runExecution(w http.ResponseWriter,r *http.Request){
  if req.Mode=="" {req.Mode=execution.ModeStrict}
  if req.CPU==0 {req.CPU=1000}; if req.Memory==0 {req.Memory=1024*1024*1024}; if req.PIDs==0 {req.PIDs=128}; if req.Timeout==0 {req.Timeout=15000}; if req.Output==0 {req.Output=1024*1024}
  result,err:=s.scheduler.Run(r.Context(),execution.RunRequest{
-  Mode:req.Mode,Policy:execution.TaskPolicy{Tier:req.Tier},Host:s.capabilities,
+  Mode:req.Mode,Policy:execution.TaskPolicy{Tier:req.Tier},Host:s.currentCapabilities(),
   Worker:execution.WorkerSpec{WorkerID:"api-"+req.TaskID,WorkspaceID:req.TaskID,CPUMillis:req.CPU,MemoryBytes:req.Memory,PidsLimit:req.PIDs},
   Command:execution.ExecSpec{Executable:req.Executable,Argv:req.Argv,CWD:req.CWD,TimeoutMS:req.Timeout,MemoryBytes:req.Memory,MaxOutputBytes:req.Output,Network:false},
  })

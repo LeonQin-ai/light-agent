@@ -20,6 +20,11 @@ type Store interface {
 	CancelTask(context.Context, string) (model.Task, error)
 	ClaimNextTask(context.Context) (model.Task, error)
 	CompleteTask(context.Context, string, string) error
+	FailTask(context.Context, string, string, string) error
+	InterruptRunningTasks(context.Context) error
+	TrackTaskWorker(context.Context, string, string) error
+	ListTaskWorkers(context.Context) (map[string]string, error)
+	ClearTaskWorker(context.Context, string) error
 	SetAgentState(context.Context, string, model.AgentState) error
 	IngestFeishuEvent(context.Context, string, string, string, string) (model.Task, bool, error)
 	GetRuntime(context.Context, string) (model.Runtime, error)

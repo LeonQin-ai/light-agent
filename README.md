@@ -30,7 +30,7 @@ A hybrid Agent Operating Runtime built on Cognitive OS. Agent identity and memor
 - M4 foundation: Rust cos-execd with structured exec, timeouts, bounded output, namespaces, seccomp, rlimits and optional cgroup v2.
 - M5 foundation: workspace snapshot sync and SHA-256 conflict-checked file commit.
 
-M3-D now has an initial Rust Docker/runc provider: authenticated container lifecycle endpoints, immutable preloaded image digests, non-root execution, read-only rootfs, no-network default, resource limits and per-Worker workspace mount. It is not yet wired into the Go task dispatcher. gVisor and WASM providers remain pending. See `docs/docker-provider.md` for build and API instructions. Firecracker still requires KVM boot validation.
+M3-D has a Rust Docker/runc provider and Go scheduler with synchronous `/v1/execution/run` and durable `/v1/agents/{id}/executions` admission. Tasks persist Worker handles, propagate running cancellation and reconcile recorded Workers after restart. Host capabilities refresh every 30 seconds, expire after 90 seconds, and are journaled with monotonic versions; failed probes disable execution until recovery. Ordinary API/Feishu messages report `runtime_driver_unavailable` until a restricted Cognitive OS driver is implemented. See `docs/durable-execution.md` and `docs/docker-provider.md`. gVisor/WASM providers and Firecracker KVM boot validation remain pending.
 
 ## Quick start
 Requirements: Go 1.23+, Rust stable. For a VM without nested virtualization, use `deploy/compose.yaml` for the Control Plane and follow `docs/runtime-backends.md`. Firecracker execution additionally requires Linux/KVM. Run make test, make rust-test, make build and make rust-build.

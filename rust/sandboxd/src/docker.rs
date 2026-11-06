@@ -326,7 +326,13 @@ impl DockerProvider {
     pub async fn destroy(&self, id: &str) -> Result<()> {
         let lock = self.lock_for(id).await;
         let _guard = lock.lock().await;
-        let record = self.get(id)?;
+        // Control Plane recovery may repeat a DELETE after losing its response
+        // or failing to persist local cleanup. Removal must be idempotent.
+        let record = match self.records.lock()
+            .map_err(|_| anyhow!("Docker state lock poisoned"))?.get(id).cloned() {
+            Some(record) => record,
+            None => return Ok(()),
+        };
         if let Err(err) = self.run_docker(
             vec!["rm".into(), "--force".into(), record.docker_id.clone()],
             Duration::from_secs(15),
@@ -454,6 +460,14 @@ impl DockerProvider {
 }
 
 pub fn validate_image_digest(image: &str) -> Result<()> {
+    // An operator-preloaded image ID is also immutable and permits offline
+    // builds without pushing a test image to a registry just to obtain a digest.
+    if let Some(digest) = image.strip_prefix("sha256:") {
+        if digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Ok(());
+        }
+        return Err(anyhow!("Worker image ID must contain exactly 64 hexadecimal characters"));
+    }
     let (name, digest) = image.rsplit_once("@sha256:")
         .ok_or_else(|| anyhow!("Worker image must be pinned by @sha256 digest"))?;
     if name.is_empty() || name.len() > 255 ||
@@ -531,6 +545,9 @@ fn build_create_args(
         "--log-driver=local".into(),
         "--log-opt=max-size=10m".into(),
         "--log-opt=max-file=1".into(),
+        // Docker's local driver enables compression by default, but rejects
+        // compression with a single log file when the container starts.
+        "--log-opt=compress=false".into(),
         "--ulimit=nofile=1024:1024".into(),
         "--ulimit=core=0:0".into(),
         "--stop-timeout=5".into(),
@@ -600,6 +617,9 @@ mod tests {
         assert!(validate_image_digest("registry.example/worker@sha256:abcd").is_err());
         assert!(validate_image_digest("registry.example/worker;touch-pwned@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").is_err());
         assert!(validate_image_digest(&format!("registry.example/worker@sha256:{}", "a".repeat(64))).is_ok());
+        assert!(validate_image_digest(&format!("sha256:{}", "a".repeat(64))).is_ok());
+        assert!(validate_image_digest("sha256:abcd").is_err());
+        assert!(validate_image_digest(&format!("sha256:{}", "g".repeat(64))).is_err());
     }
 
     #[test]
@@ -616,6 +636,8 @@ mod tests {
         assert!(!args.iter().any(|a| a == "--privileged"));
         assert!(!args.iter().any(|a| a.contains("docker.sock")));
         assert!(args.windows(2).any(|w| w[0] == "--memory" && w[1] == "1073741824"));
+        assert!(args.iter().any(|a| a == "--log-opt=max-file=1"));
+        assert!(args.iter().any(|a| a == "--log-opt=compress=false"));
     }
 
     #[test]

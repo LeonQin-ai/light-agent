@@ -3,7 +3,7 @@
 | Milestone | Scope | Status / exit criteria |
 |---|---|---|
 | M0 | Repo baseline, dependency pin, models, lifecycle/RPC contracts, CI | Implemented baseline; CI green |
-| M1 | Feishu ingress, durable inbox, Agent Registry, Task API, audit, Mock Coordinator | Initial implementation; idempotency, cancellation guards and CI tests |
+| M1 | Feishu ingress, durable inbox, Agent Registry, Task API, audit | Implemented baseline; mock completion removed, unavailable reasoning fails closed; trusted structured execution uses durable queue, cancellation and interrupted-task reconciliation |
 | M2a | Durable Runtime registry and lifecycle contract | Implemented: single-flight reservation, generation fencing, sleep admission, injectable Driver |
 | M2b | Restricted C11 SuperAgent driver | Pending: isolate C11 tool capabilities, persistent state restore, task submission and graceful shutdown |
 | M3 | Rust cos-sandboxd + Firecracker/Jailer | Pending: per-VM cgroup/TAP/vsock/volume, Guest ready handshake, deterministic cleanup |
@@ -19,11 +19,11 @@ Before production validate on a real Linux/KVM host: Firecracker/Jailer and Gues
 
 | Milestone | Scope | Exit criteria |
 |---|---|---|
-| M3-D | Docker/runc trusted Worker provider | Initial Rust provider implemented: create/start/exec/stop/destroy, immutable image digest, non-root, no capabilities, read-only rootfs, CPU/memory/PID limits, network=none; real Docker-host integration and Go dispatcher wiring pending |
+| M3-D | Docker/runc trusted Worker provider | Rust lifecycle and Go synchronous/durable scheduler implemented; immutable image digest/ID, non-root, no capabilities, read-only rootfs, CPU/memory/PID limits, network=none; Linux and Docker smoke validation scripts included |
 | M3-S | gVisor alternative provider | Explicit `runsc` runtime selection for approved no-KVM isolation profiles; startup preflight; fail closed if unavailable; never silently downgrade a MicroVM-required task |
 | M3-F | Firecracker MicroVM provider | External/untrusted code execution; existing KVM/Jailer path validated on KVM-capable hosts; no-KVM tasks route remotely or fail closed |
 | M3-W | WASM plugin provider | Wasmtime/WasmEdge, explicit WASI imports, capability allowlist, fuel/memory/time limits and plugin ABI |
-| M3-H | Host Capability Manager | Go Linux probe, authenticated Rust Host API and Go fetch client implemented; runtime boot/smoke preflights, periodic refresh and durable versioned registry pending |
+| M3-H | Host Capability Manager | Go/Rust probes, authenticated Host API, 30s refresh, 90s expiry, fail-closed invalidation/recovery and SQLite versioned observation journal implemented; history never restores readiness after restart; backend security preflights remain pending |
 | M3-L | Local Degraded Sandbox policy | Strict/Compatible/Availability modes; no-remote behavior; explicit gVisor alternate approval; structured no-compliant-executor response; no silent downgrade |
 | M3-I | Unified execution provider API | Go scheduler selects docker/microvm/wasm/gvisor based on trust policy and node capabilities; remote worker routing, lifecycle reconciliation, quotas and audit |
 | M3-E2E | Feishu-to-Worker end-to-end | Feishu task reaches Cognitive OS, runs in selected backend, returns result and cleans up without Host command execution |

@@ -30,17 +30,24 @@ func main(){
 	st,err:=store.Open(cfg.DBPath);if err!=nil{logger.Error("open state store","error",err);os.Exit(1)}
 	defer st.Close()
 	ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM);defer stop()
-	go dispatcher.New(st,logger).Run(ctx)
 	webhook:=feishu.New(st,feishu.Config{Token:cfg.FeishuVerificationToken,EncryptKey:cfg.FeishuEncryptKey,Allowed:cfg.FeishuAllowedOpenIDs})
 	probeCtx,probeCancel:=context.WithTimeout(ctx,3*time.Second)
 	capabilities:=execution.Detect(probeCtx,execution.ProbeOptions{DockerSocket:cfg.DockerSocket,WASMRuntime:cfg.WASMRuntime})
+	var capabilityRegistry *execution.CapabilityRegistry
 if cfg.SandboxManagerURL != "" {
-		hostCapabilities, fetchErr := execution.FetchHostCapabilities(probeCtx, cfg.SandboxManagerURL, cfg.SandboxManagerToken)
+		capabilityRegistry = execution.NewPersistentCapabilityRegistry(90*time.Second, func(fetchCtx context.Context) (execution.Snapshot, error) {
+			return execution.FetchHostCapabilities(fetchCtx, cfg.SandboxManagerURL, cfg.SandboxManagerToken)
+		}, st)
+		hostProbeCtx, hostProbeCancel := context.WithTimeout(ctx,3*time.Second)
+		fetchErr := capabilityRegistry.Refresh(hostProbeCtx)
+		hostProbeCancel()
 		if fetchErr != nil {
-			logger.Error("Host Sandbox Manager capability probe failed; retaining process-scope snapshot", "error", fetchErr)
-		} else {
-			capabilities = hostCapabilities
+			logger.Error("Host Sandbox Manager capability probe failed; execution remains unavailable", "error", fetchErr)
 		}
+		capabilities = capabilityRegistry.CurrentSnapshot()
+		go capabilityRegistry.Run(ctx, 30*time.Second, 3*time.Second, func(err error) {
+			logger.Error("Host capability refresh failed; execution disabled until recovery", "error", err)
+		})
 	}
 	probeCancel()
 	logger.Info("execution capabilities detected","platform",capabilities.Platform,"observation_scope",capabilities.ObservationScope,"kvm",capabilities.KVM.Available,"docker",capabilities.Docker.Available,"firecracker_ready",capabilities.Firecracker.Ready,"gvisor_ready",capabilities.GVisor.Ready,"wasm_ready",capabilities.WASM.Ready)
@@ -51,11 +58,18 @@ if cfg.SandboxManagerURL != "" {
 		client,clientErr:=execution.NewDockerWorkerClient(cfg.SandboxManagerURL,cfg.SandboxManagerToken)
 		if clientErr!=nil { logger.Error("Docker Worker client configuration rejected","error",clientErr) } else { scheduler=execution.NewScheduler(client) }
 	}
-	server:=httpapi.HTTPServer(cfg.ListenAddr,httpapi.NewWithCapabilities(st,nil,webhook,cfg.APIAuthToken,capabilities,scheduler))
+	api:=httpapi.NewWithCapabilities(st,nil,webhook,cfg.APIAuthToken,capabilities,scheduler)
+	if capabilityRegistry != nil { api=httpapi.NewWithCapabilitySource(st,nil,webhook,cfg.APIAuthToken,capabilityRegistry,scheduler) }
+	taskDispatcher:=dispatcher.NewWithExecution(st,logger,scheduler,capabilityRegistry)
+	if err:=taskDispatcher.Recover(ctx);err!=nil { logger.Error("task reconciliation failed; refusing admission","error",err);os.Exit(1) }
+	dispatchDone:=make(chan struct{})
+	go func(){defer close(dispatchDone);taskDispatcher.Run(ctx)}()
+	server:=httpapi.HTTPServer(cfg.ListenAddr,api)
 	go func(){logger.Info("light-agent control plane listening","addr",cfg.ListenAddr,"db",cfg.DBPath);if err:=server.ListenAndServe();err!=nil&&!errors.Is(err,http.ErrServerClosed){logger.Error("http server failed","error",err);stop()}}()
 	<-ctx.Done()
-	shutdownCtx,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel()
+	shutdownCtx,cancel:=context.WithTimeout(context.Background(),30*time.Second);defer cancel()
 	if err:=server.Shutdown(shutdownCtx);err!=nil{logger.Error("http server shutdown","error",err)}
+	select { case <-dispatchDone: case <-shutdownCtx.Done(): logger.Error("task dispatcher shutdown timed out; recovery will clean recorded Workers") }
 	logger.Info("light-agent stopped")
 }
 

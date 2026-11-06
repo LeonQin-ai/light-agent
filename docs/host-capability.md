@@ -150,7 +150,7 @@ The Go Control Plane can fetch the authoritative Host snapshot using:
 - `LIGHT_AGENT_SANDBOX_MANAGER_URL`
 - `LIGHT_AGENT_SANDBOX_MANAGER_TOKEN`
 
-If this URL is unset or the authenticated fetch fails, Go reports only its own process-visible capability scope. If Go runs in Docker, that scope is `container`, not the underlying physical host/VM. The policy resolver rejects non-host snapshots for host backend scheduling.
+If this URL is unset, Go reports only its own process-visible capability scope. If Go runs in Docker, that scope is `container`, not the underlying physical host/VM. With a configured URL, the Control Plane refreshes the authenticated Host snapshot every 30 seconds. A failed fetch immediately reports `unavailable`, and snapshots expire after 90 seconds without a successful refresh. A later successful probe restores readiness without a restart. The policy resolver rejects all non-host snapshots for host backend scheduling. See [capability-refresh.md](capability-refresh.md) for lifecycle and validation details.
 
 When the Control Plane runs in Docker, the Host Sandbox Manager must be reachable over a protected interface. If binding it beyond loopback, use a long random token (32+ characters) and restrict ingress with the Host firewall to the Control Plane network. Never mount the Docker socket into the Control Plane or Agent containers.
 
