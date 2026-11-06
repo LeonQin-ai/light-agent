@@ -46,7 +46,12 @@ if cfg.SandboxManagerURL != "" {
 	logger.Info("execution capabilities detected","platform",capabilities.Platform,"observation_scope",capabilities.ObservationScope,"kvm",capabilities.KVM.Available,"docker",capabilities.Docker.Available,"firecracker_ready",capabilities.Firecracker.Ready,"gvisor_ready",capabilities.GVisor.Ready,"wasm_ready",capabilities.WASM.Ready)
 	// Runtime endpoints remain fail-closed until a restricted C11 SuperAgent
 	// driver is configured. User workloads are never executed by this process.
-	server:=httpapi.HTTPServer(cfg.ListenAddr,httpapi.NewWithCapabilities(st,nil,webhook,cfg.APIAuthToken,capabilities))
+	var scheduler *execution.Scheduler
+	if cfg.SandboxManagerURL!="" && cfg.SandboxManagerToken!="" {
+		client,clientErr:=execution.NewDockerWorkerClient(cfg.SandboxManagerURL,cfg.SandboxManagerToken)
+		if clientErr!=nil { logger.Error("Docker Worker client configuration rejected","error",clientErr) } else { scheduler=execution.NewScheduler(client) }
+	}
+	server:=httpapi.HTTPServer(cfg.ListenAddr,httpapi.NewWithCapabilities(st,nil,webhook,cfg.APIAuthToken,capabilities,scheduler))
 	go func(){logger.Info("light-agent control plane listening","addr",cfg.ListenAddr,"db",cfg.DBPath);if err:=server.ListenAndServe();err!=nil&&!errors.Is(err,http.ErrServerClosed){logger.Error("http server failed","error",err);stop()}}()
 	<-ctx.Done()
 	shutdownCtx,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel()

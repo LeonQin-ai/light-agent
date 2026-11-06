@@ -104,3 +104,37 @@ A Docker/runc container still shares the Host kernel. Treat it as a useful bound
 - Docker block-I/O throttling is not configured yet.
 - The provider exposes a direct authenticated Rust API. Go task-dispatcher integration, task-tier admission and remote-worker routing are separate follow-up work.
 - This provider is runc only. It is not a gVisor provider and must not be used as an automatic fallback for MicroVM-required tasks.
+
+## Go Control Plane execution entrypoint
+
+Configure the Go service with the same Host Manager URL and a dedicated manager token:
+
+```bash
+export LIGHT_AGENT_SANDBOX_MANAGER_URL="http://127.0.0.1:9090"
+export LIGHT_AGENT_SANDBOX_MANAGER_TOKEN="$LIGHT_AGENT_SANDBOX_API_TOKEN"
+```
+
+The authenticated Control Plane exposes a synchronous trusted-internal execution route. This route is intended for operator-approved internal maintenance/build tasks; do not use it to run arbitrary external prompts or user-submitted code.
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8080/v1/execution/run \
+  -H "Authorization: Bearer $LIGHT_AGENT_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "mode":"strict",
+    "trust_tier":"trusted_internal",
+    "task_id":"smoke-001",
+    "cpu_millis":1000,
+    "memory_bytes":1073741824,
+    "pids_limit":128,
+    "executable":"/bin/echo",
+    "argv":["hello-from-worker"],
+    "cwd":"",
+    "timeout_ms":15000,
+    "max_output_bytes":1048576
+  }'
+```
+
+The scheduler resolves the backend against the authenticated Host capability snapshot. Docker/runc is selected only for `trusted_internal`. `external_untrusted` is denied unless a preflight-ready Firecracker MicroVM is available; the current Go scheduler intentionally does not downgrade it to Docker. `constrained_extension` requires a ready WASM provider, which is not wired yet.
+
+The endpoint is synchronous and currently intended for short-lived tasks. Durable queue dispatch, async task status, retries/reconciliation and Feishu-to-Worker integration remain separate milestones.
