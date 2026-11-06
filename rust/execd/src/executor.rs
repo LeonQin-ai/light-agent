@@ -9,24 +9,29 @@ pub fn execute(req:ExecRequest)->Result<ExecResponse>{
     let timeout_ms=req.timeout_ms.clamp(100,MAX_TIMEOUT_MS);let memory=req.memory_bytes.clamp(64*1024*1024,MAX_MEMORY);
     let output_limit=req.max_output_bytes.clamp(1024,MAX_OUTPUT);let cpu=req.cpu_quota_micros.clamp(1000,1_000_000);let pids=req.max_pids.clamp(16,256);
     let cwd=if req.cwd.is_empty(){"/workspace".to_string()}else{if req.cwd.starts_with('/')||req.cwd.split('/').any(|p|p=="..")||req.cwd.contains('\0'){return Err(anyhow!("cwd must be a safe relative path"));}format!("/workspace/{}",req.cwd)};
-    let cgroup=prepare_cgroup(memory,pids,cpu)?;
+    let container_mode=std::env::var("COSEXECD_CONTAINER_MODE").ok().as_deref()==Some("1");
+    if container_mode && req.network { return Err(anyhow!("network access is disabled in Docker Worker mode")); }
+    let cgroup=if container_mode { None } else { prepare_cgroup(memory,pids,cpu)? };
     let network=req.network;
     let uid=std::env::var("COSEXECD_UID").unwrap_or_else(|_|"10000".into()).parse::<u32>().unwrap_or(10000);
     let gid=std::env::var("COSEXECD_GID").unwrap_or_else(|_|"10000".into()).parse::<u32>().unwrap_or(10000);
     let start=Instant::now();let mut command=Command::new(&req.executable);
     command.args(&req.argv).current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    command.env_clear().env("PATH","/usr/local/bin:/usr/bin:/bin").env("HOME","/home/agent").env("TMPDIR","/tmp").env("LANG","C.UTF-8");
+    command.env_clear().env("PATH","/usr/local/bin:/usr/bin:/bin").env("HOME","/tmp").env("TMPDIR","/tmp").env("LANG","C.UTF-8");
     unsafe{
         command.process_group(0);
         command.pre_exec(move||{
-            if libc::unshare(libc::CLONE_NEWNS|libc::CLONE_NEWIPC|libc::CLONE_NEWUTS)!=0{return Err(std::io::Error::last_os_error());}
-            if libc::mount(std::ptr::null(),b"/\0".as_ptr() as *const i8,std::ptr::null(),(libc::MS_REC|libc::MS_PRIVATE) as libc::c_ulong,std::ptr::null())!=0{return Err(std::io::Error::last_os_error());}
             set_limit(libc::RLIMIT_CORE,0)?;set_limit(libc::RLIMIT_FSIZE,64*1024*1024)?;set_limit(libc::RLIMIT_NOFILE,128)?;
             set_limit(libc::RLIMIT_NPROC,256)?;set_limit(libc::RLIMIT_AS,memory)?;
-            if !network&&libc::unshare(libc::CLONE_NEWNET)!=0{return Err(std::io::Error::last_os_error());}
+            set_limit(libc::RLIMIT_CPU,(timeout_ms.saturating_add(999)/1000).saturating_add(1))?;
+            if !container_mode {
+                if libc::unshare(libc::CLONE_NEWNS|libc::CLONE_NEWIPC|libc::CLONE_NEWUTS)!=0{return Err(std::io::Error::last_os_error());}
+                if libc::mount(std::ptr::null(),b"/\0".as_ptr() as *const i8,std::ptr::null(),(libc::MS_REC|libc::MS_PRIVATE) as libc::c_ulong,std::ptr::null())!=0{return Err(std::io::Error::last_os_error());}
+                if !network&&libc::unshare(libc::CLONE_NEWNET)!=0{return Err(std::io::Error::last_os_error());}
+            }
             if libc::prctl(libc::PR_SET_NO_NEW_PRIVS,1,0,0,0)!=0{return Err(std::io::Error::last_os_error());}
             install_seccomp()?;
-            if libc::setgroups(0,std::ptr::null())!=0||libc::setgid(gid)!=0||libc::setuid(uid)!=0{return Err(std::io::Error::last_os_error());}
+            if !container_mode && (libc::setgroups(0,std::ptr::null())!=0||libc::setgid(gid)!=0||libc::setuid(uid)!=0){return Err(std::io::Error::last_os_error());}
             Ok(())
         });
     }

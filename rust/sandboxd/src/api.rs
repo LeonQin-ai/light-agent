@@ -1,4 +1,4 @@
-use crate::{config::validate_workspace_id, state::{AppState, VmRecord}, workspace};
+use crate::{config::validate_workspace_id, docker::{ContainerExecRequest, ContainerRecord, CreateContainerSpec}, state::{AppState, VmRecord}, workspace};
 use axum::{extract::{Path, State}, http::{header::AUTHORIZATION, Request, StatusCode}, middleware::Next, response::{IntoResponse, Response}, Json};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -130,4 +130,25 @@ pub async fn workspace_commit(State(state):State<AppState>,Path(id):Path<String>
 fn ensure_guest_ok(v:&Value)->Result<(),ApiError>{
     if v.get("ok").and_then(Value::as_bool)==Some(true){Ok(())}
     else{Err(ApiError(StatusCode::BAD_GATEWAY,v.get("error").and_then(Value::as_str).unwrap_or("Guest operation failed").to_string()))}
+}
+
+pub async fn create_container(State(state):State<AppState>,Json(req):Json<CreateContainerSpec>)->Result<(StatusCode,Json<ContainerRecord>),ApiError>{
+    let record=state.docker.create(req).await?;
+    Ok((StatusCode::CREATED,Json(record)))
+}
+pub async fn get_container(State(state):State<AppState>,Path(id):Path<String>)->Result<Json<ContainerRecord>,ApiError>{
+    Ok(Json(state.docker.get(&id)?))
+}
+pub async fn start_container(State(state):State<AppState>,Path(id):Path<String>)->Result<Json<ContainerRecord>,ApiError>{
+    Ok(Json(state.docker.start(&id).await?))
+}
+pub async fn stop_container(State(state):State<AppState>,Path(id):Path<String>)->Result<Json<ContainerRecord>,ApiError>{
+    Ok(Json(state.docker.stop(&id).await?))
+}
+pub async fn destroy_container(State(state):State<AppState>,Path(id):Path<String>)->Result<StatusCode,ApiError>{
+    state.docker.destroy(&id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+pub async fn exec_container(State(state):State<AppState>,Path(id):Path<String>,Json(req):Json<ContainerExecRequest>)->Result<Json<Value>,ApiError>{
+    Ok(Json(state.docker.exec(&id,req).await?))
 }

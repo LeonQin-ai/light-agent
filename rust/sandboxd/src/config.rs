@@ -6,11 +6,15 @@ pub struct Config{
     pub listen_addr:String,pub api_token:String,pub state_path:PathBuf,pub jailer_bin:PathBuf,
     pub firecracker_bin:PathBuf,pub jailer_root:PathBuf,pub kernel_path:PathBuf,pub rootfs_path:PathBuf,
     pub workspace_base:PathBuf,pub jailer_uid:u32,pub jailer_gid:u32,pub memory_mib_max:u64,pub vcpu_max:u32,
+    pub docker_bin:PathBuf,pub docker_socket:PathBuf,pub docker_state_path:PathBuf,pub worker_image_digest:String,
+    pub docker_cpu_max_millis:u32,pub docker_memory_max_bytes:u64,pub docker_pids_max:u64,pub docker_timeout_max_ms:u64,
 }
 impl Config{
     pub fn from_env()->Result<Self>{
         let listen_addr=get("LIGHT_AGENT_SANDBOX_LISTEN_ADDR","127.0.0.1:9090");
         let api_token=env::var("LIGHT_AGENT_SANDBOX_API_TOKEN").unwrap_or_default();
+        let docker_socket_raw=get("LIGHT_AGENT_DOCKER_SOCKET","/var/run/docker.sock");
+        let docker_socket=docker_socket_raw.strip_prefix("unix://").unwrap_or(&docker_socket_raw).to_string();
         let host=listen_addr.parse::<std::net::SocketAddr>().map_err(|e|anyhow!("invalid listen address: {e}"))?;
         if !host.ip().is_loopback()&&api_token.len()<32{return Err(anyhow!("non-loopback sandbox API requires a 32+ character API token"));}
         if api_token.is_empty(){return Err(anyhow!("LIGHT_AGENT_SANDBOX_API_TOKEN must be configured"));}
@@ -23,6 +27,14 @@ impl Config{
             workspace_base:PathBuf::from(get("LIGHT_AGENT_WORKSPACE_BASE","/var/lib/light-agent/workspaces")),
             jailer_uid:get("FIRECRACKER_UID","1000").parse()?,jailer_gid:get("FIRECRACKER_GID","1000").parse()?,
             memory_mib_max:get("FIRECRACKER_MEMORY_MIB_MAX","8192").parse()?,vcpu_max:get("FIRECRACKER_VCPU_MAX","8").parse()?,
+            docker_bin:PathBuf::from(get("LIGHT_AGENT_DOCKER_BIN","/usr/bin/docker")),
+            docker_socket:PathBuf::from(docker_socket),
+            docker_state_path:PathBuf::from(get("LIGHT_AGENT_DOCKER_STATE","/var/lib/light-agent/sandbox/containers.json")),
+            worker_image_digest:get("LIGHT_AGENT_WORKER_IMAGE",""),
+            docker_cpu_max_millis:get("LIGHT_AGENT_DOCKER_CPU_MAX_MILLIS","2000").parse()?,
+            docker_memory_max_bytes:get("LIGHT_AGENT_DOCKER_MEMORY_MAX_BYTES","3221225472").parse()?,
+            docker_pids_max:get("LIGHT_AGENT_DOCKER_PIDS_MAX","256").parse()?,
+            docker_timeout_max_ms:get("LIGHT_AGENT_DOCKER_TIMEOUT_MAX_MS","300000").parse()?,
         })
     }
 }

@@ -19,7 +19,7 @@ Before production validate on a real Linux/KVM host: Firecracker/Jailer and Gues
 
 | Milestone | Scope | Exit criteria |
 |---|---|---|
-| M3-D | Docker/runc trusted Worker provider | Create/exec/cancel/destroy OCI Worker; non-root, no capabilities, read-only rootfs, cgroups and default-deny network |
+| M3-D | Docker/runc trusted Worker provider | Initial Rust provider implemented: create/start/exec/stop/destroy, immutable image digest, non-root, no capabilities, read-only rootfs, CPU/memory/PID limits, network=none; real Docker-host integration and Go dispatcher wiring pending |
 | M3-S | gVisor alternative provider | Explicit `runsc` runtime selection for approved no-KVM isolation profiles; startup preflight; fail closed if unavailable; never silently downgrade a MicroVM-required task |
 | M3-F | Firecracker MicroVM provider | External/untrusted code execution; existing KVM/Jailer path validated on KVM-capable hosts; no-KVM tasks route remotely or fail closed |
 | M3-W | WASM plugin provider | Wasmtime/WasmEdge, explicit WASI imports, capability allowlist, fuel/memory/time limits and plugin ABI |

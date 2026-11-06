@@ -39,7 +39,7 @@ The SuperAgent may run in a normal Docker service while all untrusted command/bu
 Every Worker container, including plain Docker mode, must use:
 - non-root UID/GID; `--cap-drop=ALL`; `no-new-privileges`;
 - read-only root filesystem; bounded tmpfs for `/tmp`;
-- per-task CPU, memory, PID and I/O limits;
+- per-task CPU, memory and PID limits; place the workspace base on a quota-controlled filesystem until per-workspace disk quotas are integrated;
 - default-deny network; explicit egress policy only when required;
 - seccomp and AppArmor/SELinux policy; user namespace remapping where supported;
 - no Host PID/network namespace, no privileged mode, no device passthrough;

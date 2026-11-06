@@ -129,14 +129,16 @@ fn detect_kvm() -> KvmCapability {
 }
 
 fn detect_docker() -> DockerCapability {
-    let socket = env::var("DOCKER_HOST")
-        .ok().and_then(|v| v.strip_prefix("unix://").map(str::to_string))
-        .unwrap_or_else(|| "/var/run/docker.sock".into());
+    let raw_socket = env::var("LIGHT_AGENT_DOCKER_SOCKET")
+        .or_else(|_| env::var("DOCKER_HOST"))
+        .unwrap_or_else(|_| "/var/run/docker.sock".into());
+    let socket = raw_socket.strip_prefix("unix://").unwrap_or(&raw_socket).to_string();
     if !Path::new(&socket).exists() {
         return DockerCapability { available: false, runc_available: false, gvisor_registered: false, default_runtime: None, socket, reason: Some("Docker socket is unavailable".into()) };
     }
-    let runtimes = Command::new("docker").args(["info", "--format", "{{json .Runtimes}}"]).output();
-    let default = Command::new("docker").args(["info", "--format", "{{.DefaultRuntime}}"]).output();
+    let host = format!("unix://{socket}");
+    let runtimes = Command::new("docker").args(["--host", host.as_str(), "info", "--format", "{{json .Runtimes}}"]).output();
+    let default = Command::new("docker").args(["--host", host.as_str(), "info", "--format", "{{.DefaultRuntime}}"]).output();
     let (runtimes, default) = match (runtimes, default) {
         (Ok(r), Ok(d)) if r.status.success() && d.status.success() =>
             (String::from_utf8_lossy(&r.stdout).to_string(), String::from_utf8_lossy(&d.stdout).trim().to_string()),
