@@ -90,6 +90,16 @@ The initial implementation intentionally does not support network-enabled tasks,
 
 ## Operational notes
 
-The Sandbox Manager must run on the Docker Host. The Docker CLI path and socket path are configurable. Worker workspaces are exclusive while a container is active; the manager rejects concurrent attachment to the same workspace ID. The Worker workspace is owned by UID/GID 65532 to permit non-root writes.
+The Sandbox Manager must run on the Docker Host. The Docker CLI path and socket path are configurable. Worker workspaces are reserved until the associated container record is destroyed; the manager rejects a second Worker using the same workspace ID. The Worker workspace is owned by UID/GID 65532 to permit non-root writes.
+
+When the Go Control Plane runs in Docker, do not point it at the Host daemon's loopback-only address. Put the Host API behind an HTTPS reverse proxy bound to a private Host interface, preserve the Authorization header, and firewall the listener to the Control Plane network. The Go Host-capability client rejects non-loopback plain HTTP URLs. The Rust Sandbox Manager's own API token must be at least 32 random characters when its listener is not loopback.
 
 A Docker/runc container still shares the Host kernel. Treat it as a useful boundary for approved internal work, not as equivalent to Firecracker.
+
+
+## Limits and current gaps
+
+- No per-workspace disk quota is configured by this provider. Put `LIGHT_AGENT_WORKSPACE_BASE` on a quota-controlled filesystem and monitor free space.
+- Docker block-I/O throttling is not configured yet.
+- The provider exposes a direct authenticated Rust API. Go task-dispatcher integration, task-tier admission and remote-worker routing are separate follow-up work.
+- This provider is runc only. It is not a gVisor provider and must not be used as an automatic fallback for MicroVM-required tasks.
