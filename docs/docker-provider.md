@@ -61,7 +61,7 @@ Execute a structured command (no shell command string):
 curl -fsS -X POST http://127.0.0.1:9090/v1/containers/<container-id>/exec \\
   -H "Authorization: Bearer $LIGHT_AGENT_SANDBOX_API_TOKEN" \\
   -H 'Content-Type: application/json' \\
-  -d '{"executable":"/usr/bin/python3","argv":["-c","print(1+1)"],"cwd":"","timeout_ms":15000,"memory_bytes":536870912,"max_output_bytes":1048576,"cpu_quota_micros":100000,"max_pids":64,"network":false}'
+  -d '{"executable":"/usr/bin/python3","argv":["-c","print(1+1)"],"cwd":"","timeout_ms":15000,"memory_bytes":536870912,"max_output_bytes":1048576,"network":false}'
 \`\`\`
 
 Stop/cancel and destroy:

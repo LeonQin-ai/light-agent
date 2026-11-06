@@ -65,18 +65,12 @@ pub struct ContainerExecRequest {
     pub memory_bytes: u64,
     #[serde(default = "default_output")]
     pub max_output_bytes: usize,
-    #[serde(default = "default_cpu")]
-    pub cpu_quota_micros: u64,
-    #[serde(default = "default_pids")]
-    pub max_pids: u64,
     #[serde(default)]
     pub network: bool,
 }
 fn default_timeout() -> u64 { 15_000 }
 fn default_memory() -> u64 { 512 * 1024 * 1024 }
 fn default_output() -> usize { 1024 * 1024 }
-fn default_cpu() -> u64 { 100_000 }
-fn default_pids() -> u64 { 64 }
 
 #[derive(Clone)]
 pub struct DockerProvider {
@@ -264,10 +258,8 @@ impl DockerProvider {
             return Err(anyhow!("Worker container is not RUNNING"));
         }
         validate_exec_request(&req, self.cfg.docker_timeout_max_ms)?;
-        if req.memory_bytes > record.memory_bytes ||
-            req.cpu_quota_micros > u64::from(record.cpu_millis) * 100 ||
-            req.max_pids > record.pids_limit {
-            return Err(anyhow!("exec resource request exceeds Worker container limits"));
+        if req.memory_bytes > record.memory_bytes {
+            return Err(anyhow!("exec memory request exceeds Worker container limit"));
         }
         let payload = serde_json::to_vec(&json!({
             "op": "exec",
@@ -278,8 +270,6 @@ impl DockerProvider {
                 "timeout_ms": req.timeout_ms,
                 "memory_bytes": req.memory_bytes,
                 "max_output_bytes": req.max_output_bytes,
-                "cpu_quota_micros": req.cpu_quota_micros,
-                "max_pids": req.max_pids,
                 "network": false
             }
         }))?;
@@ -633,7 +623,7 @@ mod tests {
         let req = ContainerExecRequest {
             executable: "/bin/true".into(), argv: vec![], cwd: "../host".into(),
             timeout_ms: 1000, memory_bytes: 64 * 1024 * 1024,
-            max_output_bytes: 4096, cpu_quota_micros: 100000, max_pids: 64, network: false,
+            max_output_bytes: 4096, network: false,
         };
         assert!(validate_exec_request(&req, MAX_EXEC_TIMEOUT_MS).is_err());
         let mut req = req;
