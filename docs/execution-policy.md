@@ -27,11 +27,15 @@ Platform class (`bare_metal`, `virtual_machine`, `container`, `unknown`) and run
 On a VM without nested virtualization or usable `/dev/kvm`:
 - T1 may run in hardened Docker/runc containers.
 - T3 may run in a WASM runtime with no ambient filesystem/network access.
-- T2 must be routed to a remote KVM-capable MicroVM worker pool.
-- If remote MicroVM capacity is unavailable, reject/defer the T2 task by default.
+- T2 should be routed to a remote KVM-capable MicroVM worker pool when one is configured.
+- If no remote pool exists, reject/defer MicroVM-required T2 tasks by default. An administrator may explicitly approve gVisor as an alternate boundary for a narrowly scoped task class, but this is a documented downgrade, not MicroVM equivalence.
 - gVisor/runsc can be an explicitly configured alternative only if the organization accepts that isolation profile. It is not an automatic substitute for a MicroVM.
 
 For the user's 4-vCPU/8-GiB no-KVM VM, this means Docker + WASM can run locally, while strict MicroVM jobs need a separate KVM-capable host. If an operator consciously enables gVisor as an alternate T2 profile, expose that fact in task audit records.
+
+## Standalone execution when no remote Worker Pool exists
+
+A no-KVM node with no remote executor must still support tasks that fit its local trust boundaries. Use [local-degraded-sandbox.md](local-degraded-sandbox.md) for the full Strict, Compatible and Availability mode contract. The default standalone policy is Compatible: trusted internal tasks use hardened runc, constrained extensions use WASM, and gVisor is allowed only by an explicit alternate-boundary policy. MicroVM-required tasks are rejected/deferred when no local KVM and no remote pool are available. Never silently downgrade them.
 
 ## Optional composition
 
