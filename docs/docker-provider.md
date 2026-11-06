@@ -25,7 +25,7 @@ Set \`LIGHT_AGENT_WORKER_IMAGE\` to that full digest reference. The Sandbox Mana
 
 ## Host configuration
 
-The Rust daemon must run as a dedicated service identity that can access the Docker socket and the configured workspace directory. Access to \`docker.sock\` is effectively Host-root access; protect the daemon API token and restrict the listener to loopback or a private, firewall-restricted management network.
+The Rust daemon must run on the Docker Host with access to the Docker socket and workspace base. Workspace preparation changes ownership to UID/GID 65532, so the daemon needs root or `CAP_CHOWN` plus the required directory permissions. Access to `docker.sock` is effectively Host-root access; protect the daemon API token and restrict the listener to loopback or a private, firewall-restricted management network.
 
 \`\`\`bash
 export LIGHT_AGENT_SANDBOX_API_TOKEN="$(openssl rand -hex 32)"
