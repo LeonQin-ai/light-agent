@@ -554,6 +554,7 @@ fn build_create_args(
 fn prepare_workspace(base: &Path, workspace_id: &str) -> Result<PathBuf> {
     fs::create_dir_all(base)?;
     let base = fs::canonicalize(base)?;
+    fs::set_permissions(&base, fs::Permissions::from_mode(0o700))?;
     let requested = base.join(workspace_id);
     fs::create_dir_all(&requested)?;
     let root = fs::canonicalize(&requested)?;
@@ -582,7 +583,7 @@ fn prepare_workspace(base: &Path, workspace_id: &str) -> Result<PathBuf> {
         }
         let mut permissions = meta.permissions();
         let mode = permissions.mode() & 0o777;
-        permissions.set_mode(if meta.is_dir() { mode | 0o700 } else { mode | 0o600 });
+        permissions.set_mode(if meta.is_dir() { 0o700 } else { 0o600 | (mode & 0o111) });
         fs::set_permissions(entry.path(), permissions)?;
     }
     Ok(root)
