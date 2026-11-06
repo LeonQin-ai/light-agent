@@ -24,6 +24,27 @@ pub fn serve(port:u32)->Result<()>{
 #[cfg(not(target_os="linux"))]
 pub fn serve(_port:u32)->Result<()>{Err(anyhow!("cos-execd requires Linux AF_VSOCK"))}
 
+pub fn serve_stdio()->Result<()> {
+    let stdin=std::io::stdin();
+    let stdout=std::io::stdout();
+    let mut reader=BufReader::new(stdin.lock());
+    let mut writer=stdout.lock();
+    loop {
+        let mut line=String::new();
+        let n=reader.read_line(&mut line)?;
+        if n==0 { break; }
+        if n>16*1024*1024 { return Err(anyhow!("stdio request exceeds 16 MiB")); }
+        let response=match serde_json::from_str::<Value>(line.trim_end()) {
+            Ok(request)=>dispatch(request),
+            Err(error)=>json!({"ok":false,"error":format!("invalid JSON request: {error}")}),
+        };
+        serde_json::to_writer(&mut writer,&response)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+    }
+    Ok(())
+}
+
 #[cfg(target_os="linux")]
 fn handle(fd:RawFd)->Result<()>{
     let file=unsafe{std::fs::File::from_raw_fd(fd)};

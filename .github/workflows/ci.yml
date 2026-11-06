@@ -26,3 +26,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --manifest-path rust/Cargo.toml --workspace
       - run: cargo build --manifest-path rust/Cargo.toml --workspace --release
+      - name: Build Docker Worker image
+        run: docker build -f deploy/Dockerfile.worker -t light-agent/worker:ci .

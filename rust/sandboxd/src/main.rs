@@ -1,5 +1,7 @@
 mod api;
+mod capabilities;
 mod config;
+mod docker;
 mod firecracker;
 mod state;
 mod vsock;
@@ -22,7 +24,15 @@ async fn main() -> Result<()> {
         info!("KVM device is not present; VM start will fail closed");
     }
     let state = AppState::load(cfg.clone()).context("load sandbox state")?;
+    state.docker.recover_on_startup().await.context("recover Docker Workers after daemon restart")?;
     let protected = Router::new()
+        .route("/v1/capabilities", get(api::host_capabilities))
+        .route("/v1/containers", post(api::create_container))
+        .route("/v1/containers/:id", get(api::get_container).delete(api::destroy_container))
+        .route("/v1/containers/:id/start", post(api::start_container))
+        .route("/v1/containers/:id/stop", post(api::stop_container))
+        .route("/v1/containers/:id/cancel", post(api::stop_container))
+        .route("/v1/containers/:id/exec", post(api::exec_container))
         .route("/v1/vms", post(api::create_vm))
         .route("/v1/vms/:id", get(api::get_vm).delete(api::destroy_vm))
         .route("/v1/vms/:id/start", post(api::start_vm))

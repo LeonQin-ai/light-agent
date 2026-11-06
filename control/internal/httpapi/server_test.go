@@ -8,6 +8,7 @@ import(
 	"path/filepath"
 	"testing"
 
+	"github.com/LeonQin-ai/light-agent/control/internal/execution"
 	"github.com/LeonQin-ai/light-agent/control/internal/store"
 )
 
@@ -59,4 +60,32 @@ func TestCreateAgentRejectsInvalidInput(t *testing.T){
 		res:=httptest.NewRecorder();h.ServeHTTP(res,req)
 		if res.Code!=http.StatusBadRequest{t.Fatalf("body=%s status=%d response=%s",body,res.Code,res.Body.String())}
 	}
+}
+
+func TestHostCapabilitiesEndpoint(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "capabilities.db"))
+	if err != nil { t.Fatal(err) }
+	defer st.Close()
+	snapshot := execution.Snapshot{
+		Platform: execution.PlatformContainer,
+		ProbeVersion: "test",
+		KVM: execution.KVMCapability{Available: false, Reason: "not exposed"},
+	}
+	handler := NewWithCapabilities(st, nil, nil, "secret", snapshot)
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtime/capabilities", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK { t.Fatalf("status=%d body=%s", res.Code, res.Body.String()) }
+	if !bytes.Contains(res.Body.Bytes(), []byte(`"platform":"container"`)) {
+		t.Fatalf("capability snapshot missing: %s", res.Body.String())
+	}
+}
+
+func TestHostCapabilitiesEndpointRequiresToken(t *testing.T) {
+	h := newTestHandler(t, "secret")
+	req := httptest.NewRequest(http.MethodGet, "/v1/host/capabilities", nil)
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized { t.Fatalf("status=%d", res.Code) }
 }

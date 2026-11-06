@@ -1,4 +1,4 @@
-use crate::{config::Config, firecracker, vsock};
+use crate::{config::Config, docker::DockerProvider, firecracker, vsock};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs, path::Path, process::Stdio, sync::{Arc, Mutex}};
@@ -28,6 +28,7 @@ pub struct VmRecord {
 #[derive(Clone)]
 pub struct AppState {
     pub cfg: Config,
+    pub docker: DockerProvider,
     records: Arc<Mutex<HashMap<String, VmRecord>>>,
     children: Arc<tokio::sync::Mutex<HashMap<String, Child>>>,
 }
@@ -47,7 +48,8 @@ impl AppState {
                 record.updated_at = now();
             }
         }
-        let state = Self { cfg, records: Arc::new(Mutex::new(records)), children: Arc::new(tokio::sync::Mutex::new(HashMap::new())) };
+        let docker = DockerProvider::load(cfg.clone())?;
+        let state = Self { cfg, docker, records: Arc::new(Mutex::new(records)), children: Arc::new(tokio::sync::Mutex::new(HashMap::new())) };
         state.persist()?;
         Ok(state)
     }
@@ -150,7 +152,7 @@ impl AppState {
         let record=self.get_vm(id)?;if record.state!="RUNNING"{return Err(anyhow!("VM is not RUNNING"));}
         vsock::request(&record.vsock_path,port,payload).await
     }
-    pub async fn stop_all(&self){let ids:Vec<String>=self.records.lock().map(|m|m.keys().cloned().collect()).unwrap_or_default();for id in ids{let _=self.stop_process(&id).await;}}
+    pub async fn stop_all(&self){let ids:Vec<String>=self.records.lock().map(|m|m.keys().cloned().collect()).unwrap_or_default();for id in ids{let _=self.stop_process(&id).await;} self.docker.stop_all().await;}
     fn put_record(&self,record:VmRecord)->Result<()>{self.records.lock().map_err(|_|anyhow!("VM state lock poisoned"))?.insert(record.vm_id.clone(),record);self.persist()}
 }
 fn now()->String{use std::time::{SystemTime,UNIX_EPOCH};SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs().to_string()}

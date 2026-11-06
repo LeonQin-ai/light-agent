@@ -1,0 +1,80 @@
+# Cognitive OS execution risk policy
+
+## Principle
+
+Select the execution boundary from the task's trust level and required capabilities. The LLM may propose a task type, but it must not grant itself a lower isolation tier. A deterministic Policy Engine validates the task's origin, tenant, artifact provenance, requested capabilities and risk labels before the Scheduler chooses a backend.
+
+## Three primary tiers
+
+| Tier | Trust | Backend | Examples |
+|---|---|---|---|
+| T1 - trusted internal | Approved code and reviewed tools | Docker/runc | Internal scripts, approved business tools, trusted Agent services |
+| T2 - external/untrusted | User-submitted or third-party arbitrary code | Firecracker MicroVM | Coding Agent builds/tests, unknown repositories, untrusted MCP executables |
+| T3 - constrained extension | Reviewed or sandboxed module with narrow WASI imports | WASM | Data transforms, parsers, policy functions, lightweight plugins |
+
+Docker/runc shares the Host kernel. It is a packaging and process-isolation boundary, not a strong hostile-code boundary. Apply non-root, dropped capabilities, read-only rootfs, seccomp, AppArmor/SELinux, cgroups, PID limits and default-deny networking even for T1.
+
+Firecracker requires KVM. It is the preferred boundary for arbitrary external code when the Host supports it.
+
+WASM is appropriate only for code that can operate through an explicit WASI or host-function capability interface. It does not provide a general Linux environment and is not a replacement for full compilers, arbitrary shell commands or tools requiring unrestricted syscalls. Enforce fuel/instruction budget, linear-memory limit, wall-clock timeout and explicit imports/capabilities.
+
+## Deployment platform detection and capability policy
+
+Platform class (`bare_metal`, `virtual_machine`, `container`, `unknown`) and runtime capabilities (`docker_oci`, `kvm`, `firecracker`, `gvisor_runsc`, `wasm`, `cgroup_v2`) must be detected independently. Physical hardware does not guarantee KVM availability, and a VM may expose nested KVM. Use verified probes; see [host-capability.md](host-capability.md) for the detection contract and scheduler matrix.
+
+## No-KVM deployment policy
+
+On a VM without nested virtualization or usable `/dev/kvm`:
+- T1 may run in hardened Docker/runc containers.
+- T3 may run in a WASM runtime with no ambient filesystem/network access.
+- T2 should be routed to a remote KVM-capable MicroVM worker pool when one is configured.
+- If no remote pool exists, reject/defer MicroVM-required T2 tasks by default. An administrator may explicitly approve gVisor as an alternate boundary for a narrowly scoped task class, but this is a documented downgrade, not MicroVM equivalence.
+- gVisor/runsc can be an explicitly configured alternative only if the organization accepts that isolation profile. It is not an automatic substitute for a MicroVM.
+
+For the user's 4-vCPU/8-GiB no-KVM VM, this means Docker + WASM can run locally, while strict MicroVM jobs need a separate KVM-capable host. If an operator consciously enables gVisor as an alternate T2 profile, expose that fact in task audit records.
+
+## Standalone execution when no remote Worker Pool exists
+
+A no-KVM node with no remote executor must still support tasks that fit its local trust boundaries. Use [local-degraded-sandbox.md](local-degraded-sandbox.md) for the full Strict, Compatible and Availability mode contract. The default standalone policy is Compatible: trusted internal tasks use hardened runc, constrained extensions use WASM, and gVisor is allowed only by an explicit alternate-boundary policy. MicroVM-required tasks are rejected/deferred when no local KVM and no remote pool are available. Never silently downgrade them.
+
+## Optional composition
+
+A WASM plugin may run inside a MicroVM for defense in depth:
+- MicroVM isolates the Guest kernel boundary.
+- WASM restricts the plugin's capabilities inside the Guest.
+- Neither layer receives Host Docker/KVM sockets or unrestricted Host mounts.
+
+Do not create a MicroVM for every WASM function by default; use composition for high-risk plugins or tenant requirements.
+
+## Required task policy fields
+
+Each admitted task should carry immutable, auditable fields:
+- `trust_tier`: `trusted_internal | external_untrusted | constrained_extension`
+- `required_boundary`: `container | microvm | wasm`
+- `allowed_capabilities`: explicit filesystem/network/clock/random/secrets/tool grants
+- `network_policy_id`
+- `resource_profile_id`
+- `artifact_digest` and provenance
+- `policy_version` and decision reason
+
+The model can suggest labels, but only the Policy Engine can finalize or elevate permissions. A task cannot request a weaker boundary than its tenant or origin policy allows.
+
+## Scheduler decision order
+
+1. Resolve tenant and task origin.
+2. Verify artifact provenance and tool/plugin approval.
+3. Derive the minimum required isolation tier from policy.
+4. Validate requested capabilities against an allowlist.
+5. Select an available backend that meets or exceeds the required boundary.
+6. If no compliant backend exists, route to an approved remote pool or fail closed.
+7. Record backend, runtime/image digest, resource limits, policy version and decision reason.
+8. Revoke task capabilities and destroy ephemeral execution state after completion.
+
+## Initial acceptance tests
+
+- External code is never admitted to runc by default.
+- A MicroVM-required task on a no-KVM host is rejected or routed remotely, never silently downgraded.
+- WASM modules cannot access files or network without explicit imported capabilities.
+- WASM fuel, memory and wall-clock limits terminate runaway modules.
+- Task policy cannot be weakened by an Agent prompt or plugin metadata.
+- All backend decisions are auditable and reproducible.

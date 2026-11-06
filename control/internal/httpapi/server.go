@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LeonQin-ai/light-agent/control/internal/execution"
 	"github.com/LeonQin-ai/light-agent/control/internal/lifecycle"
 	"github.com/LeonQin-ai/light-agent/control/internal/model"
 	"github.com/LeonQin-ai/light-agent/control/internal/store"
@@ -18,12 +19,21 @@ type Server struct {
 	store store.Store
 	manager *lifecycle.Manager
 	apiToken string
+	capabilities execution.Snapshot
+	scheduler *execution.Scheduler
 	mux *http.ServeMux
 }
 
 func New(st store.Store, manager *lifecycle.Manager, feishuWebhook http.Handler, apiToken string) *Server {
-	s:=&Server{store:st,manager:manager,apiToken:apiToken,mux:http.NewServeMux()}
+	return NewWithCapabilities(st,manager,feishuWebhook,apiToken,execution.Snapshot{Platform:execution.PlatformUnknown,ProbeVersion:"not-probed"})
+}
+
+func NewWithCapabilities(st store.Store, manager *lifecycle.Manager, feishuWebhook http.Handler, apiToken string, capabilities execution.Snapshot, schedulers ...*execution.Scheduler) *Server {
+	s:=&Server{store:st,manager:manager,apiToken:apiToken,capabilities:capabilities,mux:http.NewServeMux()}
+	if len(schedulers)>0 { s.scheduler=schedulers[0] }
 	s.mux.HandleFunc("GET /healthz",s.health)
+	s.mux.HandleFunc("GET /v1/runtime/capabilities",s.getCapabilities)
+	s.mux.HandleFunc("POST /v1/execution/run",s.runExecution)
 	s.mux.HandleFunc("POST /v1/agents",s.createAgent)
 	s.mux.HandleFunc("GET /v1/agents/{id}",s.getAgent)
 	s.mux.HandleFunc("GET /v1/agents/{id}/runtime",s.getRuntime)
@@ -53,6 +63,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter,r *http.Request) {
 }
 
 func(s *Server)health(w http.ResponseWriter,_ *http.Request){writeJSON(w,200,map[string]string{"status":"ok"})}
+
+func(s *Server)getCapabilities(w http.ResponseWriter,_ *http.Request){writeJSON(w,http.StatusOK,s.capabilities)}
 
 func(s *Server)createAgent(w http.ResponseWriter,r *http.Request){
 	var req struct{TenantID string `json:"tenant_id"`;Role string `json:"role"`}
@@ -116,4 +128,35 @@ func writeLifecycleError(w http.ResponseWriter,err error){
 }
 func writeError(w http.ResponseWriter,status int,code,message string){writeJSON(w,status,map[string]string{"error":code,"message":message})}
 func writeJSON(w http.ResponseWriter,status int,value any){w.Header().Set("Content-Type","application/json");w.WriteHeader(status);_=json.NewEncoder(w).Encode(value)}
-func HTTPServer(addr string,handler http.Handler)*http.Server{return &http.Server{Addr:addr,Handler:handler,ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:30*time.Second,IdleTimeout:60*time.Second}}
+func HTTPServer(addr string,handler http.Handler)*http.Server{return &http.Server{Addr:addr,Handler:handler,ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:6*time.Minute,IdleTimeout:60*time.Second}}
+
+func(s *Server)runExecution(w http.ResponseWriter,r *http.Request){
+ if s.scheduler==nil { writeError(w,http.StatusServiceUnavailable,"execution_provider_unavailable","Sandbox Manager Docker provider is not configured");return }
+ var req struct {
+  Mode execution.Mode `json:"mode"`
+  Tier execution.TrustTier `json:"trust_tier"`
+  TaskID string `json:"task_id"`
+  CPU uint32 `json:"cpu_millis"`
+  Memory uint64 `json:"memory_bytes"`
+  PIDs uint64 `json:"pids_limit"`
+  Executable string `json:"executable"`
+  Argv []string `json:"argv"`
+  CWD string `json:"cwd"`
+  Timeout uint64 `json:"timeout_ms"`
+  Output uint64 `json:"max_output_bytes"`
+ }
+ if err:=decodeJSON(w,r,&req);err!=nil {writeError(w,400,"invalid_request",err.Error());return}
+ if req.TaskID=="" || len(req.TaskID)>96 {writeError(w,400,"invalid_request","task_id must be 1..96 characters");return}
+ for _,ch:=range req.TaskID { if !(ch>='a'&&ch<='z'||ch>='A'&&ch<='Z'||ch>='0'&&ch<='9'||ch=='-'||ch=='_') {writeError(w,400,"invalid_request","task_id may contain only ASCII letters, digits, '-' and '_'");return} }
+ if req.Tier!=execution.TierTrustedInternal {writeError(w,403,"trust_tier_not_admitted","this synchronous Docker endpoint accepts only trusted_internal work; external_untrusted work requires a MicroVM");return}
+ if req.Executable=="" {writeError(w,400,"invalid_request","absolute executable is required");return}
+ if req.Mode=="" {req.Mode=execution.ModeStrict}
+ if req.CPU==0 {req.CPU=1000}; if req.Memory==0 {req.Memory=1024*1024*1024}; if req.PIDs==0 {req.PIDs=128}; if req.Timeout==0 {req.Timeout=15000}; if req.Output==0 {req.Output=1024*1024}
+ result,err:=s.scheduler.Run(r.Context(),execution.RunRequest{
+  Mode:req.Mode,Policy:execution.TaskPolicy{Tier:req.Tier},Host:s.capabilities,
+  Worker:execution.WorkerSpec{WorkerID:"api-"+req.TaskID,WorkspaceID:req.TaskID,CPUMillis:req.CPU,MemoryBytes:req.Memory,PidsLimit:req.PIDs},
+  Command:execution.ExecSpec{Executable:req.Executable,Argv:req.Argv,CWD:req.CWD,TimeoutMS:req.Timeout,MemoryBytes:req.Memory,MaxOutputBytes:req.Output,Network:false},
+ })
+ if err!=nil {writeError(w,422,"execution_rejected",err.Error());return}
+ writeJSON(w,http.StatusOK,result)
+}

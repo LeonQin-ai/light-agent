@@ -10,6 +10,10 @@ type Config struct{
 	FeishuVerificationToken string
 	FeishuEncryptKey string
 	FeishuAllowedOpenIDs map[string]struct{}
+	DockerSocket string
+	WASMRuntime string
+	SandboxManagerURL string
+	SandboxManagerToken string
 }
 
 func Load()Config{
@@ -21,6 +25,10 @@ func Load()Config{
 		FeishuVerificationToken:strings.TrimSpace(os.Getenv("FEISHU_VERIFICATION_TOKEN")),
 		FeishuEncryptKey:strings.TrimSpace(os.Getenv("FEISHU_ENCRYPT_KEY")),
 		FeishuAllowedOpenIDs:splitSet(os.Getenv("FEISHU_ALLOWED_OPEN_IDS")),
+		DockerSocket:env("LIGHT_AGENT_DOCKER_SOCKET","/var/run/docker.sock"),
+		WASMRuntime:env("LIGHT_AGENT_WASM_RUNTIME","wasmtime"),
+		SandboxManagerURL:env("LIGHT_AGENT_SANDBOX_MANAGER_URL",""),
+		SandboxManagerToken:strings.TrimSpace(os.Getenv("LIGHT_AGENT_SANDBOX_MANAGER_TOKEN")),
 	}
 }
 func env(key,fallback string)string{if v:=strings.TrimSpace(os.Getenv(key));v!=""{return v};return fallback}
