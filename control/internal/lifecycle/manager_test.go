@@ -51,3 +51,61 @@ func TestStaleRuntimeCannotBecomeReady(t *testing.T){
 	if err=st.MarkRuntimeReady(ctx,old);!errors.Is(err,store.ErrConflict){t.Fatalf("stale generation accepted: %v",err)}
 	if err=st.MarkRuntimeReady(ctx,current);err!=nil{t.Fatal(err)}
 }
+
+// cancellingStopDriver models a successful stop racing with request cancellation.
+type cancellingStopDriver struct {
+	fakeDriver
+	cancel context.CancelFunc
+}
+
+func (d *cancellingStopDriver) Stop(ctx context.Context, a model.Agent, r model.Runtime) error {
+	err := d.fakeDriver.Stop(ctx, a, r)
+	d.cancel()
+	return err
+}
+
+func TestSleepPersistsSuccessfulStopAfterRequestCancellation(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "cancel-sleep.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	agent, err := st.CreateAgent(ctx, "tenant", "supervisor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	driver := &cancellingStopDriver{cancel: cancel}
+	manager := New(st, driver)
+	if _, err = manager.Wake(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The response may observe cancellation, but the durable state must reflect
+	// the successful external stop so a retry can finish without stopping twice.
+	_, _ = manager.Sleep(stopCtx, agent.ID)
+	runtime, err := st.GetRuntime(ctx, agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.State != model.RuntimeStopped {
+		t.Fatalf("runtime state = %s, want STOPPED", runtime.State)
+	}
+	updated, err := st.GetAgent(ctx, agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.State != model.AgentSleeping {
+		t.Fatalf("agent state = %s, want SLEEPING", updated.State)
+	}
+	if _, err = manager.Sleep(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if driver.stops != 1 {
+		t.Fatalf("stop calls = %d, want 1", driver.stops)
+	}
+	if _, err = manager.Wake(ctx, agent.ID); err != nil {
+		t.Fatalf("wake after stopped runtime: %v", err)
+	}
+}

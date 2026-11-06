@@ -56,6 +56,8 @@ func (m *Manager) Sleep(ctx context.Context,agentID string)(model.Runtime,error)
 		_ = m.store.FailRuntime(context.WithoutCancel(ctx),runtime,err.Error())
 		return model.Runtime{},err
 	}
-	if err=m.store.MarkRuntimeStopped(ctx,runtime);err!=nil{return model.Runtime{},err}
+	// Stop has completed its external side effect. Persist it even if the
+	// request was cancelled, otherwise future sleep calls stay in STOPPING.
+	if err=m.store.MarkRuntimeStopped(context.WithoutCancel(ctx),runtime);err!=nil{return model.Runtime{},err}
 	return m.store.GetRuntime(ctx,agentID)
 }
