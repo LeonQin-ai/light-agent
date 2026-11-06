@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -42,7 +43,8 @@ func NewDockerWorkerClient(baseURL, token string) (*DockerWorkerClient,error) {
 	if strings.TrimSpace(token)=="" { return nil,fmt.Errorf("Sandbox Manager token is required") }
 	if u.Scheme=="http" {
 		host:=u.Hostname()
-		if host!="localhost" { return nil,fmt.Errorf("plain HTTP Sandbox Manager URL must be loopback") }
+		ip:=net.ParseIP(host)
+		if host!="localhost" && (ip==nil || !ip.IsLoopback()) { return nil,fmt.Errorf("plain HTTP Sandbox Manager URL must be loopback") }
 	}
 	return &DockerWorkerClient{baseURL:strings.TrimRight(baseURL,"/"),token:token,http:&http.Client{Timeout:6*time.Minute,CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}}},nil
 }
