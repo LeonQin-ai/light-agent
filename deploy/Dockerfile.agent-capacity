@@ -1,0 +1,11 @@
+ARG CAPACITY_BASE_IMAGE=debian:bookworm-slim
+FROM ${CAPACITY_BASE_IMAGE}
+USER root
+COPY --chmod=0755 cognitive-os-agent /usr/local/bin/cognitive-os-agent
+LABEL com.light-agent.runtime-commit=6bdfc849bba6d196739372bf18d005076062f068
+RUN mkdir -p /state /workspace && chown 65532:65532 /state /workspace
+ENV COA_LLM_PROVIDER=mock COA_LLM_MODEL=mock
+WORKDIR /workspace
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/cognitive-os-agent"]
+CMD ["--state", "/state", "--workspace", "/workspace", "serve", "8080"]
