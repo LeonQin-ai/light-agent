@@ -1,41 +1,194 @@
 # Light Agent
 
-SuperAgent Bot + On-Demand Sleep/Wake + pluggable Docker / gVisor Sandbox / Firecracker execution backends.
+**English** | [简体中文](README.zh-CN.md)
 
-A hybrid Agent Operating Runtime built on Cognitive OS. Agent identity and memory persist; execution runtimes are disposable and selected by task risk plus verified host capabilities. Docker/runc serves approved internal work, WASM serves constrained extensions, and Firecracker serves arbitrary untrusted code when KVM is available.
+A persistent Agent control plane with disposable, policy-selected execution runtimes.
+Built with Go, Rust and the C11 [Cognitive OS](https://github.com/LeonQin-ai/cognitive-os-agent) runtime.
 
-## Components
-- Go Control Plane (Host): Feishu ingress, Agent Registry, Task API, durable inbox and lifecycle coordination.
-- C11 Cognitive OS: SuperAgent reasoning, Memory, Context, Policy and DAG orchestration; runs as a restricted service/container and never receives unrestricted Host command execution.
-- Rust Sandbox Manager (Host): trusted execution broker with Firecracker/Jailer and initial Docker/runc Worker providers. Authenticated `/v1/capabilities` reports Host platform and visible runtime prerequisites.
-- Docker deployment: hardened Compose profile for the Go Control Plane; Agents never receive the Docker socket.
-- Firecracker MicroVM (optional): high-isolation Worker runtime on KVM-capable nodes.
-- WASM runtime (planned): constrained plugin and compute-function execution.
-- Rust cos-execd (Guest/Container): structured command execution over AF_VSOCK or stdio, with namespaces, seccomp, rlimits, bounded output and process-tree cancellation.
-- Host Workspace Broker: bounded snapshot transfer over vsock, read-only source semantics, private Guest workspace and SHA-256 optimistic commit.
+Agent identity, task state and memory references persist independently of execution
+processes. The current working path runs approved internal commands in hardened
+Docker/runc Workers. Firecracker, gVisor and WASM have separate implementation and
+validation milestones.
 
-## Security invariants
-1. No generic Host exec, shell, Python or command API.
-2. Every task is assigned an execution boundary by Policy Engine; arbitrary external code requires MicroVM or an explicitly approved alternate policy.
-3. If no compliant local or remote backend exists, execution fails closed. Never fall back to Host or silently downgrade isolation.
-4. Guest cannot access Host rootfs, Docker socket, Firecracker API socket or /dev/kvm.
-5. Host files are exposed only through the workspace broker; source is not mounted into Guest.
-6. Agent Identity, Memory, Session, Task Journal, Workspace metadata, policy versions and artifact references persist independently of processes and VM snapshots.
+**Status:** Linux and Docker execution have been tested on a real VM. The production
+Cognitive OS lifecycle/message driver is still pending; ordinary API/Feishu messages
+currently fail with `runtime_driver_unavailable`.
 
-## Current implementation
-- M0: Go module, docs, models, lifecycle/RPC contracts and CI.
-- M1: Go Control Plane, SQLite Agent/Task/Event inbox, Feishu direct-message ingress, idempotency and API.
-- M2a: durable Runtime records, single-flight wake reservation, generation fencing and sleep admission.
-- M2b/M3 foundation: Rust cos-sandboxd, Jailer/Firecracker API, virtio-vsock, Guest health and Cognitive OS RPC.
-- M4 foundation: Rust cos-execd with structured exec, timeouts, bounded output, namespaces, seccomp, rlimits and optional cgroup v2.
-- M5 foundation: workspace snapshot sync and SHA-256 conflict-checked file commit.
+## What works today
 
-M3-D has a Rust Docker/runc provider and Go scheduler with synchronous `/v1/execution/run` and durable `/v1/agents/{id}/executions` admission. Tasks persist Worker handles, propagate running cancellation and reconcile recorded Workers after restart. Host capabilities refresh every 30 seconds, expire after 90 seconds, and are journaled with monotonic versions; failed probes disable execution until recovery. Ordinary API/Feishu messages report `runtime_driver_unavailable` until a restricted Cognitive OS driver is implemented. See `docs/durable-execution.md` and `docs/docker-provider.md`. gVisor/WASM providers and Firecracker KVM boot validation remain pending.
+| Area | Current behavior |
+|---|---|
+| Control plane | Go HTTP API; SQLite Agent, task, inbox and runtime records |
+| Trusted execution | Synchronous and durable queued Docker commands; task status, idempotency and running cancellation |
+| Recovery | Persist Worker handles before start; clean recorded Workers on restart; fail interrupted work without replay |
+| Host capabilities | Authenticated probes; 30s refresh, 90s expiry, SQLite observation versions; failures disable execution |
+| Docker Workers | Immutable preloaded image digest/ID; non-root, read-only rootfs, no network/capabilities, resource limits and private workspace |
+| Feishu | Signed, allowlisted direct-message ingestion with atomic durable ACK; reasoning integration pending |
+| Agent lifecycle | Generation fencing and wake/sleep state machine; production driver not wired |
+| Firecracker / file broker | Jailer, vsock, Guest RPC and conflict-checked workspace foundations; KVM boot validation pending |
+| gVisor / WASM | Policy and capability scaffolding; execution providers pending |
+
+The Go scheduler currently executes Docker work only. A policy decision selecting
+another backend does not make its provider available. See the [roadmap](docs/roadmap.md).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    API[Trusted execution API] --> Go[Go control plane]
+    Go <--> DB[(SQLite)]
+    Go --> Policy[Policy + live Host capabilities]
+    Policy --> Host[Rust Sandbox Manager]
+    Host --> Docker[Docker/runc Worker]
+    Docker --> Exec[cos-execd]
+    Messages[API / Feishu messages] --> Go
+    Go -. pending driver .-> Cognitive[Cognitive OS reasoning runtime]
+```
+
+- **Go control plane** owns admission, durable state, cancellation and recovery.
+- **Rust `cos-sandboxd`** is the trusted Host broker for Worker lifecycle and
+  capability probing. Agents never receive its Docker socket or Host API token.
+- **Rust `cos-execd`** runs structured commands inside the Worker with deadlines,
+  bounded output, seccomp and resource limits.
+- **Cognitive OS** supplies the reasoning/runtime foundation, pinned in
+  [`COGNITIVE_OS_REF`](COGNITIVE_OS_REF). Direct container capacity tests are separate
+  from the unfinished production message driver.
 
 ## Quick start
-Requirements: Go 1.23+, Rust stable. For a VM without nested virtualization, use `deploy/compose.yaml` for the Control Plane and follow `docs/runtime-backends.md`. Firecracker execution additionally requires Linux/KVM. Run make test, make rust-test, make build and make rust-build.
 
-The Control Plane API is loopback-only by default. If binding to a non-loopback address, configure LIGHT_AGENT_API_TOKEN; send it as Authorization: Bearer <token>. Health and Feishu webhook routes are separate.
+### Run the control plane
 
-## Feishu
-The webhook is disabled unless verification token, encryption key and sender Open ID allowlist are configured. Initial support is direct messages only; group messages are rejected. Signatures are verified and events/tasks are committed atomically before ACK.
+Requires Go 1.23+. Real Worker execution also needs a Linux Host Sandbox Manager,
+Docker/runc and cgroup v2. Rust builds were verified with Rust 1.99.1.
+
+```bash
+git clone https://github.com/LeonQin-ai/light-agent.git
+cd light-agent
+go mod download
+go run ./control/cmd/light-agentd
+```
+
+In another terminal:
+
+```bash
+curl -fsS http://127.0.0.1:8080/healthz
+```
+
+The default listener is `127.0.0.1:8080`; state is in `./data/light-agent.db`.
+Configuration comes from environment variables; the process does **not** automatically
+load `.env`. See [`.env.example`](.env.example).
+
+Set `LIGHT_AGENT_API_TOKEN` before exposing the API beyond loopback. Authenticated
+`/v1/*` requests use `Authorization: Bearer <token>`. Health and the Feishu webhook
+have separate access rules.
+
+### Enable real Docker execution
+
+Follow the [Docker provider guide](docs/docker-provider.md) to build/preload an
+immutable Worker image and start the trusted Host Sandbox Manager. Then configure:
+
+```bash
+export LIGHT_AGENT_API_TOKEN='<control-plane-secret>'
+export LIGHT_AGENT_SANDBOX_MANAGER_URL='http://127.0.0.1:9090'
+export LIGHT_AGENT_SANDBOX_MANAGER_TOKEN='<sandbox-manager-secret>'
+go run ./control/cmd/light-agentd
+```
+
+Use different secrets for the two services. Non-loopback Manager connections
+require HTTPS. Plain HTTP is accepted only for loopback.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /v1/agents` | Create a persistent supervisor identity |
+| `POST /v1/agents/{id}/executions` | Queue a trusted command; require `request_id` or `Idempotency-Key` |
+| `GET /v1/tasks/{id}` | Read durable task state and output |
+| `POST /v1/tasks/{id}/cancel` | Cancel queued/running work |
+| `POST /v1/execution/run` | Run a short synchronous trusted command |
+| `GET /v1/runtime/capabilities` | Inspect current Host capabilities and observation version |
+
+Examples and recovery semantics are in [durable execution](docs/durable-execution.md).
+Ordinary chat text is not converted into commands or image configuration. Docker
+execution accepts trusted-internal work; unsupported or noncompliant work fails closed.
+
+### Deploy the control plane with Compose
+
+```bash
+cp deploy/.env.example deploy/.env
+# Edit deploy/.env and replace example secrets/configuration.
+docker compose --env-file deploy/.env -f deploy/compose.yaml up --build -d
+```
+
+Compose deploys **only the Go control plane**. It does not start the Sandbox Manager,
+reasoning service or a model. It publishes the API on Host loopback without mounting
+the Docker socket. A containerized control plane needs a reachable, protected HTTPS
+Manager endpoint; its loopback is not the Docker Host's loopback.
+
+## Validation and capacity
+
+On an OpenCloudOS VM with **4 vCPUs and 3655MiB RAM**, native Go race/static checks,
+12 Rust tests, release builds and seven real Docker smoke groups passed. The complete
+deployment Dockerfile build encountered base-image download timeouts; smoke used a
+preloaded test base. See the [Linux validation report](docs/linux-validation-2026-11-06.md).
+
+The [Agent capacity report](docs/agent-capacity-2026-11-06.md) measures **real,
+independent Cognitive OS containers with a Mock LLM**:
+
+| Workload | Verified instances | Sustained check | Completed tasks / errors | P95 |
+|---|---:|---:|---:|---:|
+| Light reasoning, Mock LLM | 128 | 60s | 15,360 / 0 | 181ms |
+| Real file tool, Mock LLM | 64 | 120s | 15,360 / 0 | 275ms |
+
+154 instances became ready before the memory reserve stopped expansion. This is a
+startup observation, not a sustained-load capacity. 96 file-tool instances failed
+the longer check. Use 64 as the initial tested operating point for this workload,
+then validate your own task mix and longer soaks. These results do not establish
+real-LLM, build/browser or MicroVM density.
+
+```bash
+# Native Linux checks; needs Go, Rust and a C compiler for the race detector.
+bash scripts/validate-linux.sh
+```
+
+Reproduce execution with [`scripts/smoke-docker.py`](scripts/smoke-docker.py) and
+capacity tests with the [capacity testing guide](docs/agent-capacity-testing.md).
+CI includes Go/Rust checks, a Worker image build and Docker lifecycle smoke.
+
+## Security boundaries
+
+- No generic Host shell/exec API and no automatic fallback to Host execution.
+- Task policy must match an available backend; isolation is never silently
+  downgraded. Docker/runc shares the Host kernel and is used for approved work.
+- Agent containers receive only assigned private state/workspaces, with no Host
+  rootfs, Docker socket, Firecracker API socket or `/dev/kvm` access.
+- Worker images are operator-preloaded and immutable. Requests cannot select
+  arbitrary images, mounts or privileged container settings.
+- Failed/expired capability observations revoke admission; historical snapshots
+  never restore readiness after restart.
+- Interrupted work is not automatically replayed. Distributed database ownership
+  and transactional creation-intent/orphan reconciliation remain pending.
+
+Before production, validate the required backend and workload on the target Host.
+See [security boundaries](docs/security-boundaries.md) and [execution policy](docs/execution-policy.md).
+
+## Documentation and source
+
+| Topic | Reference |
+|---|---|
+| Architecture and milestones | [Architecture](docs/architecture.md) · [Roadmap](docs/roadmap.md) |
+| Execution and deployment | [Docker](docs/docker-provider.md) · [Durable tasks](docs/durable-execution.md) · [Backend choices](docs/runtime-backends.md) |
+| Capability registry | [Host detection](docs/host-capability.md) · [Refresh and history](docs/capability-refresh.md) |
+| Reasoning integration | [Cognitive OS contract](docs/cognitive-os-integration.md) |
+| Firecracker | [Sandbox deployment](docs/sandbox-deployment.md) |
+| Measurements | [Linux verification](docs/linux-validation-2026-11-06.md) · [Agent capacity](docs/agent-capacity-2026-11-06.md) · [Reproduction](docs/agent-capacity-testing.md) |
+
+```text
+control/       Go control plane, policy, lifecycle, API and SQLite store
+rust/          Host Sandbox Manager and in-Worker command executor
+proto/         Control / sandbox protocol contracts
+deploy/        Control-plane and Worker container recipes, Compose configuration
+guest-image/   Firecracker Guest installation and systemd units
+scripts/       Linux verification, Docker smoke and Agent capacity benchmarks
+docs/          Design, deployment, validation and remaining integration work
+```
+
+License: [Apache-2.0](LICENSE).
