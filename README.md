@@ -149,6 +149,9 @@ real-LLM, build/browser or MicroVM density.
 bash scripts/validate-linux.sh
 ```
 
+The follow-up verified 72 Linux file-tool instances for 120 seconds and two
+concurrent QEMU TCG guests on Windows. [Linux and Windows capacity follow-up (Chinese)](docs/agent-capacity-followup-2026-11-07.md)
+
 Reproduce execution with [`scripts/smoke-docker.py`](scripts/smoke-docker.py) and
 capacity tests with the [capacity testing guide](docs/agent-capacity-testing.md).
 CI includes Go/Rust checks, a Worker image build and Docker lifecycle smoke.

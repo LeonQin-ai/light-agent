@@ -139,6 +139,8 @@ API 端口发布在主机回环地址，不挂载 Docker socket。
 bash scripts/validate-linux.sh
 ```
 
+复测中，Linux 的 72 个文件工具实例通过了 120 秒负载验证，Windows 的两台 QEMU TCG 来宾通过了并发验证。 [Linux 与 Windows 容量复测报告](docs/agent-capacity-followup-2026-11-07.md)
+
 真实执行复现脚本为 [`scripts/smoke-docker.py`](scripts/smoke-docker.py)，
 容量测试见[复现指南](docs/agent-capacity-testing.md)。
 CI 已配置 Go/Rust 检查、Worker 镜像构建和 Docker 生命周期冒烟测试。
