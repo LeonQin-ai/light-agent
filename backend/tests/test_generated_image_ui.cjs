@@ -98,6 +98,35 @@ const data='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA
   const sizes=await page.evaluate(()=>['sidebar','chat-input'].map((id,i)=>$(id).getBoundingClientRect()[i?'height':'width']));
   await page.reload();await page.evaluate(()=>chatInitResize());
   assert.deepEqual(await page.evaluate(()=>['sidebar','chat-input'].map((id,i)=>$(id).getBoundingClientRect()[i?'height':'width'])),sizes,'sizes persist across reload');
+  await page.locator('#chat-input').fill('保留未发送草稿');
+  await page.locator('#chat-composer-toggle').click();
+  assert.equal(await page.locator('#chat-input').isVisible(),false);
+  await page.reload();await page.evaluate(()=>chatInitResize());
+  assert.equal(await page.locator('#chat-input').isVisible(),false,'collapsed composer survives reload');
+  await page.locator('#chat-composer-toggle').click();
+  await page.locator('#chat-input').fill('保留未发送草稿');
+  await page.locator('#chat-composer-toggle').click();
+  await page.locator('#chat-composer-toggle').click();
+  assert.equal(await page.locator('#chat-input').inputValue(),'保留未发送草稿');
+  await page.locator('#chat-composer-resize').focus();await page.keyboard.press('Home');
+  assert.equal(await page.locator('#chat-input').isVisible(),false,'minimum size collapses input');
+  await page.keyboard.press('ArrowUp');
+  assert.equal((await page.locator('#chat-input').boundingBox()).height,28,'drag range supports a single line');
+  const grip=await page.locator('#chat-composer-resize').boundingBox();
+  await page.mouse.move(grip.x+grip.width/2,grip.y+grip.height/2);await page.mouse.down();
+  await page.mouse.move(grip.x+grip.width/2,grip.y+grip.height/2+40,{steps:5});await page.mouse.up();
+  assert.equal(await page.locator('#chat-input').isVisible(),false,'downward drag collapses input');
+  await page.evaluate(()=>{
+   chatAddBubble('bot','');window.collapseFixture=CHAT_MSGS.at(-1);
+   collapseFixture.pending=true;collapseFixture.progress={stage:'planning',commentary:'阶段结论保留',steps:[]};renderChatEntry(collapseFixture);
+  });
+  await page.evaluate(()=>collapseFixture.el.querySelector('.run-collapse').click());
+  assert.equal(await page.evaluate(()=>collapseFixture.el.querySelector('.run-context').getBoundingClientRect().height),0);
+  await page.evaluate(()=>renderChatEntry(collapseFixture));
+  assert.equal(await page.evaluate(()=>collapseFixture.el.querySelector('.run-collapse').getAttribute('aria-expanded')),'false','progress refresh preserves collapse');
+  assert.equal(await page.evaluate(()=>collapseFixture.el.querySelector('.chat-stage-updates').textContent),'阶段结论保留');
+  await page.evaluate(()=>collapseFixture.el.querySelector('.run-collapse').click());
+  assert.ok(await page.evaluate(()=>collapseFixture.el.querySelector('.run-context').getBoundingClientRect().height>0));
   assert.deepEqual(errors,[]);console.log('PASS #241: assistant plain-path output displays verified images, zoom, redraw, rollover and mobile; untrusted tool text cannot forge previews');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});
