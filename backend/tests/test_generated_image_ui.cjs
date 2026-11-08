@@ -36,6 +36,7 @@ const data='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA
    if(process.env.UI_EVIDENCE_DIR){fs.mkdirSync(process.env.UI_EVIDENCE_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.UI_EVIDENCE_DIR,`issue256-${width}.png`),fullPage:true});}
    await page.evaluate(()=>{imageFixture.pending=false;imageFixture.progress.stage='completed';renderChatEntry(imageFixture);});
    assert.equal(await page.evaluate(()=>getComputedStyle(imageFixture.el.querySelector('.chat-answer')).maxHeight),'none','long answer must not clip its delivery image');
+   await page.waitForFunction(()=>imageFixture.el.querySelector('.chat-image-button img')?.naturalWidth===1);
    await page.evaluate(()=>imageFixture.el.querySelector('.chat-image-button').click());
    assert.equal(await page.locator('dialog[open] img').count(),1);await page.locator('dialog[open] button').click();
    await page.evaluate(()=>{imageFixture.images=undefined;imageFixture.progress.steps=[];renderChatEntry(imageFixture);chatPersist();});
