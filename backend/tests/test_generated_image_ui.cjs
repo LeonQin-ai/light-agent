@@ -73,6 +73,16 @@ const data='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA
   });
   await page.waitForFunction(()=>[...inlineReply.querySelectorAll('.chat-answer img')].filter(i=>i.naturalWidth>0).length===5);
   assert.equal(await page.evaluate(()=>inlineReply.querySelectorAll('.chat-images').length),0,'legacy cached previews use their recorded read paths');
+  await page.evaluate(()=>{
+   const entry=CHAT_MSGS.at(-1);
+   entry.text='| 排名 | 配图 |\n'+Array.from({length:5},(_,i)=>`| ${i+1} | img${i+1}.jpg |`).join('\n')+
+     '\n逐条详情：\n'+Array.from({length:5},(_,i)=>`${i+1}. **热点 ${i+1}** — 配图 img${i+1}.jpg（已核对）`).join('\n')+
+     '\n产物：img1.jpg、img2.jpg、img3.jpg、img4.jpg、img5.jpg';
+   chatRedraw();window.inlineReply=entry.el;
+  });
+  await page.waitForFunction(()=>[...inlineReply.querySelectorAll('.chat-answer img')].filter(i=>i.naturalWidth>0).length===5);
+  assert.deepEqual(await page.evaluate(()=>[...inlineReply.querySelectorAll('.chat-answer img')].map(i=>i.parentElement.parentElement.textContent)),Array.from({length:5},(_,i)=>`${i+1}. 热点 ${i+1} — 配图 img${i+1}.jpg（已核对）`),'plain filenames embed in detail paragraphs, not tables or inventory');
+  assert.equal(await page.evaluate(()=>inlineReply.querySelectorAll('.chat-images').length),0);
   await page.setViewportSize({width:1280,height:850});
   await page.evaluate(()=>chatInitResize());
   await page.waitForFunction(()=>$('sidebar').getBoundingClientRect().left===0);

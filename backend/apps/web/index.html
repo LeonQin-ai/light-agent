@@ -6258,7 +6258,7 @@ function renderChatEntry(entry){
   const inline=new Set();
   if(entry.text && !entry.pending){
     const answer = document.createElement('pre'); answer.className = 'chat-answer';
-    chatRenderText(answer,entry.text,ref=>{
+    const resolveImage=ref=>{
       let path=ref.replace(/\\/g,'/'), localUrl=false;
       if(/^https?:/i.test(path)){
         try{
@@ -6290,7 +6290,23 @@ function renderChatEntry(entry){
       const key=imageKey(item);
       if(!merged.has(key))return;
       inline.add(key);return merged.get(key);
-    });
+    };
+    chatRenderText(answer,entry.text,resolveImage);
+    // Plain filename mentions in prose also identify verified reply attachments.
+    // Prefer a numbered detail paragraph over a table or an artifact inventory.
+    const candidates=[...answer.children].filter(row=>row.tagName==='DIV' &&
+      !row.textContent.trimStart().startsWith('|') && !row.querySelector('.chat-image-button'));
+    candidates.sort((a,b)=>Number(/^\s*\d+[.、]/.test(b.textContent))-Number(/^\s*\d+[.、]/.test(a.textContent)));
+    for(const item of merged.values()){
+      if(inline.has(imageKey(item)) || !item.name)continue;
+      const escaped=item.name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      const mention=new RegExp('(^|[^\\w./\\\\-])'+escaped+'(?=$|[^\\w.-])');
+      const row=candidates.find(row=>mention.test(row.textContent) &&
+        [...merged.values()].filter(other=>other.name && row.textContent.includes(other.name)).length===1);
+      if(!row)continue;
+      const preview=resolveImage(item.name);
+      if(preview)row.append(document.createElement('br'),chatLoadPreview(preview));
+    }
     el.append(answer);
     chatAppendCopy(el, () => entry.text);
   }
