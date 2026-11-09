@@ -909,6 +909,11 @@ static int h_chat_session_post(const http_request *req, http_response *resp, voi
     }
 
     if (strcmp(action, "resume") == 0) {
+        if (reasoning_session_is_deleted(ctx->reasoning, sid)) {
+            resp->status = 404;
+            http_resp_json(resp, "{\"error\":\"session not found\"}");
+            return 0;
+        }
         char *input = NULL;
         char *acceptance = journal_acceptance(ctx,-1,sid,&input);
         if (!input) input = reasoning_session_last_input(ctx->reasoning, sid);

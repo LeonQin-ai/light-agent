@@ -3921,6 +3921,15 @@ int reasoning_shared_memory_enabled(reasoning *r) {
     return r ? atomic_load(&r->ss->shared_memory_global) : 0;
 }
 
+int reasoning_session_is_deleted(reasoning *r, const char *session_id) {
+    if (!r || !session_id) return 0;
+    mutex_lock(&r->ss->sess_mtx);
+    struct sess_meta *meta = meta_find(r->ss, session_id);
+    int deleted = meta && meta->deleted;
+    mutex_unlock(&r->ss->sess_mtx);
+    return deleted;
+}
+
 /* Last recorded user input of a session (for 恢复/resume). Returns a malloc'd
  * string or NULL when the session is unknown or has no turns. Does not
  * create the session if it does not exist. */

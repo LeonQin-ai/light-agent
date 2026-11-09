@@ -161,6 +161,7 @@ char *reasoning_history_json_ex(reasoning *r, const char *session_id, int max_tu
  * shared_memory, task}; clear one session's history and notes (returns -1
  * if the session does not exist). Callers free the JSON string. */
 char *reasoning_sessions_json(reasoning *r);
+int reasoning_session_is_deleted(reasoning *r, const char *session_id);
 /* Bounded cursor page: {sessions,total,next_cursor}; limit <=100. */
 char *reasoning_sessions_page_json(reasoning *r, const char *cursor, size_t limit);
 int reasoning_session_clear(reasoning *r, const char *session_id);
