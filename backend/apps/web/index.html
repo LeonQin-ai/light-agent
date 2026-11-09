@@ -664,7 +664,7 @@
 .chat-wrap{max-width:940px;box-sizing:border-box;padding:30px 28px 22px;min-height:0}
 #chat-hero{flex:0 0 auto;gap:18px;min-height:176px!important;padding:28px 0 22px}
 #chat-hero .hero-title{font-size:clamp(26px,3vw,36px);font-weight:550;letter-spacing:-1px;line-height:1.35}
-#chat-hero::before{content:'COGNITIVE OS';font-size:11px;letter-spacing:3px;color:var(--muted)}
+#chat-hero::before{content:'LIGHT-AGENT';font-size:11px;letter-spacing:3px;color:var(--muted)}
 #chat-hero .chip{border-radius:12px;padding:12px 16px;background:var(--card);font-size:13px}
 #chat-box{gap:24px!important;padding:18px 4px 28px!important;max-height:none!important;flex:1;min-height:100px;scrollbar-width:thin}
 .chat-message{font-size:14px;line-height:1.8;min-width:0;box-sizing:border-box}
@@ -4383,6 +4383,9 @@ async function chatLoadHistory(){
     if(i>=0) m.images=imageMessages.splice(i,1)[0].images;
   }
   chatRedraw();
+  const lastReply = CHAT_MSGS.findLast(message => message.role === 'bot');
+  CHAT_RESUME_OK = ['interrupted','failed','cancelled','timed_out'].includes(lastReply?.progress?.stage);
+  chatBusyUI(chatIsBusy(session));
   loading.textContent='历史记录已完整加载 · '+r.obj.turns.length+' 轮对话';
 }
 

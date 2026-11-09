@@ -11,11 +11,12 @@ const http=require('node:http');
  try{
   const page=await browser.newPage({timezoneId:'Asia/Shanghai',locale:'zh-CN',viewport:{width:390,height:844}}),errors=[];
   page.on('pageerror',error=>errors.push(error.message));
+  let history={turns:[],runs:[]};
   await page.route('**/v1/**',route=>{
    const u=new URL(route.request().url());
    const value=u.pathname==='/v1/config/llm'?{provider:'openai',model:'fixture',configured:true,api_key_set:true}:
     u.pathname==='/v1/chat/sessions'?(route.request().method()==='POST'?{id:'timestamp-session'}:[{id:'timestamp-session',turns:0}]):
-    u.pathname==='/v1/chat/history'?{turns:[],runs:[]}:[];
+    u.pathname==='/v1/chat/history'?history:[];
    return route.fulfill({contentType:'application/json',body:JSON.stringify(value)});
   });
   await page.goto(`http://127.0.0.1:${server.address().port}`);
@@ -40,6 +41,12 @@ const http=require('node:http');
   await page.evaluate(()=>chatRedraw());
   assert.equal(await page.locator('.bot .chat-date-time').count(),1,'completion and redraw do not duplicate timestamps');
   assert.equal(await page.locator('.bot > .chat-copy').count(),1,'timestamp preserves complete answer copy');
+  history={turns:[],runs:[{id:235,input:'中断的任务',status:'INTERRUPTED'}]};
+  await page.evaluate(()=>chatLoadHistory());
+  assert.equal(await page.locator('#chat-resume').isVisible(),true,'interrupted journal entry restores Resume');
+  history={turns:[],runs:[{id:236,input:'新任务',status:'DONE',output:'任务完成'}]};
+  await page.evaluate(()=>chatLoadHistory());
+  assert.equal(await page.locator('#chat-resume').isVisible(),false,'completed task clears Resume');
   assert.deepEqual(errors,[]);
   console.log('PASS #234: local dates, journal restoration, cache persistence, missing historical dates, live completion and mobile redraw');
  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
