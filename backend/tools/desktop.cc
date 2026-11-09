@@ -59,6 +59,26 @@ static HICON g_icon_small = nullptr;
 static std::wstring g_url_main;
 static std::wstring g_url_error;
 static HWND g_task_pet = nullptr;
+static std::wstring g_task_pet_status;
+
+static LRESULT CALLBACK task_pet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_PAINT) {
+        PAINTSTRUCT paint;
+        HDC dc = BeginPaint(hwnd, &paint);
+        RECT bounds;
+        GetClientRect(hwnd, &bounds);
+        FillRect(dc, &bounds, GetSysColorBrush(COLOR_WINDOW));
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
+        SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
+        DrawTextW(dc, g_task_pet_status.c_str(), -1, &bounds,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        EndPaint(hwnd, &paint);
+        return 0;
+    }
+    if (msg == WM_NCDESTROY) g_task_pet = nullptr;
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
 
 static void toggle_task_pet() {
     if (g_task_pet) {
@@ -68,10 +88,17 @@ static void toggle_task_pet() {
     }
     RECT work{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
-    g_task_pet = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"STATIC",
-        L"正在获取任务状态…", WS_POPUP | WS_CAPTION | WS_SYSMENU | SS_CENTER | SS_CENTERIMAGE,
+    WNDCLASSW window_class{};
+    window_class.lpfnWndProc = task_pet_proc;
+    window_class.hInstance = GetModuleHandleW(nullptr);
+    window_class.lpszClassName = L"LightAgentTaskPet";
+    window_class.hCursor = LoadCursorA(nullptr, IDC_ARROW);
+    RegisterClassW(&window_class);
+    g_task_pet_status = L"正在获取任务状态…";
+    g_task_pet = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, window_class.lpszClassName,
+        L"light-agent · 任务状态", WS_POPUP | WS_CAPTION | WS_SYSMENU,
         work.right - scaled(264), work.bottom - scaled(104), scaled(248), scaled(88),
-        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        nullptr, nullptr, window_class.hInstance, nullptr);
     if (g_task_pet) ShowWindow(g_task_pet, SW_SHOWNOACTIVATE);
 }
 
@@ -99,8 +126,10 @@ public:
             SUCCEEDED(args->TryGetWebMessageAsString(&message)) && message) {
             if (g_task_pet && !IsWindow(g_task_pet)) g_task_pet = nullptr;
             if (!wcscmp(message, L"task-pet:toggle")) toggle_task_pet();
-            else if (g_task_pet && !wcsncmp(message, L"task-pet:status:", 16) && wcslen(message) < 80)
-                SetWindowTextW(g_task_pet, message + 16);
+            else if (g_task_pet && !wcsncmp(message, L"task-pet:status:", 16) && wcslen(message) < 80) {
+                g_task_pet_status = message + 16;
+                InvalidateRect(g_task_pet, nullptr, FALSE);
+            }
         }
         CoTaskMemFree(source);
         CoTaskMemFree(message);
@@ -1049,3 +1078,4 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     CoUninitialize();
     return 0;
 }
+
