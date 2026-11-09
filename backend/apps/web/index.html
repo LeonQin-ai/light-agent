@@ -3873,8 +3873,10 @@ function chatOptionSet(name,value,session=CHAT_SESSION){const o=chatOptions(sess
 function chatPermissionChange(value){chatOptionSet('permission',value);}
 function syncChatPermission(){
   const settings=chatOptions();
-  $('chat-permission').value=settings.permission || 'auto';
+  const permission=$('chat-permission');
+  if(permission)permission.value=settings.permission || 'auto';
   const temperature=$('chat-temperature'),custom=typeof settings.temperature==='number';
+  if(!temperature)return;
   $('chat-temperature-custom').checked=custom;
   temperature.disabled=!custom;
   temperature.value=custom ? settings.temperature : 0.2;
