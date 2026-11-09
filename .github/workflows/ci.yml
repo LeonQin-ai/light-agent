@@ -402,7 +402,7 @@ jobs:
         run: python tests/test_skill_runtime_e2e.py
       - name: Recent status and file detail browser regressions
         run: |
-          npm ci --prefix webarena --ignore-scripts --no-audit --no-fund
+          npm ci --prefix webarena --registry=https://registry.npmjs.org --ignore-scripts --no-audit --no-fund
           node tests/test_model_capabilities_ui.cjs
           NODE_PATH="$PWD/webarena/node_modules" node tests/test_issue_ui.cjs
           NODE_PATH="$PWD/webarena/node_modules" node tests/test_im_members_ui.cjs
