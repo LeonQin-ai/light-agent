@@ -279,8 +279,9 @@ done:
     cJSON_Delete(o);mutex_unlock(&ctx->workspace_lock);free(path);cJSON_Delete(body);return 0;
 }
 
-static char *journal_acceptance(runtime_ctx *ctx,int64_t id,const char *session) {
-    char *raw=tasklog_json(ctx->tasklog,0),*result=NULL;
+static char *journal_acceptance(runtime_ctx *ctx,int64_t id,const char *session,char **interrupted_input) {
+    char *raw=session ? tasklog_session_json(ctx->tasklog,session) : tasklog_json(ctx->tasklog,0);
+    char *result=NULL;
     cJSON *records=raw?cJSON_Parse(raw):NULL,*record;free(raw);
     int64_t selected=-1;
     cJSON_ArrayForEach(record,records) {
@@ -288,6 +289,14 @@ static char *journal_acceptance(runtime_ctx *ctx,int64_t id,const char *session)
         const char *sid=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(record,"session"));
         if(id>=0 ? rid!=id : (!sid||!session||strcmp(sid,session)))continue;
         if(rid<selected)continue;selected=rid;free(result);result=NULL;
+        if (interrupted_input) {
+            free(*interrupted_input);
+            *interrupted_input = NULL;
+            const char *status = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(record,"status"));
+            const char *input = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(record,"input"));
+            if (status && !strcmp(status,"INTERRUPTED") && input && *input)
+                *interrupted_input = xstrdup(input);
+        }
         cJSON *entry;cJSON_ArrayForEach(entry,cJSON_GetObjectItemCaseSensitive(record,"trace")) {
             cJSON *contract=cJSON_GetObjectItemCaseSensitive(entry,"acceptance");
             if(cJSON_IsObject(contract)){free(result);result=cJSON_PrintUnformatted(contract);}
@@ -618,7 +627,7 @@ static int h_task_resume(const http_request *req, http_response *resp, void *ud)
     task *previous=scheduler_acquire(ctx->scheduler,id);
     int access_mode=previous?previous->permission_mode:tasklog_permission_mode(ctx->tasklog,id);
     scheduler_release(ctx->scheduler,previous);
-    char *acceptance=journal_acceptance(ctx,id,NULL);
+    char *acceptance=journal_acceptance(ctx,id,NULL,NULL);
     int64_t nid = scheduler_submit_configured_acceptance(ctx->scheduler,0,input,NULL,0,session,0,NULL,directory,0,access_mode,NULL,acceptance);free(acceptance);
     if(nid>=0)workspace_bind(ctx,NULL,directory,nid);free(directory);
     if (nid < 0) {
@@ -885,22 +894,24 @@ static int h_chat_session_post(const http_request *req, http_response *resp, voi
     }
 
     if (strcmp(action, "resume") == 0) {
-        char *input = reasoning_session_last_input(ctx->reasoning, sid);
+        char *input = NULL;
+        char *acceptance = journal_acceptance(ctx,-1,sid,&input);
+        if (!input) input = reasoning_session_last_input(ctx->reasoning, sid);
         if (!input || !*input) {
+            free(acceptance);
             free(input);
             resp->status = 409;
             http_resp_json(resp, "{\"error\":\"session has no recorded input to resume\"}");
             return 0;
         }
         char *directory=workspace_pick(ctx,NULL,sid);
-        if(!directory){free(input);resp->status=400;http_resp_json(resp,"{\"error\":\"workspace is unavailable\"}");return 0;}
+        if(!directory){free(acceptance);free(input);resp->status=400;http_resp_json(resp,"{\"error\":\"workspace is unavailable\"}");return 0;}
         char *settings_text=body_str(req);cJSON *settings=settings_text?cJSON_Parse(settings_text):NULL;free(settings_text);
         int invalid=0;char *model=chat_route_snapshot(ctx,settings,&invalid);const char *access=json_str(settings,"permission_mode");
         int mode=access && !strcmp(access,"full")?0:access && !strcmp(access,"auto")?2:1;
         if(invalid || (access && strcmp(access,"full") && strcmp(access,"ask") && strcmp(access,"auto"))){
-            free(model);free(input);free(directory);cJSON_Delete(settings);resp->status=400;http_resp_json(resp,"{\"error\":\"invalid session execution settings\"}");return 0;
+            free(acceptance);free(model);free(input);free(directory);cJSON_Delete(settings);resp->status=400;http_resp_json(resp,"{\"error\":\"invalid session execution settings\"}");return 0;
         }
-        char *acceptance=journal_acceptance(ctx,-1,sid);
         int64_t nid = scheduler_submit_configured_acceptance(ctx->scheduler,0,input,NULL,0,sid,cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(settings,"thinking")),NULL,directory,0,mode,model,acceptance);free(acceptance);
         free(model);cJSON_Delete(settings);
         if(nid>=0)workspace_bind(ctx,NULL,directory,nid);free(directory);
