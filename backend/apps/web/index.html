@@ -1395,6 +1395,7 @@ panels.chat = `
       <select id="chat-workspace" aria-label="执行工作区" title="新任务执行目录；不会改变运行中的任务" onchange="workspaceSelect(this.value)"></select>
       <button class="sec sm" onclick="workspaceDialog()" title="添加工作区">＋ 工作区</button>
       <button class="sec sm" onclick="chatToggleSettings()" title="会话设置（共享记忆）">会话设置</button>
+      <button class="sec sm" id="chat-task-pet" type="button" hidden>桌宠</button>
       </div>
     </div>
     <div id="chat-settings" style="display:none;width:100%;margin:10px 0 0;padding:10px 14px;border:1px solid var(--border);border-radius:10px;font-size:12.5px;background:var(--card)">
@@ -6539,6 +6540,24 @@ async function chatCancel(){
 }
 chatRestore();
 
+function initTaskPet(){
+  const bridge=window.chrome?.webview;
+  if(!bridge || new URLSearchParams(location.search).get('desktop')!=='1')return;
+  const button=$('chat-task-pet');
+  button.hidden=false;
+  const publish=async()=>{
+    const {obj,status}=await call('GET','/v1/scheduler',null,2500);
+    const valid=status===200 && Number.isInteger(obj?.active) && Number.isInteger(obj?.queued);
+    const state=valid ? (obj.active || obj.queued ? `运行中 ${obj.active} · 排队 ${obj.queued}` : '空闲 · 没有运行中的任务') : '任务状态暂不可用';
+    bridge.postMessage('task-pet:status:'+state);
+  };
+  button.onclick=()=>{
+    bridge.postMessage('task-pet:toggle');
+    void publish();
+  };
+  setInterval(publish,5000);
+}
+initTaskPet();
 applyTheme(localStorage.getItem('cognitive-os-agent-theme') || 'dark');
 void appearanceLoad();
 

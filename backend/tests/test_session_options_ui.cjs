@@ -1,6 +1,11 @@
 const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 (async()=>{const browser=await chromium.launch({headless:true,channel:process.env.UI_TEST_BROWSER||'msedge'});try{
- const page=await browser.newPage(),sessions=[],submitted=[],errors=[];page.on('pageerror',e=>errors.push(e.message));let globalWrites=0;await page.route('http://ui.test/**',async route=>{
+ const page=await browser.newPage(),sessions=[],submitted=[],errors=[];page.on('pageerror',e=>errors.push(e.message));let globalWrites=0;
+ await page.addInitScript(()=>{
+  window.petMessages=[];
+  window.chrome.webview={postMessage:message=>window.petMessages.push(message)};
+ });
+ await page.route('http://ui.test/**',async route=>{
  const r=route.request(),u=new URL(r.url());let obj=[];
  if(u.pathname==='/')return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(__dirname,'../apps/web/index.html'),'utf8')});
  if(u.pathname==='/v1/config/llm'){if(r.method()==='POST')globalWrites++;obj={provider:'openai',model:'global',api_key_set:true};}
@@ -8,10 +13,14 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  if(u.pathname==='/v1/workspaces')obj={default_workspace:'D:/default',workspaces:[]};
  if(u.pathname==='/v1/chat/sessions'){if(r.method()==='POST'){obj={id:sessions.length?'b':'a',workspace:'D:/default'};sessions.push(obj);}else obj=sessions;}
  if(u.pathname==='/v1/chat/history')obj={turns:[],runs:[]};
+ if(u.pathname==='/v1/scheduler')obj={active:2,queued:1};
  if(u.pathname==='/v1/chat'){submitted.push(r.postDataJSON());obj={id:7};}
  if(u.pathname==='/v1/tasks/7')obj={id:7,status:'DONE',output:'verified'};
  return route.fulfill({contentType:'application/json',body:JSON.stringify(obj)});});
- await page.goto('http://ui.test/');await page.waitForFunction(()=>CHAT_SESSION==='a' && $('chat-model').options.length===3);
+ await page.goto('http://ui.test/?desktop=1');await page.waitForFunction(()=>CHAT_SESSION==='a' && $('chat-model').options.length===3);
+ await page.locator('#chat-task-pet').click();
+ await page.waitForFunction(()=>petMessages.includes('task-pet:status:运行中 2 · 排队 1'));
+ assert.ok(await page.evaluate(()=>petMessages.includes('task-pet:toggle')));
  await page.locator('#chat-model').selectOption('route-a');await page.locator('#chat-permission').selectOption('ask');await page.locator('#chat-thinking-toggle').click();
  await page.locator('#nav-newchat').click();await page.waitForFunction(()=>CHAT_SESSION==='b' && $('chat-model').value==='@cur');
  assert.equal(await page.locator('#chat-permission').inputValue(),'auto');assert.equal(await page.locator('#chat-thinking-toggle').getAttribute('aria-pressed'),'false');

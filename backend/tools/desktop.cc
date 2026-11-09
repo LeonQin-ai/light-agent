@@ -58,6 +58,55 @@ static HICON g_icon_big = nullptr;
 static HICON g_icon_small = nullptr;
 static std::wstring g_url_main;
 static std::wstring g_url_error;
+static HWND g_task_pet = nullptr;
+
+static void toggle_task_pet() {
+    if (g_task_pet) {
+        DestroyWindow(g_task_pet);
+        g_task_pet = nullptr;
+        return;
+    }
+    RECT work{};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    g_task_pet = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"STATIC",
+        L"正在获取任务状态…", WS_POPUP | WS_CAPTION | WS_SYSMENU | SS_CENTER | SS_CENTERIMAGE,
+        work.right - scaled(264), work.bottom - scaled(104), scaled(248), scaled(88),
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (g_task_pet) ShowWindow(g_task_pet, SW_SHOWNOACTIVATE);
+}
+
+class TaskPetHandler final : public ICoreWebView2WebMessageReceivedEventHandler {
+    LONG refs_ = 1;
+public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void **out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (iid != IID_IUnknown && iid != IID_ICoreWebView2WebMessageReceivedEventHandler)
+            return E_NOINTERFACE;
+        *out = static_cast<ICoreWebView2WebMessageReceivedEventHandler *>(this);
+        AddRef();
+        return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&refs_); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        const ULONG refs = InterlockedDecrement(&refs_);
+        if (!refs) delete this;
+        return refs;
+    }
+    HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2 *, ICoreWebView2WebMessageReceivedEventArgs *args) override {
+        LPWSTR source = nullptr, message = nullptr;
+        if (SUCCEEDED(args->get_Source(&source)) && source && g_url_main == source &&
+            SUCCEEDED(args->TryGetWebMessageAsString(&message)) && message) {
+            if (g_task_pet && !IsWindow(g_task_pet)) g_task_pet = nullptr;
+            if (!wcscmp(message, L"task-pet:toggle")) toggle_task_pet();
+            else if (g_task_pet && !wcsncmp(message, L"task-pet:status:", 16) && wcslen(message) < 80)
+                SetWindowTextW(g_task_pet, message + 16);
+        }
+        CoTaskMemFree(source);
+        CoTaskMemFree(message);
+        return S_OK;
+    }
+};
 
 /* ---- ICoreWebView2EnvironmentOptions: pass --disable-features to the
  * browser process.  The WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS env var is
@@ -765,6 +814,8 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_DESTROY:
+        if (g_task_pet && IsWindow(g_task_pet)) DestroyWindow(g_task_pet);
+        g_task_pet = nullptr;
         PostQuitMessage(0);
         return 0;
     }
@@ -924,6 +975,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         EventRegistrationToken token_nav, token_win;
         g_web->add_NavigationStarting(nav, &token_nav);
         g_web->add_NewWindowRequested(win, &token_win);
+        auto *pet = new TaskPetHandler();
+        EventRegistrationToken token_pet;
+        g_web->add_WebMessageReceived(pet, &token_pet);
+        pet->Release();
     }
 
     RECT rc;
