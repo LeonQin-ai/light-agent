@@ -8,13 +8,13 @@
 
 用 C11 构建智能体运行时，把工具执行、多 Agent 协作与过程追踪放进一个本地应用。
 
-[![CI](https://github.com/LeonQin-ai/cognitive-os-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/LeonQin-ai/cognitive-os-agent/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/LeonQin-ai/cognitive-os-agent)](https://github.com/LeonQin-ai/cognitive-os-agent/releases/latest)
+[![CI](https://github.com/LeonQin-ai/light-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/LeonQin-ai/light-agent/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/LeonQin-ai/light-agent)](https://github.com/LeonQin-ai/light-agent/releases/latest)
 [![C11](https://img.shields.io/badge/core-C11-blue.svg)](#架构与设计)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-lightgrey.svg)](#快速开始)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**[下载体验](https://github.com/LeonQin-ai/cognitive-os-agent/releases/latest) · [快速开始](#快速开始) · [开发文档](backend/README.md) · [English](README.md)**
+**[下载体验](https://github.com/LeonQin-ai/light-agent/releases/latest) · [快速开始](#快速开始) · [开发文档](backend/README.md) · [English](README.md)**
 
 </div>
 
@@ -42,7 +42,7 @@
 
 ### 1. 下载或构建
 
-从 **[Releases](https://github.com/LeonQin-ai/cognitive-os-agent/releases/latest)** 下载 Windows 安装包、Linux 便携包或 macOS 应用包。打开桌面应用；Linux 便携包解压后可运行：
+从 **[Releases](https://github.com/LeonQin-ai/light-agent/releases/latest)** 下载 Windows 安装包、Linux 便携包或 macOS 应用包。打开桌面应用；Linux 便携包解压后可运行：
 
 ```bash
 ./cognitive-os-agent serve 18300
@@ -51,8 +51,8 @@
 希望从源码构建？
 
 ```bash
-git clone https://github.com/LeonQin-ai/cognitive-os-agent.git
-cd cognitive-os-agent/backend
+git clone https://github.com/LeonQin-ai/light-agent.git
+cd light-agent/backend
 ```
 
 | 平台 | 构建命令 | 环境要求 |
@@ -151,7 +151,7 @@ SWE-bench 报告也记录了 Docker 隔离重跑 **5/11**。mini 与“风格”
 
 [测试条件与限制](backend/docs/runtime-benchmark-expanded.md) · [百万任务原始数据](backend/docs/runtime-million-2026-10-14.json) · [内存与队列采样](backend/docs/runtime-memory-2026-10-14.svg)
 
-真实模型回归的失败尝试和 API 成本保留在[历史回归报告](https://github.com/LeonQin-ai/cognitive-os-agent/blob/v1.0.0/backend/docs/token-regression-report.md)。它们是定向验证，不代表所有任务都能完成或具有同样的 token 效率。
+真实模型回归的失败尝试和 API 成本保留在[历史回归报告](https://github.com/LeonQin-ai/light-agent/blob/v1.0.0/backend/docs/token-regression-report.md)。它们是定向验证，不代表所有任务都能完成或具有同样的 token 效率。
 
 ## 通过 HTTP 接入
 
@@ -171,7 +171,7 @@ curl http://localhost:18300/metrics
 
 ## 测试与参与贡献
 
-CI 覆盖 Windows、Linux、Linux AddressSanitizer、macOS Apple Silicon 和 macOS Intel。具体提交是否通过，请查看[当前工作流](https://github.com/LeonQin-ai/cognitive-os-agent/actions/workflows/ci.yml)。
+CI 覆盖 Windows、Linux、Linux AddressSanitizer、macOS Apple Silicon 和 macOS Intel。具体提交是否通过，请查看[当前工作流](https://github.com/LeonQin-ai/light-agent/actions/workflows/ci.yml)。
 
 ```bash
 cd backend
@@ -183,7 +183,7 @@ Windows 可用 `bash build.sh test` 构建单元测试，再执行 `./build/cogn
 
 欢迎贡献**可复现的任务失败、模型适配、工具恢复、上下文效率、界面可访问性和文档改进**。提交问题时请附版本或 commit、操作系统、模型与 provider、预期结果，以及脱敏后的执行记录，不要上传 API key 或未获授权的私有源码。
 
-**[反馈 Bug](https://github.com/LeonQin-ai/cognitive-os-agent/issues/new) · [寻找可参与的问题](https://github.com/LeonQin-ai/cognitive-os-agent/issues)**
+**[反馈 Bug](https://github.com/LeonQin-ai/light-agent/issues/new) · [寻找可参与的问题](https://github.com/LeonQin-ai/light-agent/issues)**
 
 ## 深入了解
 

@@ -8,13 +8,13 @@
 
 Run tools, coordinate agents, and inspect what happened — from a C11 core with an embedded web console.
 
-[![CI](https://github.com/LeonQin-ai/cognitive-os-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/LeonQin-ai/cognitive-os-agent/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/LeonQin-ai/cognitive-os-agent)](https://github.com/LeonQin-ai/cognitive-os-agent/releases/latest)
+[![CI](https://github.com/LeonQin-ai/light-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/LeonQin-ai/light-agent/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/LeonQin-ai/light-agent)](https://github.com/LeonQin-ai/light-agent/releases/latest)
 [![C11](https://img.shields.io/badge/core-C11-blue.svg)](#architecture)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-lightgrey.svg)](#quick-start)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**[Download](https://github.com/LeonQin-ai/cognitive-os-agent/releases/latest) · [Quick start](#quick-start) · [Developer guide](backend/README.md) · [中文](README.zh-CN.md)**
+**[Download](https://github.com/LeonQin-ai/light-agent/releases/latest) · [Quick start](#quick-start) · [Developer guide](backend/README.md) · [中文](README.zh-CN.md)**
 
 </div>
 
@@ -42,7 +42,7 @@ Document generation, browser access, and multimodal tasks depend on the selected
 
 ### 1. Install or build
 
-Download a Windows installer, Linux **x64 / ARM64 (AArch64)** portable archive, or macOS package from **[Releases](https://github.com/LeonQin-ai/cognitive-os-agent/releases/latest)**. Open the desktop app, or run the server in the extracted Linux package:
+Download a Windows installer, Linux **x64 / ARM64 (AArch64)** portable archive, or macOS package from **[Releases](https://github.com/LeonQin-ai/light-agent/releases/latest)**. Open the desktop app, or run the server in the extracted Linux package:
 
 ```bash
 ./cognitive-os-agent serve 18300
@@ -51,8 +51,8 @@ Download a Windows installer, Linux **x64 / ARM64 (AArch64)** portable archive, 
 To build from source:
 
 ```bash
-git clone https://github.com/LeonQin-ai/cognitive-os-agent.git
-cd cognitive-os-agent/backend
+git clone https://github.com/LeonQin-ai/light-agent.git
+cd light-agent/backend
 ```
 
 | Platform | Build command | Prerequisites |
@@ -153,7 +153,7 @@ On the documented Windows machine, a deterministic workload completed **1,000,00
 
 [Setup and limits](backend/docs/runtime-benchmark-expanded.md) · [Raw million-task data](backend/docs/runtime-million-2026-10-14.json) · [Memory and queue samples](backend/docs/runtime-memory-2026-10-14.svg)
 
-Real-model regressions, including failures and API costs, remain in the [historical report](https://github.com/LeonQin-ai/cognitive-os-agent/blob/v1.0.0/backend/docs/token-regression-report.md). They are targeted checks, not universal completion or token-efficiency guarantees.
+Real-model regressions, including failures and API costs, remain in the [historical report](https://github.com/LeonQin-ai/light-agent/blob/v1.0.0/backend/docs/token-regression-report.md). They are targeted checks, not universal completion or token-efficiency guarantees.
 
 ## Build on the HTTP API
 
@@ -173,7 +173,7 @@ Authentication, model configuration, local Skills, MCP, and API details: **[deve
 
 ## Test and contribute
 
-CI covers Windows, Linux, Linux AddressSanitizer, macOS Apple Silicon, and macOS Intel. Check the [workflow](https://github.com/LeonQin-ai/cognitive-os-agent/actions/workflows/ci.yml) for a commit’s actual status.
+CI covers Windows, Linux, Linux AddressSanitizer, macOS Apple Silicon, and macOS Intel. Check the [workflow](https://github.com/LeonQin-ai/light-agent/actions/workflows/ci.yml) for a commit’s actual status.
 
 ```bash
 cd backend
@@ -185,7 +185,7 @@ On Windows, run `bash build.sh test`, then `./build/cognitive-os-agent-test.exe`
 
 We welcome **reproducible task failures, provider compatibility fixes, tool recovery, context efficiency, UI accessibility, and documentation**. Include version/commit, OS, model/provider, expected behavior, and a redacted trace in bug reports. Never attach API keys or unauthorized private source.
 
-**[Report a bug](https://github.com/LeonQin-ai/cognitive-os-agent/issues/new) · [Find an issue to work on](https://github.com/LeonQin-ai/cognitive-os-agent/issues)**
+**[Report a bug](https://github.com/LeonQin-ai/light-agent/issues/new) · [Find an issue to work on](https://github.com/LeonQin-ai/light-agent/issues)**
 
 ## Go deeper
 

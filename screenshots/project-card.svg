@@ -40,7 +40,7 @@
       <text x="26" y="350" fill="#85e8cf" font-size="14">LOCAL CONSOLE + HTTP API</text>
     </g>
     <path d="M66 521h1146" stroke="url(#accent)" stroke-opacity=".6"/>
-    <text x="66" y="568" fill="#dbd7f1" font-size="19">github.com/LeonQin-ai/cognitive-os-agent</text>
+    <text x="66" y="568" fill="#dbd7f1" font-size="19">github.com/LeonQin-ai/light-agent</text>
     <text x="828" y="568" fill="#a39dbb" font-size="16">Windows / Linux / macOS · Apache-2.0</text>
   </g>
 </svg>

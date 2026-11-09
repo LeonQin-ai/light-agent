@@ -4,7 +4,7 @@ Start with one reproducible behavior: a task state, tool result, dependency edge
 
 ## Report a problem
 
-Use the [issue templates](https://github.com/LeonQin-ai/cognitive-os-agent/issues/new/choose). Include the release or commit, operating system, provider protocol and model, minimal redacted input, expected behavior and actual result. For a generated file, distinguish task status from whether the artifact exists and is usable. Never attach API keys, private workspace files or unredacted configuration.
+Use the [issue templates](https://github.com/LeonQin-ai/light-agent/issues/new/choose). Include the release or commit, operating system, provider protocol and model, minimal redacted input, expected behavior and actual result. For a generated file, distinguish task status from whether the artifact exists and is usable. Never attach API keys, private workspace files or unredacted configuration.
 
 ## Choose a contribution
 

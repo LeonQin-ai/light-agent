@@ -8,9 +8,9 @@ light-agent 是一个用 C11 编写的本地 Agent 运行时，把任务调度�
 
 ## 项目入口
 
-- 源码：https://github.com/LeonQin-ai/cognitive-os-agent
-- 下载：https://github.com/LeonQin-ai/cognitive-os-agent/releases/latest
-- 首次任务：https://github.com/LeonQin-ai/cognitive-os-agent/blob/main/GETTING_STARTED.md
+- 源码：https://github.com/LeonQin-ai/light-agent
+- 下载：https://github.com/LeonQin-ai/light-agent/releases/latest
+- 首次任务：https://github.com/LeonQin-ai/light-agent/blob/main/GETTING_STARTED.md
 - 源码与实测文章：https://leonqin-ai.github.io/
 - 控制台截图：[执行过程](screenshots/execution.png)、[聊天界面](screenshots/ui.png)
 - [项目分享图](screenshots/project-card.png)
@@ -28,9 +28,9 @@ light-agent 是一个用 C11 编写的本地 Agent 运行时，把任务调度�
 
 仓库保留了本地确定性负载的百万任务调度数据。它测量 Runtime，不是百万次模型调用；连续演示也使用确定性模型 fixture，工具和文件操作实际执行。真实模型任务需要配置自己的提供方。项目仍在演进，特别希望收到安装体验、协议兼容性与任务完成边界方面的可复现反馈。
 
-源码：https://github.com/LeonQin-ai/cognitive-os-agent
+源码：https://github.com/LeonQin-ai/light-agent
 
-体验指南：https://github.com/LeonQin-ai/cognitive-os-agent/blob/main/GETTING_STARTED.md
+体验指南：https://github.com/LeonQin-ai/light-agent/blob/main/GETTING_STARTED.md
 
 ## English introduction
 
@@ -44,9 +44,9 @@ Windows, Linux and macOS packages are available. Real-model tasks require your o
 
 I'd appreciate reproducible feedback on setup, provider compatibility, and cases where the reported task state disagrees with the actual artifact.
 
-Source: https://github.com/LeonQin-ai/cognitive-os-agent
+Source: https://github.com/LeonQin-ai/light-agent
 
-First task: https://github.com/LeonQin-ai/cognitive-os-agent/blob/main/GETTING_STARTED.md
+First task: https://github.com/LeonQin-ai/light-agent/blob/main/GETTING_STARTED.md
 
 ## 60 秒演示提纲
 
