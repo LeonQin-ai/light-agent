@@ -893,7 +893,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     wc.hIcon = g_icon_big ? g_icon_big : g_icon_small;
     wc.lpszClassName = "cognitive-os-agent";
     RegisterClassA(&wc);
-    g_hwnd = CreateWindowA("cognitive-os-agent", "cognitive-os-agent",
+    g_hwnd = CreateWindowA("cognitive-os-agent", "light-agent",
                            WS_POPUP | WS_THICKFRAME | WS_CLIPCHILDREN | WS_MINIMIZEBOX |
                            WS_MAXIMIZEBOX | WS_SYSMENU,
                            CW_USEDEFAULT, CW_USEDEFAULT,
