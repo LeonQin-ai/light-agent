@@ -62,66 +62,87 @@ static std::wstring g_url_error;
 static HWND g_task_pet = nullptr;
 static std::wstring g_task_pet_status;
 
-static void pet_ellipse(HDC dc, int left, int top, int right, int bottom, COLORREF color) {
+static constexpr COLORREF kPetTransparent = RGB(1, 2, 3);
+
+static void pet_round_rect(HDC dc, int x, int y, int w, int h, int radius, COLORREF color) {
     HBRUSH brush = CreateSolidBrush(color);
     HGDIOBJ previous = SelectObject(dc, brush);
-    Ellipse(dc, left, top, right, bottom);
+    RoundRect(dc, x, y, x + w, y + h, radius, radius);
     SelectObject(dc, previous);
     DeleteObject(brush);
 }
 
 static void draw_task_pet(HDC dc, const RECT &bounds, double phase) {
-    HBRUSH background = CreateSolidBrush(RGB(15, 17, 32));
-    FillRect(dc, &bounds, background);
-    DeleteObject(background);
+    HBRUSH transparent = CreateSolidBrush(kPetTransparent);
+    FillRect(dc, &bounds, transparent);
+    DeleteObject(transparent);
 
     const int center = (bounds.left + bounds.right) / 2;
-    const int face_height = scaled(114);
-    const double yaw = 0.50 * std::sin(phase);
-    const int face_width = static_cast<int>(face_height * std::cos(yaw));
-    const int depth = static_cast<int>(scaled(18) * std::sin(yaw));
-    const int top = scaled(25) + static_cast<int>(scaled(5) * std::cos(phase));
-    const int left = center - face_width / 2 - depth / 2;
-    const int right = left + face_width;
-    const int bottom = top + face_height;
-    const int bevel = scaled(18);
-
+    const int bob = static_cast<int>(scaled(4) * std::sin(phase));
+    const int turn = static_cast<int>(scaled(4) * std::cos(phase));
+    const COLORREF outline = RGB(34, 30, 60);
+    const COLORREF steel = RGB(143, 151, 190);
+    const COLORREF light = RGB(212, 219, 244);
     HGDIOBJ old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
-    pet_ellipse(dc, center - scaled(72), scaled(147), center + scaled(72), scaled(179), RGB(27, 29, 58));
-    pet_ellipse(dc, center - scaled(53), scaled(152), center + scaled(53), scaled(173), RGB(40, 37, 83));
 
-    // Project the extrusion of the logo face around the vertical axis.
-    const int lift = scaled(8);
-    for (int layer = lift; layer >= 0; --layer) {
-        const int offset = depth * layer / lift;
-        const int shade = 30 * layer / lift;
-        HBRUSH rim = CreateSolidBrush(RGB(112 - shade, 100 - shade, 229 - shade));
-        HGDIOBJ old_brush = SelectObject(dc, rim);
-        RoundRect(dc, left + offset, top + layer, right + offset, bottom + layer, bevel, bevel);
-        SelectObject(dc, old_brush);
-        DeleteObject(rim);
-    }
+    // Coordinates are relative to the center of the floating character.
+    auto part = [&](int x, int y, int w, int h, int radius, COLORREF color) {
+        pet_round_rect(dc, center + scaled(x), scaled(y) + bob,
+                       scaled(w), scaled(h), scaled(radius), color);
+    };
+    part(-32, 130, 24, 25, 12, outline);
+    part(8, 130, 24, 25, 12, outline);
+    part(-29, 132, 18, 19, 9, steel);
+    part(11, 132, 18, 19, 9, steel);
+    part(-44, 103, 20, 26, 13, outline);
+    part(24, 103, 20, 26, 13, outline);
+    part(-40, 106, 15, 19, 10, steel);
+    part(25, 106, 15, 19, 10, steel);
+    part(-34, 99, 68, 43, 20, outline);
+    part(-30, 102, 60, 35, 16, steel);
+    part(-25, 103, 50, 18, 12, light);
+    part(-13, 115, 26, 12, 9, RGB(51, 65, 117));
+    part(-8, 119, 16, 4, 4, RGB(108, 211, 255));
+    part(-3, 14, 6, 19, 5, outline);
+    part(-8, 6, 16, 13, 12, outline);
+    part(-5, 8, 10, 8, 7, RGB(151, 122, 255));
+    part(-59, 55, 15, 31, 10, outline);
+    part(44, 55, 15, 31, 10, outline);
+    part(-55, 59, 9, 22, 8, steel);
+    part(46, 59, 9, 22, 8, steel);
+    part(-51, 26, 102, 86, 30, outline);
+    part(-47, 30, 94, 77, 27, steel);
+    part(-45, 30, 90, 67, 25, light);
+    part(-38, 36, 76, 63, 20, outline);
+    part(-35, 39, 70, 57, 17, RGB(61, 110, 222));
 
-    const int inset = scaled(3);
+    const int face_left = center - scaled(27) + turn;
+    const int face_top = scaled(40) + bob;
+    const int face_size = scaled(55);
     HICON logo = g_icon_big ? g_icon_big : g_icon_small;
     if (logo) {
-        HRGN face = CreateRoundRectRgn(left + inset, top + inset, right - inset, bottom - inset, bevel, bevel);
+        HRGN face = CreateRoundRectRgn(face_left, face_top, face_left + face_size,
+                                      face_top + face_size, scaled(13), scaled(13));
         const int saved = SaveDC(dc);
         if (face && saved) SelectClipRgn(dc, face);
-        DrawIconEx(dc, left + inset, top + inset, logo, face_width - 2 * inset, face_height - 2 * inset,
-                   0, nullptr, DI_NORMAL);
+        DrawIconEx(dc, face_left, face_top, logo, face_size, face_size, 0, nullptr, DI_NORMAL);
         if (saved) RestoreDC(dc, saved);
         if (face) DeleteObject(face);
+    } else {
+        part(-22, 53, 13, 16, 12, light);
+        part(9, 53, 13, 16, 12, light);
+        part(-9, 76, 18, 5, 5, light);
     }
-    SelectObject(dc, old_pen);
 
-    RECT caption = bounds;
-    caption.top = scaled(180);
+    RECT caption{scaled(7), scaled(168), bounds.right - scaled(7), scaled(195)};
+    pet_round_rect(dc, caption.left, caption.top, caption.right - caption.left,
+                   caption.bottom - caption.top, scaled(18), RGB(30, 27, 51));
     SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, RGB(225, 224, 249));
+    SetTextColor(dc, RGB(241, 235, 255));
     SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
     DrawTextW(dc, g_task_pet_status.c_str(), -1, &caption,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+    SelectObject(dc, old_pen);
 }
 
 static LRESULT CALLBACK task_pet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -133,6 +154,27 @@ static LRESULT CALLBACK task_pet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     if (msg == WM_TIMER && wp == 1) {
         InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
+    if (msg == WM_LBUTTONDOWN) {
+        POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        ClientToScreen(hwnd, &point);
+        ReleaseCapture();
+        SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, MAKELPARAM(point.x, point.y));
+        return 0;
+    }
+    if (msg == WM_CONTEXTMENU) {
+        POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        if (point.x == -1 && point.y == -1) GetCursorPos(&point);
+        HMENU menu = CreatePopupMenu();
+        if (menu) {
+            AppendMenuW(menu, MF_STRING, 1, L"关闭桌宠");
+            SetForegroundWindow(hwnd);
+            const UINT choice = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY,
+                                               point.x, point.y, 0, hwnd, nullptr);
+            DestroyMenu(menu);
+            if (choice == 1) DestroyWindow(hwnd);
+        }
         return 0;
     }
     if (msg == WM_ERASEBKGND) return 1;
@@ -181,11 +223,14 @@ static void toggle_task_pet() {
     window_class.hCursor = LoadCursorA(nullptr, IDC_ARROW);
     RegisterClassW(&window_class);
     g_task_pet_status = L"正在获取任务状态…";
-    g_task_pet = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, window_class.lpszClassName,
-        L"light-agent · 任务状态", WS_POPUP | WS_CAPTION | WS_SYSMENU,
-        work.right - scaled(238), work.bottom - scaled(258), scaled(222), scaled(242),
+    g_task_pet = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED, window_class.lpszClassName,
+        L"light-agent · 任务状态", WS_POPUP,
+        work.right - scaled(196), work.bottom - scaled(218), scaled(180), scaled(202),
         nullptr, nullptr, window_class.hInstance, nullptr);
-    if (g_task_pet) ShowWindow(g_task_pet, SW_SHOWNOACTIVATE);
+    if (g_task_pet) {
+        SetLayeredWindowAttributes(g_task_pet, kPetTransparent, 0, LWA_COLORKEY);
+        ShowWindow(g_task_pet, SW_SHOWNOACTIVATE);
+    }
 }
 
 class TaskPetHandler final : public ICoreWebView2WebMessageReceivedEventHandler {
