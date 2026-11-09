@@ -24,7 +24,7 @@
 // Build (package.sh does this). --subsystem=windows links the shell as a GUI
 // binary so double-clicking it never pops a console window:
 //   zig c++ -std=c++17 -O1 -I third_party/webview -o cognitive-os-agent-desktop.exe tools/desktop.cc \
-//     -Wl,--subsystem=windows -lole32 -loleaut32 -luuid -lshlwapi -luser32 -lgdi32 -lws2_32 -lshell32 -ladvapi32
+//     -Wl,--subsystem=windows -lole32 -loleaut32 -luuid -lshlwapi -luser32 -lgdi32 -lws2_32 -lshell32 -ladvapi32 -lwindowscodecs
 
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -33,11 +33,15 @@
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <unknwn.h>
+#include <wincodec.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "WebView2.h"
 
@@ -62,98 +66,128 @@ static std::wstring g_url_error;
 static HWND g_task_pet = nullptr;
 static std::wstring g_task_pet_status;
 
-static constexpr COLORREF kPetTransparent = RGB(1, 2, 3);
-
-static void pet_round_rect(HDC dc, int x, int y, int w, int h, int radius, COLORREF color) {
-    HBRUSH brush = CreateSolidBrush(color);
-    HGDIOBJ previous = SelectObject(dc, brush);
-    RoundRect(dc, x, y, x + w, y + h, radius, radius);
-    SelectObject(dc, previous);
-    DeleteObject(brush);
+static void publish_task_pet_state() {
+    if (g_web) g_web->PostWebMessageAsString(g_task_pet ? L"task-pet:open" : L"task-pet:closed");
 }
 
-static void draw_task_pet(HDC dc, const RECT &bounds, double phase) {
-    HBRUSH transparent = CreateSolidBrush(kPetTransparent);
-    FillRect(dc, &bounds, transparent);
-    DeleteObject(transparent);
+static std::wstring g_task_pet_asset;
+static std::vector<uint32_t> g_task_pet_pixels;
+static UINT g_task_pet_width = 0;
+static UINT g_task_pet_height = 0;
+static bool g_task_pet_animate = false;
 
-    const int center = (bounds.left + bounds.right) / 2;
-    const int bob = static_cast<int>(scaled(4) * std::sin(phase));
-    const int turn = static_cast<int>(scaled(4) * std::cos(phase));
-    const COLORREF outline = RGB(34, 30, 60);
-    const COLORREF steel = RGB(143, 151, 190);
-    const COLORREF light = RGB(212, 219, 244);
-    HGDIOBJ old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
-
-    // Coordinates are relative to the center of the floating character.
-    auto part = [&](int x, int y, int w, int h, int radius, COLORREF color) {
-        pet_round_rect(dc, center + scaled(x), scaled(y) + bob,
-                       scaled(w), scaled(h), scaled(radius), color);
-    };
-    part(-32, 130, 24, 25, 12, outline);
-    part(8, 130, 24, 25, 12, outline);
-    part(-29, 132, 18, 19, 9, steel);
-    part(11, 132, 18, 19, 9, steel);
-    part(-44, 103, 20, 26, 13, outline);
-    part(24, 103, 20, 26, 13, outline);
-    part(-40, 106, 15, 19, 10, steel);
-    part(25, 106, 15, 19, 10, steel);
-    part(-34, 99, 68, 43, 20, outline);
-    part(-30, 102, 60, 35, 16, steel);
-    part(-25, 103, 50, 18, 12, light);
-    part(-13, 115, 26, 12, 9, RGB(51, 65, 117));
-    part(-8, 119, 16, 4, 4, RGB(108, 211, 255));
-    part(-3, 14, 6, 19, 5, outline);
-    part(-8, 6, 16, 13, 12, outline);
-    part(-5, 8, 10, 8, 7, RGB(151, 122, 255));
-    part(-59, 55, 15, 31, 10, outline);
-    part(44, 55, 15, 31, 10, outline);
-    part(-55, 59, 9, 22, 8, steel);
-    part(46, 59, 9, 22, 8, steel);
-    part(-51, 26, 102, 86, 30, outline);
-    part(-47, 30, 94, 77, 27, steel);
-    part(-45, 30, 90, 67, 25, light);
-    part(-38, 36, 76, 63, 20, outline);
-    part(-35, 39, 70, 57, 17, RGB(61, 110, 222));
-
-    const int face_left = center - scaled(27) + turn;
-    const int face_top = scaled(40) + bob;
-    const int face_size = scaled(55);
-    HICON logo = g_icon_big ? g_icon_big : g_icon_small;
-    if (logo) {
-        HRGN face = CreateRoundRectRgn(face_left, face_top, face_left + face_size,
-                                      face_top + face_size, scaled(13), scaled(13));
-        const int saved = SaveDC(dc);
-        if (face && saved) SelectClipRgn(dc, face);
-        DrawIconEx(dc, face_left, face_top, logo, face_size, face_size, 0, nullptr, DI_NORMAL);
-        if (saved) RestoreDC(dc, saved);
-        if (face) DeleteObject(face);
-    } else {
-        part(-22, 53, 13, 16, 12, light);
-        part(9, 53, 13, 16, 12, light);
-        part(-9, 76, 18, 5, 5, light);
+static bool load_task_pet() {
+    IWICImagingFactory *factory = nullptr;
+    IWICBitmapDecoder *decoder = nullptr;
+    IWICBitmapFrameDecode *frame = nullptr;
+    IWICBitmapScaler *scaler = nullptr;
+    IWICFormatConverter *converter = nullptr;
+    UINT width = 0, height = 0;
+    HRESULT result = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                      IID_IWICImagingFactory, reinterpret_cast<void **>(&factory));
+    if (SUCCEEDED(result))
+        result = factory->CreateDecoderFromFilename(g_task_pet_asset.c_str(), nullptr, GENERIC_READ,
+                                                    WICDecodeMetadataCacheOnLoad, &decoder);
+    if (SUCCEEDED(result)) result = decoder->GetFrame(0, &frame);
+    if (SUCCEEDED(result)) result = frame->GetSize(&width, &height);
+    if (SUCCEEDED(result) && (!width || !height)) result = E_FAIL;
+    if (SUCCEEDED(result)) result = factory->CreateFormatConverter(&converter);
+    if (SUCCEEDED(result))
+        result = converter->Initialize(frame, GUID_WICPixelFormat32bppPBGRA,
+                                        WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom);
+    if (SUCCEEDED(result)) result = factory->CreateBitmapScaler(&scaler);
+    if (SUCCEEDED(result)) {
+        const UINT edge = (std::max)(width, height);
+        width = (std::max)(1, MulDiv(width, scaled(150), edge));
+        height = (std::max)(1, MulDiv(height, scaled(150), edge));
+        result = scaler->Initialize(converter, width, height, WICBitmapInterpolationModeFant);
     }
+    if (SUCCEEDED(result)) {
+        g_task_pet_pixels.resize(width * height);
+        result = scaler->CopyPixels(nullptr, width * 4, width * height * 4,
+                                    reinterpret_cast<BYTE *>(g_task_pet_pixels.data()));
+    }
+    if (scaler) scaler->Release();
+    if (converter) converter->Release();
+    if (frame) frame->Release();
+    if (decoder) decoder->Release();
+    if (factory) factory->Release();
+    if (FAILED(result)) {
+        g_task_pet_pixels.clear();
+        return false;
+    }
+    g_task_pet_width = width;
+    g_task_pet_height = height;
+    return true;
+}
 
-    RECT caption{scaled(7), scaled(168), bounds.right - scaled(7), scaled(195)};
-    pet_round_rect(dc, caption.left, caption.top, caption.right - caption.left,
-                   caption.bottom - caption.top, scaled(18), RGB(30, 27, 51));
+static bool render_task_pet(HWND hwnd) {
+    RECT bounds{};
+    GetClientRect(hwnd, &bounds);
+    const int width = bounds.right;
+    const int height = bounds.bottom;
+    if (width <= 0 || height <= 0 || g_task_pet_pixels.empty()) return false;
+    const auto fit = [height](int value) { return MulDiv(value, height, 202); };
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = width;
+    info.bmiHeader.biHeight = -height;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    void *memory = nullptr;
+    HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc) return false;
+    HBITMAP bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &memory, nullptr, 0);
+    if (!bitmap) {
+        DeleteDC(dc);
+        return false;
+    }
+    HGDIOBJ previous = SelectObject(dc, bitmap);
+    auto *pixels = static_cast<uint32_t *>(memory);
+    std::memset(pixels, 0, static_cast<size_t>(width) * height * sizeof(*pixels));
+
+    RECT caption{fit(7), fit(168), width - fit(7), fit(195)};
+    HBRUSH brush = CreateSolidBrush(RGB(30, 27, 51));
+    HGDIOBJ old_brush = SelectObject(dc, brush);
+    SelectObject(dc, GetStockObject(NULL_PEN));
+    RoundRect(dc, caption.left, caption.top, caption.right, caption.bottom, fit(18), fit(18));
+    SelectObject(dc, old_brush);
+    DeleteObject(brush);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(241, 235, 255));
     SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
     DrawTextW(dc, g_task_pet_status.c_str(), -1, &caption,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
-    SelectObject(dc, old_pen);
+    GdiFlush();
+    // GDI paints the caption RGB. Restore its alpha before adding the already
+    // premultiplied sprite so the mascot's soft edges remain transparent.
+    for (int y = caption.top; y < caption.bottom; ++y)
+        for (int x = caption.left; x < caption.right; ++x)
+            if (pixels[y * width + x] & 0x00ffffffu) pixels[y * width + x] |= 0xff000000u;
+
+    const double phase = (GetTickCount64() % 3800) * (6.283185307 / 3800);
+    const int bob = g_task_pet_animate ? static_cast<int>(fit(4) * std::sin(phase)) : 0;
+    const int left = (width - static_cast<int>(g_task_pet_width)) / 2;
+    const int top = fit(8) + bob;
+    if (left >= 0 && top + static_cast<int>(g_task_pet_height) <= caption.top) {
+        for (UINT row = 0; row < g_task_pet_height; ++row)
+            std::memcpy(pixels + (top + row) * width + left, g_task_pet_pixels.data() + row * g_task_pet_width,
+                        g_task_pet_width * sizeof(*pixels));
+    }
+
+    SIZE size{width, height};
+    POINT source{};
+    BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    const bool ok = UpdateLayeredWindow(hwnd, nullptr, nullptr, &size, dc, &source, 0, &blend, ULW_ALPHA) != FALSE;
+    SelectObject(dc, previous);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
+    return ok;
 }
 
 static LRESULT CALLBACK task_pet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == WM_CREATE) {
-        BOOL animate = TRUE;
-        SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animate, 0);
-        if (animate) SetTimer(hwnd, 1, 40, nullptr);
-        return 0;
-    }
     if (msg == WM_TIMER && wp == 1) {
-        InvalidateRect(hwnd, nullptr, FALSE);
+        render_task_pet(hwnd);
         return 0;
     }
     if (msg == WM_LBUTTONDOWN) {
@@ -177,41 +211,24 @@ static LRESULT CALLBACK task_pet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     }
-    if (msg == WM_ERASEBKGND) return 1;
-    if (msg == WM_PAINT) {
-        PAINTSTRUCT paint;
-        HDC dc = BeginPaint(hwnd, &paint);
-        RECT bounds;
-        GetClientRect(hwnd, &bounds);
-        BOOL animate = TRUE;
-        SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animate, 0);
-        const double phase = animate ? (GetTickCount64() % 6000) * (6.283185307 / 6000) : 0.9;
-        HDC buffer = CreateCompatibleDC(dc);
-        HBITMAP bitmap = buffer ? CreateCompatibleBitmap(dc, bounds.right, bounds.bottom) : nullptr;
-        if (bitmap) {
-            HGDIOBJ previous = SelectObject(buffer, bitmap);
-            draw_task_pet(buffer, bounds, phase);
-            BitBlt(dc, 0, 0, bounds.right, bounds.bottom, buffer, 0, 0, SRCCOPY);
-            SelectObject(buffer, previous);
-            DeleteObject(bitmap);
-        } else {
-            draw_task_pet(dc, bounds, phase);
-        }
-        if (buffer) DeleteDC(buffer);
-        EndPaint(hwnd, &paint);
-        return 0;
-    }
     if (msg == WM_NCDESTROY) {
         KillTimer(hwnd, 1);
         g_task_pet = nullptr;
+        g_task_pet_pixels.clear();
+        publish_task_pet_state();
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-static void toggle_task_pet() {
-    if (g_task_pet) {
-        DestroyWindow(g_task_pet);
-        g_task_pet = nullptr;
+static void set_task_pet_enabled(bool enabled) {
+    if (!enabled || g_task_pet) {
+        if (g_task_pet && !enabled && DestroyWindow(g_task_pet)) return;
+        publish_task_pet_state();
+        return;
+    }
+    if (!load_task_pet()) {
+        if (g_web) g_web->PostWebMessageAsString(L"task-pet:unavailable");
+        publish_task_pet_state();
         return;
     }
     RECT work{};
@@ -227,10 +244,18 @@ static void toggle_task_pet() {
         L"light-agent · 任务状态", WS_POPUP,
         work.right - scaled(196), work.bottom - scaled(218), scaled(180), scaled(202),
         nullptr, nullptr, window_class.hInstance, nullptr);
-    if (g_task_pet) {
-        SetLayeredWindowAttributes(g_task_pet, kPetTransparent, 0, LWA_COLORKEY);
+    if (g_task_pet && render_task_pet(g_task_pet)) {
+        BOOL animate = TRUE;
+        SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animate, 0);
+        g_task_pet_animate = animate != FALSE;
+        if (g_task_pet_animate) SetTimer(g_task_pet, 1, 40, nullptr);
         ShowWindow(g_task_pet, SW_SHOWNOACTIVATE);
+    } else {
+        if (g_web) g_web->PostWebMessageAsString(L"task-pet:unavailable");
+        if (g_task_pet) DestroyWindow(g_task_pet);
+        g_task_pet_pixels.clear();
     }
+    publish_task_pet_state();
 }
 
 class TaskPetHandler final : public ICoreWebView2WebMessageReceivedEventHandler {
@@ -256,10 +281,13 @@ public:
         if (SUCCEEDED(args->get_Source(&source)) && source && g_url_main == source &&
             SUCCEEDED(args->TryGetWebMessageAsString(&message)) && message) {
             if (g_task_pet && !IsWindow(g_task_pet)) g_task_pet = nullptr;
-            if (!wcscmp(message, L"task-pet:toggle")) toggle_task_pet();
+            if (!wcscmp(message, L"task-pet:open")) set_task_pet_enabled(true);
+            else if (!wcscmp(message, L"task-pet:close")) set_task_pet_enabled(false);
+            else if (!wcscmp(message, L"task-pet:query")) publish_task_pet_state();
+            else if (!wcscmp(message, L"task-pet:toggle")) set_task_pet_enabled(!g_task_pet);
             else if (g_task_pet && !wcsncmp(message, L"task-pet:status:", 16) && wcslen(message) < 80) {
                 g_task_pet_status = message + 16;
-                InvalidateRect(g_task_pet, nullptr, FALSE);
+                render_task_pet(g_task_pet);
             }
         }
         CoTaskMemFree(source);
@@ -985,6 +1013,9 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     std::wstring dir = exe_dir();
+    g_task_pet_asset = dir + L"\\light-agent-pet.png";
+    if (GetFileAttributesW(g_task_pet_asset.c_str()) == INVALID_FILE_ATTRIBUTES)
+        g_task_pet_asset = dir + L"\\..\\assets\\light-agent-pet.png";
     std::wstring exe = dir + L"\\cognitive-os-agent.exe";
 
     /* Work around two Edge/WebView2 behaviors that stall navigations on

@@ -44,6 +44,7 @@ Source: "..\build\cognitive-os-agent.exe";         DestDir: "{app}"; DestName: "
 Source: "..\build\cognitive-os-agent-desktop.exe"; DestDir: "{app}";                                   Flags: ignoreversion
 Source: "..\dist\cognitive-os-agent.ico";         DestDir: "{app}";                                   Flags: ignoreversion
 Source: "..\dist\cognitive-os-logo.ico";          DestDir: "{app}";                                   Flags: ignoreversion
+Source: "..\assets\light-agent-pet.png";          DestDir: "{app}";                                   Flags: ignoreversion
 Source: "..\README.md";                DestDir: "{app}"; DestName: "README.txt";           Flags: ignoreversion
 
 [Icons]

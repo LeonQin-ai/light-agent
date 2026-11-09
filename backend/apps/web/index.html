@@ -1390,7 +1390,7 @@ panels.chat = `
       <select id="chat-workspace" aria-label="执行工作区" title="新任务执行目录；不会改变运行中的任务" onchange="workspaceSelect(this.value)"></select>
       <button class="sec sm" onclick="workspaceDialog()" title="添加工作区">＋ 工作区</button>
       <button class="sec sm" onclick="chatToggleSettings()" title="会话设置（共享记忆）">会话设置</button>
-      <button class="sec sm" id="chat-task-pet" type="button" hidden>桌宠</button>
+      <button class="sec sm" id="chat-task-pet" type="button" hidden disabled>开启桌宠</button>
       </div>
     </div>
     <div id="chat-settings" style="display:none;width:100%;margin:10px 0 0;padding:10px 14px;border:1px solid var(--border);border-radius:10px;font-size:12.5px;background:var(--card)">
@@ -6525,24 +6525,53 @@ async function chatCancel(){
 }
 chatRestore();
 
+let taskPetState = null;
+let taskPetTimer = null;
+let taskPetListenerReady = false;
+function updateTaskPetButton(){
+  const button=$('chat-task-pet');
+  if(!button)return;
+  button.textContent=taskPetState==='open'?'关闭桌宠':'开启桌宠';
+  button.disabled=taskPetState===null;
+}
 function initTaskPet(){
   const bridge=window.chrome?.webview;
   if(!bridge || new URLSearchParams(location.search).get('desktop')!=='1')return;
   const button=$('chat-task-pet');
-  if(!button || button.dataset.ready)return;
-  button.dataset.ready='1';
+  if(!button)return;
   button.hidden=false;
+  updateTaskPetButton();
+  button.onclick=()=>{
+    button.disabled=true;
+    bridge.postMessage(taskPetState==='open'?'task-pet:close':'task-pet:open');
+  };
+  if(taskPetListenerReady)return;
+  taskPetListenerReady=true;
   const publish=async()=>{
+    const timer=taskPetTimer;
     const {obj,status}=await call('GET','/v1/scheduler',null,2500);
+    if(taskPetTimer!==timer || taskPetState!=='open')return;
     const valid=status===200 && Number.isInteger(obj?.active) && Number.isInteger(obj?.queued);
     const state=valid ? (obj.active || obj.queued ? `运行中 ${obj.active} · 排队 ${obj.queued}` : '空闲 · 没有运行中的任务') : '任务状态暂不可用';
     bridge.postMessage('task-pet:status:'+state);
   };
-  button.onclick=()=>{
-    bridge.postMessage('task-pet:toggle');
-    void publish();
-  };
-  setInterval(publish,5000);
+  bridge.addEventListener('message',({data})=>{
+    if(data==='task-pet:unavailable'){
+      toast('桌宠无法开启，请检查安装包中的桌宠素材。');
+      return;
+    }
+    if(data!=='task-pet:open' && data!=='task-pet:closed')return;
+    taskPetState=data==='task-pet:open'?'open':'closed';
+    updateTaskPetButton();
+    if(taskPetState==='open' && taskPetTimer===null){
+      taskPetTimer=setInterval(publish,5000);
+      void publish();
+    }else if(taskPetState==='closed'){
+      clearInterval(taskPetTimer);
+      taskPetTimer=null;
+    }
+  });
+  bridge.postMessage('task-pet:query');
 }
 applyTheme(localStorage.getItem('cognitive-os-agent-theme') || 'dark');
 void appearanceLoad();

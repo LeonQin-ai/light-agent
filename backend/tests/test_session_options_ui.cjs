@@ -4,7 +4,19 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  await page.addInitScript(()=>{
   window.petMessages=[];
   window.chrome ??= {};
-  window.chrome.webview={postMessage:message=>window.petMessages.push(message)};
+  const bridge=new EventTarget();
+  window.petState='closed';
+  window.setPetState=state=>{
+   window.petState=state;
+   bridge.dispatchEvent(new MessageEvent('message',{data:'task-pet:'+state}));
+  };
+  bridge.postMessage=message=>{
+   window.petMessages.push(message);
+   if(message==='task-pet:query')window.setPetState(window.petState);
+   if(message==='task-pet:open')window.setPetState('open');
+   if(message==='task-pet:close')window.setPetState('closed');
+  };
+  window.chrome.webview=bridge;
  });
  await page.route('http://ui.test/**',async route=>{
  const r=route.request(),u=new URL(r.url());let obj=[];
@@ -22,9 +34,18 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  await page.waitForFunction(()=>CHAT_SESSION==='a' && $('chat-model').options.length===3).catch(error=>{
   throw new Error(errors.join('\n') || error.message);
  });
- await page.locator('#chat-task-pet').click();
+ const pet=page.locator('#chat-task-pet');
+ assert.equal(await pet.innerText(),'开启桌宠');
+ await pet.click();
  await page.waitForFunction(()=>petMessages.includes('task-pet:status:运行中 2 · 排队 1'));
- assert.ok(await page.evaluate(()=>petMessages.includes('task-pet:toggle')));
+ assert.equal(await pet.innerText(),'关闭桌宠');
+ await pet.click();
+ assert.equal(await pet.innerText(),'开启桌宠');
+ assert.ok(await page.evaluate(()=>petMessages.includes('task-pet:close') && taskPetTimer===null));
+ await pet.click();
+ await page.evaluate(()=>setPetState('closed')); // The window was closed outside the web console.
+ assert.equal(await pet.innerText(),'开启桌宠');
+ assert.ok(await page.evaluate(()=>taskPetTimer===null));
  await page.locator('#chat-model').selectOption('route-a');await page.locator('#chat-permission').selectOption('ask');await page.locator('#chat-temperature-menu summary').click();
  await page.locator('#chat-temperature-custom').check();
  await page.locator('#chat-temperature').fill('0.65');

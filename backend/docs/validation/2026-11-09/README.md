@@ -11,3 +11,11 @@
 图片任务共 3 次模型调用、5 次工具调用，输入 22,842 tokens，输出 1,062 tokens，模型请求失败 0 次。模型接口未返回金额。
 
 同会话任务边界验证两次任务均为 DONE，共 19 次模型调用、13 次工具调用，输入 131,191 tokens，输出 5,979 tokens，模型请求失败 0 次。使用合成日志模拟原报告的场景。
+
+## 全身 Logo 桌宠
+
+使用内置图像生成工具，以仓库 Logo 为参考制作全身透明素材 [light-agent-pet.png](../../../assets/light-agent-pet.png)。Windows 原生测试覆盖逐像素透明合成、重复开启、关闭、从窗口侧关闭和再次开启。浏览器验证按钮状态同步。
+
+生成提示：
+
+> Use case: identity-preserve. Turn the mascot from the reference light-agent logo into one isolated, fully embodied desktop-pet character. Recreate the same chibi blue-violet orb creature as a polished 3D toy render, full body visible from helmet tips down to two tiny rounded boots. Keep its gold-trimmed tall jackal ears, bright cyan forehead gem, luminous cyan-and-violet infinity eye band, two large expressive eyes, pink cheeks, little smile, dark purple gauntlets, gold infinity belt, and its gold crescent staff with blue gem held at its side. The round character itself is the whole pet, with arms and legs; no robot casing, monitor, frame, badge, emblem backing, or image on its face. Front three-quarter view, friendly and energetic. Strong clean silhouette with modeled depth, soft studio lighting and smooth glossy materials, still readable at 150 pixels tall. Center the entire character and staff with modest even padding. Transparent RGBA background, no scenery, no bird, no ground or drop shadow, no extra effects outside the silhouette, no text.

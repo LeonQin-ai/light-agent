@@ -90,7 +90,7 @@ echo "[2/5] building native desktop shell (WebView2)"
 "$ZIG" c++ -std=c++17 -O1 -Wno-nullability-completeness -I third_party/webview \
     -o "$DESKTOP" tools/desktop.cc -Wl,--subsystem=windows \
     -lole32 -loleaut32 -luuid -lshlwapi -luser32 -lgdi32 -lws2_32 -lshell32 \
-    -lversion -ladvapi32
+    -lversion -ladvapi32 -lwindowscodecs
 
 # --- 3. generate icon ---------------------------------------------------------
 echo "[3/5] generating application icon"
