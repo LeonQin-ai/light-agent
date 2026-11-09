@@ -9,9 +9,9 @@
 ; Build (package.sh does this):
 ;   ISCC.exe tools/setup.iss
 
-#define MyAppName "cognitive-os-agent"
+#define MyAppName "light-agent"
 #define MyAppVersion "3.1.1"
-#define MyAppPublisher "Cognitive OS"
+#define MyAppPublisher "light-agent"
 #define MyAppExeName "cognitive-os-agent-desktop.exe"
 
 [Setup]
