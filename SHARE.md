@@ -1,10 +1,10 @@
-# Cognitive OS：项目介绍与演示素材
+# light-agent：项目介绍与演示素材
 
 ## 一句话介绍
 
-Cognitive OS 是一个用 C11 编写的本地 Agent 运行时，把任务调度、工具执行、记忆、上下文预算与恢复记录放进可检查的系统。
+light-agent 是一个用 C11 编写的本地 Agent 运行时，把任务调度、工具执行、记忆、上下文预算与恢复记录放进可检查的系统。
 
-**English:** Cognitive OS is a C11 agent runtime for inspectable tool execution, task scheduling, memory, context budgets and recovery.
+**English:** light-agent is a C11 agent runtime for inspectable tool execution, task scheduling, memory, context budgets and recovery.
 
 ## 项目入口
 
@@ -20,7 +20,7 @@ Cognitive OS 是一个用 C11 编写的本地 Agent 运行时，把任务调度�
 
 **标题：我用 C11 写了一个 Agent Runtime：从工具调用到可验证的任务交付**
 
-我在做 Cognitive OS，一个用 C11 实现的本地 Agent 运行时。想解决的问题很具体：模型说“完成了”以后，系统怎样证明文件真的生成了？多个角色之间有先后依赖时，谁负责等待？执行中断后，哪些结果还能被信任？
+我在做 light-agent，一个用 C11 实现的本地 Agent 运行时。想解决的问题很具体：模型说“完成了”以后，系统怎样证明文件真的生成了？多个角色之间有先后依赖时，谁负责等待？执行中断后，哪些结果还能被信任？
 
 项目把调度、状态、记忆、上下文预算、工具执行和恢复记录放进 Runtime，提供桌面 / Web 控制台与 HTTP API。可以在执行历史里查看模型与工具阶段、文件变化和任务结果，也可以用 Flow DAG 声明角色之间的依赖。
 
@@ -34,9 +34,9 @@ Cognitive OS 是一个用 C11 编写的本地 Agent 运行时，把任务调度�
 
 ## English introduction
 
-**Title: Show HN: Cognitive OS — a C11 runtime for inspectable AI agent execution**
+**Title: Show HN: light-agent — a C11 runtime for inspectable AI agent execution**
 
-I'm building Cognitive OS, a local agent runtime written in C11. The question behind it is what happens between a model proposing a tool call and a task actually being complete.
+I'm building light-agent, a local agent runtime written in C11. The question behind it is what happens between a model proposing a tool call and a task actually being complete.
 
 The runtime manages task scheduling, memory, context budgets, tool execution and recovery records. It includes a desktop/web console, an HTTP API, and DAG-based multi-agent flows. A small first task is to create a file, inspect the tool steps, and verify the actual result in the workspace.
 

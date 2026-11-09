@@ -1,4 +1,4 @@
-# cognitive-os-agent — Cognitive OS Runtime
+# cognitive-os-agent — light-agent Runtime
 
 A small, self-contained "cognitive OS runtime" written in C11. It wires together a
 cognitive kernel (event bus, scheduler, state machine, policy engine), a reasoning
@@ -13,7 +13,7 @@ pipeline as any other action.
 
 ## Terminal client
 
-The `chat` subcommand connects to a running Cognitive OS server and reuses its
+The `chat` subcommand connects to a running light-agent server and reuses its
 configured model, durable sessions, tools, and task journal. It does not start a
 second Runtime or call the provider directly. The existing local `run` and
 interactive modes remain available.

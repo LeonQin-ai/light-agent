@@ -18,7 +18,7 @@
 @implementation AppDelegate
 - (void)showError:(NSString *)message {
     NSAlert *alert = [NSAlert new];
-    alert.messageText = @"Cognitive OS 无法启动";
+    alert.messageText = @"light-agent 无法启动";
     alert.informativeText = message;
     [alert addButtonWithTitle:@"退出"];
     [alert runModal];
@@ -29,7 +29,7 @@
     NSMenu *menu = [NSMenu new];
     NSMenuItem *app = [NSMenuItem new]; [menu addItem:app];
     NSMenu *appMenu = [NSMenu new];
-    [appMenu addItemWithTitle:@"退出 Cognitive OS" action:@selector(terminate:) keyEquivalent:@"q"];
+    [appMenu addItemWithTitle:@"退出 light-agent" action:@selector(terminate:) keyEquivalent:@"q"];
     app.submenu = appMenu;
     NSMenuItem *edit = [NSMenuItem new]; edit.title = @"编辑"; [menu addItem:edit];
     NSMenu *editMenu = [NSMenu new];
@@ -44,13 +44,13 @@
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,1180,800)
         styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable
         backing:NSBackingStoreBuffered defer:NO];
-    self.window.title = @"Cognitive OS"; self.window.minSize = NSMakeSize(640,480);
+    self.window.title = @"light-agent"; self.window.minSize = NSMakeSize(640,480);
     self.web = [[WKWebView alloc] initWithFrame:self.window.contentView.bounds];
     self.web.autoresizingMask = NSViewWidthSizable|NSViewHeightSizable;
     self.web.navigationDelegate = self;
     self.window.contentView = self.web;
     [self.window center]; [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES];
-    [self.web loadHTMLString:@"<meta charset='utf-8'><body style='background:#212121;color:#ececec;font:16px -apple-system;display:grid;place-items:center;height:90vh'><div><h2>Cognitive OS</h2><p>正在准备你的工作空间…</p></div>" baseURL:nil];
+    [self.web loadHTMLString:@"<meta charset='utf-8'><body style='background:#212121;color:#ececec;font:16px -apple-system;display:grid;place-items:center;height:90vh'><div><h2>light-agent</h2><p>正在准备你的工作空间…</p></div>" baseURL:nil];
 
     NSFileManager *fm = NSFileManager.defaultManager;
     NSURL *support = [[fm URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject URLByAppendingPathComponent:@"Cognitive OS" isDirectory:YES];
@@ -94,7 +94,7 @@
         dispatch_async(dispatch_get_main_queue(), ^{
             if(self.closing) return;
             NSString *html=data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
-            if(!error && [(NSHTTPURLResponse *)response statusCode]==200 && self.server.running && [html containsString:@"Cognitive OS"])
+            if(!error && [(NSHTTPURLResponse *)response statusCode]==200 && self.server.running && [html containsString:@"light-agent"])
                 [self.web loadRequest:[NSURLRequest requestWithURL:self.url]];
             else dispatch_after(dispatch_time(DISPATCH_TIME_NOW,500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{ [self checkReady]; });
         });

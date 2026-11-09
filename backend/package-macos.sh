@@ -9,7 +9,7 @@ if [[ ! -x "$BACKEND_BINARY" ]]; then
   cmake -S . -B "$BUILD_DIR"
   cmake --build "$BUILD_DIR" --target cognitive-os-agent -j "${JOBS:-3}"
 fi
-APP="dist/Cognitive OS.app"
+APP="dist/light-agent.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 python3 tools/gen_icon.py
 cp "$BACKEND_BINARY" "$APP/Contents/MacOS/cognitive-os-agent"
@@ -22,8 +22,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>org.cognitiveos.desktop</string>
-<key>CFBundleName</key><string>Cognitive OS</string>
-<key>CFBundleDisplayName</key><string>Cognitive OS</string>
+<key>CFBundleName</key><string>light-agent</string>
+<key>CFBundleDisplayName</key><string>light-agent</string>
 <key>CFBundleExecutable</key><string>CognitiveOS</string>
 <key>CFBundleIconFile</key><string>CognitiveOS.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>

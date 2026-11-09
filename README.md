@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="logo.png" alt="Cognitive OS logo" width="128">
+<img src="logo.png" alt="light-agent logo" width="128">
 
-# Cognitive OS
+# light-agent
 
 ### Give AI agents a runtime, not just a conversation.
 
@@ -18,9 +18,9 @@ Run tools, coordinate agents, and inspect what happened — from a C11 core with
 
 </div>
 
-![Cognitive OS chat console](screenshots/ui.png)
+![light-agent chat console](screenshots/ui.png)
 
-**Cognitive OS is a local-first, model-agnostic agent runtime.** Use it as a desktop assistant, a CLI, or an HTTP service. Connect a model, give it tools, and follow tasks through model requests, commands, file changes, and final results.
+**light-agent is a local-first, model-agnostic agent runtime.** Use it as a desktop assistant, a CLI, or an HTTP service. Connect a model, give it tools, and follow tasks through model requests, commands, file changes, and final results.
 
 The core is written in C11 and embeds its web console. Prebuilt packages do not require a Node.js or Python application stack; extensions such as browser automation and Python skills bring their own runtimes.
 

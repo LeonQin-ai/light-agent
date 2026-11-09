@@ -407,7 +407,7 @@ h1{margin:14px 0 3px;font-size:25px;letter-spacing:.14em;font-weight:600;text-tr
     </g>
     <circle class="eye" cx="152" cy="86" r="3.4" fill="#da84a4"/>
   </svg>
-  <h1>Cognitive OS</h1>
+  <h1>light-agent</h1>
   <p class="sub">正在准备你的工作空间</p>
   <div class="track" aria-hidden="true"><span></span></div>
   <p class="tip">初始化运行时 · 请稍候</p>
@@ -516,7 +516,7 @@ static DWORD WINAPI boot_waiter(LPVOID) {
             ever_up = true;
         } else {
             if (g_server && !backend_restart_required(WaitForSingleObject(g_server, 0))) {
-                OutputDebugStringA("Cognitive OS: startup HTTP probe timed out; backend is alive, preserving running tasks.\n");
+                OutputDebugStringA("light-agent: startup HTTP probe timed out; backend is alive, preserving running tasks.\n");
                 continue;
             }
             if (restarts >= 3) {
@@ -560,7 +560,7 @@ static DWORD WINAPI boot_waiter(LPVOID) {
                     continue;
                 }
                 if (++failed_probes == 10)
-                    OutputDebugStringA("Cognitive OS: backend still alive but HTTP probe failed repeatedly; preserving running tasks.\n");
+                    OutputDebugStringA("light-agent: backend still alive but HTTP probe failed repeatedly; preserving running tasks.\n");
             }
             /* Five stable minutes restore the full crash budget. */
             if (GetTickCount64() - healthy_since > 300000)
@@ -748,7 +748,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g_icon_small) DrawIconEx(dc, scaled(14), scaled(10), g_icon_small,
                                      scaled(20), scaled(20), 0, nullptr, DI_NORMAL);
         RECT title = { scaled(g_icon_small ? 44 : 16), 0, cr.right-scaled(154), chrome_height() };
-        DrawTextW(dc, L"Cognitive OS", -1, &title, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX | DT_END_ELLIPSIS);
+        DrawTextW(dc, L"light-agent", -1, &title, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX | DT_END_ELLIPSIS);
         SelectObject(dc, old);
         DeleteObject(font);
         EndPaint(hwnd, &ps);
@@ -957,7 +957,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                     std::string tag=video?"<video autoplay muted loop playsinline src=\"":"<img alt=\"\" src=\"";
                     tag+=media+"\" style=\"position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#141313;z-index:100\">";
                     if(video)tag+="</video>";
-                    tag+="<div style=\"position:fixed;bottom:24px;left:0;right:0;text-align:center;color:white;z-index:101\">Cognitive OS 正在启动…</div>";
+                    tag+="<div style=\"position:fixed;bottom:24px;left:0;right:0;text-align:center;color:white;z-index:101\">light-agent 正在启动…</div>";
                     if(body!=std::string::npos)starting.insert(body,tag);
                 }
             }

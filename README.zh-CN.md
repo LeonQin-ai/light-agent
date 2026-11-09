@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="logo.png" alt="Cognitive OS 标识" width="128">
+<img src="logo.png" alt="light-agent 标识" width="128">
 
-# Cognitive OS · 认知操作系统
+# light-agent
 
 ### 让 AI 从回答问题，走向执行任务。
 
@@ -18,9 +18,9 @@
 
 </div>
 
-![Cognitive OS 聊天控制台](screenshots/ui.png)
+![light-agent 聊天控制台](screenshots/ui.png)
 
-**Cognitive OS 是一个本地优先、模型无关的智能体运行时。** 你可以把它作为桌面助手、命令行工具，或通过 HTTP 接入自己的应用。连接模型、赋予工具，再从记录中查看它调用了什么、修改了什么、最终交付了什么。
+**light-agent 是一个本地优先、模型无关的智能体运行时。** 你可以把它作为桌面助手、命令行工具，或通过 HTTP 接入自己的应用。连接模型、赋予工具，再从记录中查看它调用了什么、修改了什么、最终交付了什么。
 
 核心采用 C11，应用内嵌 Web 控制台。预编译版本无需先搭建 Node.js 或 Python 应用环境；浏览器自动化、Python 技能等扩展则需要各自的运行环境。
 

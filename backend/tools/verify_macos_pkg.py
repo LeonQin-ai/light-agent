@@ -8,5 +8,5 @@ for path in files:
  assert node.attrib['version']==sys.argv[2]
  assert node.attrib['install-location']=='/Applications'
  bundles=node.findall('.//bundle')
- assert any(b.attrib.get('id')=='org.cognitiveos.desktop' and 'Cognitive OS.app' in b.attrib.get('path','') for b in bundles),bundles
+ assert any(b.attrib.get('id')=='org.cognitiveos.desktop' and 'light-agent.app' in b.attrib.get('path','') for b in bundles),bundles
 print('PASS: macOS Installer identifier, version, app payload and /Applications destination')
