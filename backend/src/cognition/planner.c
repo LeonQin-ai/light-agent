@@ -757,7 +757,7 @@ static char *native_tool_catalog(const tool_registry *tools, struct policy_engin
 
 static int plan_with(llm *llm, char *sys_prompt, const char *prompt, planned_action **actions, int *n_actions,
                      char **raw_out, char **err_out, const char *attachments, int *truncated_out,
-                     int output_tokens, const tool_registry *tools, struct policy_engine *policy, int *native_end_out, planner_model_diagnostic *diagnostic, int require_completion, char **completion_out) {
+                     int output_tokens, const tool_registry *tools, struct policy_engine *policy, int *native_end_out, planner_model_diagnostic *diagnostic, int require_completion, char **completion_out, double temperature) {
     if(completion_out)*completion_out=NULL;
     llm_request req = {0};
     if(native_end_out)*native_end_out=0;
@@ -834,7 +834,7 @@ static int plan_with(llm *llm, char *sys_prompt, const char *prompt, planned_act
     req.messages = msgs;
     req.num_messages = count;
     int deepseek_v41 = llm->model && strstr(llm->model, "deepseek-v4.1-flash") != NULL;
-    req.temperature = deepseek_v41 ? 1.0 : 0.2;
+    req.temperature = temperature >= 0 && temperature <= 1 ? temperature : (deepseek_v41 ? 1.0 : 0.2);
     /* Bound this model's hidden reasoning so it cannot consume the planner's
      * entire output budget before returning a parseable plan. */
     req.reasoning_effort = deepseek_v41 ? "low" : NULL;
@@ -1242,21 +1242,21 @@ void planner_actions_free(planned_action *a, int n) {
 
 int planner_plan(llm *llm, const char *prompt, planned_action **actions, int *n_actions, char **raw_out,
                      char **err_out) {
-    return plan_with(llm, NULL, prompt, actions, n_actions, raw_out, err_out, NULL, NULL, 0, NULL, NULL, NULL, NULL, 0, NULL);
+    return plan_with(llm, NULL, prompt, actions, n_actions, raw_out, err_out, NULL, NULL, 0, NULL, NULL, NULL, NULL, 0, NULL, -1);
 }
 
 int planner_plan_ex(llm *llm, const struct tool_registry *tools, struct skill_registry *skills,
                         struct policy_engine *policy, const char *prompt, planned_action **actions,
                         int *n_actions, char **raw_out, char **err_out) {
     char *sys = build_catalog_prompt(tools, skills, policy,planner_uses_native_tools(llm));
-    return plan_with(llm, sys, prompt, actions, n_actions, raw_out, err_out, NULL, NULL, 0, tools, policy, NULL, NULL, 0, NULL);
+    return plan_with(llm, sys, prompt, actions, n_actions, raw_out, err_out, NULL, NULL, 0, tools, policy, NULL, NULL, 0, NULL, -1);
 }
 
 int planner_plan_attachments_ex(llm *llm, const struct tool_registry *tools, struct skill_registry *skills,
     struct policy_engine *policy, const char *prompt, planned_action **actions,
     int *n_actions, char **raw_out, char **err_out, const char *attachments, int *truncated_out) {
     return plan_with(llm, build_catalog_prompt(tools,skills,policy,planner_uses_native_tools(llm)), prompt, actions,
-        n_actions, raw_out, err_out, attachments, truncated_out, 0, tools, policy, NULL, NULL, 0, NULL);
+        n_actions, raw_out, err_out, attachments, truncated_out, 0, tools, policy, NULL, NULL, 0, NULL, -1);
 }
 
 int planner_plan_attachments_ex_with_output(llm *llm, const struct tool_registry *tools,
@@ -1264,15 +1264,15 @@ int planner_plan_attachments_ex_with_output(llm *llm, const struct tool_registry
     planned_action **actions, int *n_actions, char **raw_out, char **err_out,
     const char *attachments, int *truncated_out, int output_tokens) {
     return plan_with(llm, build_catalog_prompt(tools,skills,policy,planner_uses_native_tools(llm)), prompt, actions,
-        n_actions, raw_out, err_out, attachments, truncated_out, output_tokens, tools, policy, NULL, NULL, 0, NULL);
+        n_actions, raw_out, err_out, attachments, truncated_out, output_tokens, tools, policy, NULL, NULL, 0, NULL, -1);
 }
 
 int planner_plan_turn_diagnostic(llm *llm, const struct tool_registry *tools,
     struct skill_registry *skills, struct policy_engine *policy, const char *prompt,
     planned_action **actions, int *n_actions, char **raw_out, char **err_out,
-    const char *attachments, int *truncated_out, int output_tokens, int *native_end_out, planner_model_diagnostic *diagnostic, int require_completion, char **completion_out) {
+    const char *attachments, int *truncated_out, int output_tokens, int *native_end_out, planner_model_diagnostic *diagnostic, int require_completion, char **completion_out, double temperature) {
     return plan_with(llm,build_catalog_prompt(tools,skills,policy,planner_uses_native_tools(llm)),prompt,actions,n_actions,
-        raw_out,err_out,attachments,truncated_out,output_tokens,tools,policy,native_end_out,diagnostic,require_completion,completion_out);
+        raw_out,err_out,attachments,truncated_out,output_tokens,tools,policy,native_end_out,diagnostic,require_completion,completion_out,temperature);
 }
 
 int planner_plan_turn(llm *llm, const struct tool_registry *tools,
@@ -1280,5 +1280,5 @@ int planner_plan_turn(llm *llm, const struct tool_registry *tools,
     planned_action **actions, int *n_actions, char **raw_out, char **err_out,
     const char *attachments, int *truncated_out, int output_tokens, int *native_end_out) {
     return planner_plan_turn_diagnostic(llm,tools,skills,policy,prompt,actions,n_actions,
-        raw_out,err_out,attachments,truncated_out,output_tokens,native_end_out,NULL,0,NULL);
+        raw_out,err_out,attachments,truncated_out,output_tokens,native_end_out,NULL,0,NULL,-1);
 }

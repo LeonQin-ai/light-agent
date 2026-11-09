@@ -663,13 +663,28 @@ static int llm_configured(runtime_ctx *ctx) {
  * composer or mutate the global active provider when a chat changes model. */
 static char *chat_route_snapshot(runtime_ctx *ctx,cJSON *body,int *invalid){
     *invalid=0;cJSON *choice=cJSON_GetObjectItemCaseSensitive(body,"route");
-    if(!choice)return NULL;
+    cJSON *temperature = cJSON_GetObjectItemCaseSensitive(body, "temperature");
+    if (temperature && (!cJSON_IsNumber(temperature) ||
+                        !(temperature->valuedouble >= 0 && temperature->valuedouble <= 1))) {
+        *invalid = 1;
+        return NULL;
+    }
+    if (!choice) {
+        if (!temperature) return NULL;
+        cJSON *settings = cJSON_CreateObject();
+        cJSON_AddNumberToObject(settings, "temperature", temperature->valuedouble);
+        char *snapshot = cJSON_PrintUnformatted(settings);
+        cJSON_Delete(settings);
+        if (!snapshot) *invalid = 1;
+        return snapshot;
+    }
     const char *name=cJSON_GetStringValue(choice);if(!name || !*name){*invalid=1;return NULL;}
     for(int i=0;i<router_count(ctx->router);i++){
         const route *r=router_get(ctx->router,(size_t)i);if(!r || strcmp(r->name,name))continue;
         cJSON *o=cJSON_CreateObject();cJSON_AddStringToObject(o,"provider",r->provider);cJSON_AddStringToObject(o,"model",r->model?r->model:"");
         cJSON_AddStringToObject(o,"base_url",r->base_url?r->base_url:"");cJSON_AddStringToObject(o,"api_key",r->api_key?r->api_key:"");
         cJSON_AddNumberToObject(o,"context_window",(double)r->context_window_tokens);cJSON_AddNumberToObject(o,"max_output_tokens",(double)r->max_output_tokens);
+        if (temperature) cJSON_AddNumberToObject(o, "temperature", temperature->valuedouble);
         char *json=cJSON_PrintUnformatted(o);cJSON_Delete(o);if(!json)*invalid=1;return json;
     }
     *invalid=1;return NULL;
@@ -740,7 +755,7 @@ static int h_chat(const http_request *req, http_response *resp, void *ud) {
     if(access){if(!strcmp(access,"ask"))mode=1;else if(!strcmp(access,"auto"))mode=2;
         else if(strcmp(access,"full")){free(directory);free(safe_msg);free(attachments);cJSON_Delete(root);resp->status=400;http_resp_json(resp,"{\"error\":\"invalid permission mode\"}");return 0;}}
     int invalid_route=0;char *model=chat_route_snapshot(ctx,root,&invalid_route);
-    if(invalid_route){free(directory);free(safe_msg);free(attachments);cJSON_Delete(root);resp->status=400;http_resp_json(resp,"{\"error\":\"unknown chat model route\"}");return 0;}
+    if(invalid_route){free(directory);free(safe_msg);free(attachments);cJSON_Delete(root);resp->status=400;http_resp_json(resp,"{\"error\":\"invalid chat model route or temperature (expected 0 to 1)\"}");return 0;}
     cJSON *acceptance_value=cJSON_GetObjectItemCaseSensitive(root,"acceptance");
     char *acceptance=acceptance_value?cJSON_PrintUnformatted(acceptance_value):NULL;
     if(acceptance_value && (!acceptance||reasoning_acceptance_validate(acceptance))){

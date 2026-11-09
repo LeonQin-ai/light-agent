@@ -1404,6 +1404,9 @@ panels.chat = `
           共享记忆（全局设置，适用于所有会话）
         </label>
         <span class="muted" id="chat-session-meta"></span>
+        <label><input type="checkbox" id="chat-temperature-custom" onchange="chatTemperatureChange()"> 自定义模型温度</label>
+        <label>温度 <input type="range" id="chat-temperature" min="0" max="1" step="0.05" value="0.2"
+          aria-label="模型温度" oninput="chatTemperatureChange()"> <output id="chat-temperature-value">0.20</output></label>
       </div>
       <div class="hint" style="margin-top:6px">对话模型在上方下拉切换（来自 Model routes）；新增路由请到 <a href="#" onclick="switchPanel('models');return false">Models</a> 页配置。会话支持 取消 / 恢复：运行中点「取消」，取消或失败后点「恢复」重跑上一条输入。</div>
       <details id="ssh-session-details" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px" ontoggle="if(this.open)sshSessionLoad()">
@@ -3867,7 +3870,21 @@ function chatApproval(t,session){let box=$('chat-approval');if(!box){box=documen
 function chatOptions(session=CHAT_SESSION){try{return JSON.parse(localStorage.getItem('coa.session-options:'+session)||'{}');}catch{return {};}}
 function chatOptionSet(name,value,session=CHAT_SESSION){const o=chatOptions(session);o[name]=value;localStorage.setItem('coa.session-options:'+session,JSON.stringify(o));}
 function chatPermissionChange(value){chatOptionSet('permission',value);}
-function syncChatPermission(){const el=$('chat-permission');if(el)el.value=chatOptions().permission || 'auto';}
+function syncChatPermission(){
+  const settings=chatOptions();
+  $('chat-permission').value=settings.permission || 'auto';
+  const temperature=$('chat-temperature'),custom=typeof settings.temperature==='number';
+  $('chat-temperature-custom').checked=custom;
+  temperature.disabled=!custom;
+  temperature.value=custom ? settings.temperature : 0.2;
+  $('chat-temperature-value').value=Number(temperature.value).toFixed(2);
+}
+function chatTemperatureChange(){
+  const temperature=$('chat-temperature');
+  temperature.disabled=!$('chat-temperature-custom').checked;
+  chatOptionSet('temperature',temperature.disabled ? null : Number(temperature.value));
+  $('chat-temperature-value').value=Number(temperature.value).toFixed(2);
+}
 async function loadChat(){
   syncChatPermission();
   const box = $('chat-box'); if(!box) return;
@@ -6447,6 +6464,7 @@ async function chatSubmit(resume = false){
   const settings=chatOptions(session),thinking=chatThinkingEnabled();
   const permission=$('chat-permission')?.value || settings.permission || 'auto';
   const route=settings.route || undefined;
+  const temperature=settings.temperature ?? undefined;
   const destination=CHAT_MSGS;
   const attachments = resume ? [] : CHAT_ATTACH.slice();
   CHAT_SUBMITTING.add(session); chatBusyUI(true);
@@ -6471,7 +6489,7 @@ async function chatSubmit(resume = false){
   entry.pending = true; entry.progress = {stage:'submitting'};
   CHAT_CACHE[session] = CHAT_SESSION===session?CHAT_MSGS:destination; renderChatEntry(entry);
   const r = await call('POST',resume ? '/v1/chat/sessions/' + encodeURIComponent(session) + '/resume' : '/v1/chat',
-    resume ? {thinking,route,permission_mode:permission} : {message:full,session,route,workspace:executionWorkspace || undefined,permission_mode:permission,thinking,attachments:attachments.map(a=>a.id)});
+    resume ? {thinking,route,temperature,permission_mode:permission} : {message:full,session,route,temperature,workspace:executionWorkspace || undefined,permission_mode:permission,thinking,attachments:attachments.map(a=>a.id)});
   CHAT_SUBMITTING.delete(session);
   if(!Number.isInteger(r.obj?.id)){
     entry.pending = false; entry.progress.stage = 'failed';

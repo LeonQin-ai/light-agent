@@ -303,6 +303,7 @@ struct reasoning {
     int read_tracking_overflow;
     int run_file_reads;
     int run_successful_tools;
+    double planner_temperature;
     int thinking_mode; /* task-local preference; set by the chat lane */
     int external_history; /* current request already contains canonical transcript */
     int completion_only; /* reserved final review cannot execute more tools */
@@ -2305,7 +2306,7 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
                                  aug ? aug : input, &r->actions, &r->n_actions,
                                  &raw, &plan_err, images,
                                  &r->planner_response_truncated, output_override, &r->planner_native_end_turn, &diagnostic,
-                                 r->completion_review_required,&completion_json);
+                                 r->completion_review_required,&completion_json,r->planner_temperature);
     free(images);
     if(rc==0 && r->planner_native_end_turn==3) {
         cJSON *control=cJSON_Parse(completion_json?completion_json:"{}");
@@ -4185,14 +4186,15 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     }
     prompt = safe_prompt;
 
-    if(r->run_task && r->run_task->llm_config){
-        cJSON *o=cJSON_Parse(r->run_task->llm_config);
+    cJSON *o = r->run_task && r->run_task->llm_config ? cJSON_Parse(r->run_task->llm_config) : NULL;
+    cJSON *temperature = cJSON_GetObjectItemCaseSensitive(o, "temperature");
+    r->planner_temperature = cJSON_IsNumber(temperature) ? temperature->valuedouble : -1;
+    if (cJSON_IsString(cJSON_GetObjectItemCaseSensitive(o, "provider"))) {
         picked=llm_create(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"provider")),
             cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"base_url")),cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"api_key")),
             cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"model")));
         if(picked){picked->context_window_tokens=(long long)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(o,"context_window"));
             picked->max_output_tokens=(long long)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(o,"max_output_tokens"));saved=r->llm;r->llm=picked;}
-        cJSON_Delete(o);
     }else if (r->router) {
         const route *rt = router_pick(r->router);
         if (rt) {
@@ -4206,6 +4208,7 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
         }
     }
 
+    cJSON_Delete(o);
     r->completion_review_required=!planner_uses_native_tools(r->llm);
     const char *contracts[]={r->default_acceptance_json,r->run_task?r->run_task->acceptance_json:NULL};
     for(int i=0;i<2;i++)if(contracts[i]){cJSON *contract=cJSON_Parse(contracts[i]);merge_acceptance(r,contract);cJSON_Delete(contract);}
