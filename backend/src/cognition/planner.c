@@ -119,7 +119,10 @@ static const char *SYS_NATIVE_TAIL=
     "For a missing input path, discover its real location; for an explicitly requested new output file, create it "
     "rather than repeatedly reading the absent file. Read requested source scope and follow page offsets when needed. "
     "On Windows explicitly select PowerShell for PowerShell syntax. Binary documents require extraction tools "
-    "or appropriate Python libraries, not repeated raw text reads. If the user asks to see an image file, call file_read on that file to attach a validated preview; a path in complete_task alone is not an image preview.\n";
+    "or appropriate Python libraries, not repeated raw text reads.\n"
+    "IMAGE DELIVERY: If the user asks to see created, downloaded, or existing images, call file_read on each actual image file to attach a validated preview. "
+    "In the final answer, put ![caption](path) directly below the related text using the exact file_read path. "
+    "Do not invent localhost URLs or list all the images separately at the end.\n";
 
 /* Build the system prompt from the ACTUAL tool + skill registries. Returns a
  * malloc'd prompt, or NULL when no registry is available (caller falls back
