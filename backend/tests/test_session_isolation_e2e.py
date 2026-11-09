@@ -26,6 +26,7 @@ try:
      except OSError:assert p.poll() is None;time.sleep(.05)
     for letter in ('a','b'):req('/v1/routes',{'name':'route-'+letter,'provider':'openai','model':'model-'+letter,'api_key':'fixture-'+letter,'base_url':f'http://127.0.0.1:{model.server_port}'})
     a=req('/v1/chat',{'session':'a','message':'Describe yourself','route':'route-a','permission_mode':'ask','thinking':True,'temperature':0})['id'];assert entered.wait(5)
+    assert req('/v1/scheduler')['current_task_id']==a,'scheduler exposes the running task, including ID zero'
     b=req('/v1/chat',{'session':'b','message':'Describe yourself','route':'route-b','permission_mode':'full','thinking':False,'temperature':1})['id']
     release.set()
     for tid,model_name,permission,thinking in ((a,'model-a',1,True),(b,'model-b',0,False)):

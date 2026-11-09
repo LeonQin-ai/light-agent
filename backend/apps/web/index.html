@@ -6528,6 +6528,26 @@ chatRestore();
 let taskPetState = null;
 let taskPetTimer = null;
 let taskPetListenerReady = false;
+let taskPetLastTask = null;
+function taskPetLine(value, limit){
+  return [...String(value ?? '').replace(/[\s\u0000-\u001f]+/g,' ').trim()].slice(0,limit).join('');
+}
+function taskPetTaskProgress(task){
+  const title=taskPetLine(task.input,80) || '任务 #'+task.id;
+  const terminal={DONE:'已完成',FAILED:'执行失败',CANCELLED:'已取消',TIMEOUT:'执行超时',INTERRUPTED:'已中断'};
+  const stage=terminal[task.status] || (task.status==='QUEUED'?'排队中':
+    progressLabel({stage:task.stage==='queued'?'preparing_context':task.stage,cur_tool:task.cur_tool}));
+  const files=new Set((Array.isArray(task.steps)?task.steps:[]).filter(
+    step=>step.ok===1 && ['file_write','file_edit'].includes(step.tool) && step.target
+  ).map(step=>step.target));
+  const detail=files.size ? '已修改 '+files.size+' 个文件' :
+    Array.isArray(task.flow_nodes) && task.flow_nodes.length ?
+      '已完成 '+task.flow_nodes.filter(node=>node.status==='ok').length+'/'+task.flow_nodes.length+' 个节点' :
+      task.tool_calls>0 ? '已调用 '+task.tool_calls+' 次工具' : '';
+  const thinking=['planning','plan_ready','preparing_context','replanning','summarizing'].includes(task.stage);
+  const mood=task.status==='DONE'?'celebrate':task.status==='RUNNING'?(thinking?'think':'move'):'smile';
+  return mood+'\n'+title+'\n'+taskPetLine(detail ? stage+' · '+detail : stage,100);
+}
 function updateTaskPetButton(){
   const button=$('chat-task-pet');
   if(!button)return;
@@ -6552,10 +6572,30 @@ function initTaskPet(){
     const {obj,status}=await call('GET','/v1/scheduler',null,2500);
     if(taskPetTimer!==timer || taskPetState!=='open')return;
     const valid=status===200 && Number.isInteger(obj?.active) && Number.isInteger(obj?.queued);
-    const state=valid ? (obj.active || obj.queued ? `运行中 ${obj.active} · 排队 ${obj.queued}` : '空闲 · 没有运行中的任务') : '任务状态暂不可用';
+    const busy=valid && (obj.active || obj.queued);
+    let state=valid ? (busy ? `运行中 ${obj.active} · 排队 ${obj.queued}` : '空闲 · 没有运行中的任务') : '任务状态暂不可用';
+    const id=busy ? obj.current_task_id : valid ? taskPetLastTask : null;
+    if(Number.isSafeInteger(id) && id>=0){
+      const detail=await call('GET','/v1/tasks/'+id,null,2000);
+      if(taskPetTimer!==timer || taskPetState!=='open')return;
+      if(detail.status===200 && detail.obj?.id===id){
+        state=taskPetTaskProgress(detail.obj);
+        taskPetLastTask=['RUNNING','QUEUED'].includes(detail.obj.status)?id:null;
+      }else if(!busy){
+        taskPetLastTask=null;
+      }
+    }
     bridge.postMessage('task-pet:status:'+state);
   };
   bridge.addEventListener('message',({data})=>{
+    if(data==='task-pet:new-chat'){
+      if(taskPetState!=='open')return;
+      $('nav-newchat')?.click();
+      chatInitResize();
+      const composerToggle=$('chat-composer-toggle');
+      if(composerToggle?.getAttribute('aria-expanded')==='false')composerToggle.click();
+      return;
+    }
     if(data==='task-pet:unavailable'){
       toast('桌宠无法开启，请检查安装包中的桌宠素材。');
       return;
@@ -6569,6 +6609,7 @@ function initTaskPet(){
     }else if(taskPetState==='closed'){
       clearInterval(taskPetTimer);
       taskPetTimer=null;
+      taskPetLastTask=null;
     }
   });
   bridge.postMessage('task-pet:query');

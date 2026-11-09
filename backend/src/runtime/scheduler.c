@@ -300,6 +300,7 @@ scheduler *scheduler_new_limited(int workers, int max_workers, int max_active,
 void scheduler_get_stats(scheduler *s, scheduler_stats *out) {
     if (!out) return;
     memset(out, 0, sizeof(*out));
+    out->current_task_id = -1;
     if (!s) return;
     mutex_lock(&s->mtx);
     out->workers = s->workers;
@@ -309,9 +310,19 @@ void scheduler_get_stats(scheduler *s, scheduler_stats *out) {
     out->queued = s->qlen;
     out->rejected = s->rejected;
     out->history_count = s->history_count; out->history_bytes = s->history_bytes;
-    for (size_t i=0;i<s->alen;i++) if (s->all[i]->completed) {
-        out->retained++; out->retained_bytes += task_bytes(s->all[i]);
+    int64_t queued_task_id = -1;
+    for (size_t i = 0; i < s->alen; ++i) {
+        task *t = s->all[i];
+        if (t->completed) {
+            out->retained++;
+            out->retained_bytes += task_bytes(t);
+        } else if (t->status == TS_RUNNING && t->id > out->current_task_id) {
+            out->current_task_id = t->id;
+        } else if (t->status == TS_QUEUED && t->id > queued_task_id) {
+            queued_task_id = t->id;
+        }
     }
+    if (out->current_task_id < 0) out->current_task_id = queued_task_id;
     mutex_unlock(&s->mtx);
 }
 

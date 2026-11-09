@@ -100,6 +100,7 @@ scheduler *scheduler_new_limited(int workers, int max_workers, int max_active,
 #define SCHEDULER_FULL (-2)
 typedef struct scheduler_stats {
     int workers, max_workers, active, max_active;
+    int64_t current_task_id; /* newest running task, or newest queued task; -1 if idle */
     size_t queued, retained, retained_bytes, history_count, history_bytes;
     uint64_t rejected;
 } scheduler_stats;

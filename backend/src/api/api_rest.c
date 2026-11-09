@@ -141,11 +141,11 @@ static int h_scheduler(const http_request *req, http_response *resp, void *ud) {
     http_resp_appendf(resp,
         "{\"workers\":%d,\"max_workers\":%d,\"active\":%d,\"max_active\":%d,"
         "\"queued\":%llu,\"rejected\":%llu,\"retained\":%llu,\"retained_bytes\":%llu,"
-        "\"history_count\":%llu,\"history_bytes\":%llu}", stats.workers, stats.max_workers,
+        "\"history_count\":%llu,\"history_bytes\":%llu,\"current_task_id\":%lld}", stats.workers, stats.max_workers,
         stats.active, stats.max_active, (unsigned long long)stats.queued,
         (unsigned long long)stats.rejected, (unsigned long long)stats.retained,
         (unsigned long long)stats.retained_bytes, (unsigned long long)stats.history_count,
-        (unsigned long long)stats.history_bytes);
+        (unsigned long long)stats.history_bytes, (long long)stats.current_task_id);
     return 0;
 }
 

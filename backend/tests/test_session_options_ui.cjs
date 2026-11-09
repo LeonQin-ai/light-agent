@@ -1,6 +1,9 @@
 const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 (async()=>{const browser=await chromium.launch({headless:true,channel:process.env.UI_TEST_BROWSER||'msedge'});try{
- const page=await browser.newPage(),sessions=[],submitted=[],errors=[];page.on('pageerror',e=>errors.push(e.message));let globalWrites=0;
+ const page=await browser.newPage(),sessions=[],sessionRequests=[],submitted=[],errors=[];page.on('pageerror',e=>errors.push(e.message));let globalWrites=0;
+ let petTask={id:0,input:'检视代码并发现优化点',status:'RUNNING',stage:'executing',cur_tool:'file_edit',steps:[
+  {tool:'file_edit',ok:1,target:'example.c'},{tool:'file_edit',ok:1,target:'example.c'},
+  {tool:'file_edit',ok:0,target:'unmodified.c'}]};
  await page.addInitScript(()=>{
   window.petMessages=[];
   window.chrome ??= {};
@@ -24,9 +27,11 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  if(u.pathname==='/v1/config/llm'){if(r.method()==='POST')globalWrites++;obj={provider:'openai',model:'global',api_key_set:true};}
  if(u.pathname==='/v1/routes')obj=[{name:'route-a',provider:'openai',model:'a'},{name:'route-b',provider:'openai',model:'b'}];
  if(u.pathname==='/v1/workspaces')obj={default_workspace:'D:/default',workspaces:[]};
- if(u.pathname==='/v1/chat/sessions'){if(r.method()==='POST'){obj={id:sessions.length?'b':'a',workspace:'D:/default'};sessions.push(obj);}else obj=sessions;}
+ if(u.pathname==='/v1/chat/sessions'){if(r.method()==='POST'){sessionRequests.push(r.postDataJSON());obj={id:sessions.length?'b':'a',workspace:'D:/default'};sessions.push(obj);}else obj=sessions;}
  if(u.pathname==='/v1/chat/history')obj={turns:[],runs:[]};
- if(u.pathname==='/v1/scheduler')obj={active:2,queued:1};
+ if(u.pathname==='/v1/scheduler')obj=petTask.status==='DONE'?
+  {active:0,queued:0,current_task_id:-1}:{active:2,queued:1,current_task_id:0};
+ if(u.pathname==='/v1/tasks/0')obj=petTask;
  if(u.pathname==='/v1/chat'){submitted.push(r.postDataJSON());obj={id:7};}
  if(u.pathname==='/v1/tasks/7')obj={id:7,status:'DONE',output:'verified'};
  return route.fulfill({contentType:'application/json',body:JSON.stringify(obj)});});
@@ -37,7 +42,11 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  const pet=page.locator('#chat-task-pet');
  assert.equal(await pet.innerText(),'开启桌宠');
  await pet.click();
- await page.waitForFunction(()=>petMessages.includes('task-pet:status:运行中 2 · 排队 1'));
+ await page.waitForFunction(()=>petMessages.includes('task-pet:status:move\n检视代码并发现优化点\n正在修改文件 · 已修改 1 个文件'));
+ petTask={...petTask,stage:'planning',steps:[]};
+ await page.waitForFunction(()=>petMessages.includes('task-pet:status:think\n检视代码并发现优化点\n正在规划下一步'));
+ petTask={...petTask,status:'DONE'};
+ await page.waitForFunction(()=>petMessages.includes('task-pet:status:celebrate\n检视代码并发现优化点\n已完成'));
  assert.equal(await pet.innerText(),'关闭桌宠');
  await pet.click();
  assert.equal(await pet.innerText(),'开启桌宠');
@@ -50,7 +59,17 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  await page.locator('#chat-temperature-custom').check();
  await page.locator('#chat-temperature').fill('0.65');
  await page.locator('#chat-temperature-menu summary').click();
- await page.locator('#nav-newchat').click();await page.waitForFunction(()=>CHAT_SESSION==='b' && $('chat-model').value==='@cur');
+ await pet.click();
+ await page.locator('#chat-composer-toggle').click();
+ await page.evaluate(()=>{
+  switchPanel('agents');
+  CHAT_WORKSPACE='D:/selected';
+  window.chrome.webview.dispatchEvent(new MessageEvent('message',{data:'task-pet:new-chat'}));
+ });
+ await page.waitForFunction(()=>current==='chat' && CHAT_SESSION==='b' && $('chat-model').value==='@cur' && document.activeElement===$('chat-input'));
+ assert.equal(sessionRequests.length,2,'desktop pet creates exactly one new session');
+ assert.deepEqual(sessionRequests[1],{workspace:'D:/selected'});
+ assert.equal(await page.locator('#chat-composer-toggle').getAttribute('aria-expanded'),'true');
  assert.equal(await page.locator('#chat-permission').inputValue(),'auto');assert.equal(await page.locator('#chat-temperature-summary').innerText(),'默认');
  await page.locator('#chat-model').selectOption('route-b');await page.locator('#chat-permission').selectOption('full');
  await page.evaluate(()=>chatSwitchSession('a'));await page.waitForFunction(()=>$('chat-model').value==='route-a');

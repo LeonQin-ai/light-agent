@@ -19,3 +19,13 @@
 生成提示：
 
 > Use case: identity-preserve. Turn the mascot from the reference light-agent logo into one isolated, fully embodied desktop-pet character. Recreate the same chibi blue-violet orb creature as a polished 3D toy render, full body visible from helmet tips down to two tiny rounded boots. Keep its gold-trimmed tall jackal ears, bright cyan forehead gem, luminous cyan-and-violet infinity eye band, two large expressive eyes, pink cheeks, little smile, dark purple gauntlets, gold infinity belt, and its gold crescent staff with blue gem held at its side. The round character itself is the whole pet, with arms and legs; no robot casing, monitor, frame, badge, emblem backing, or image on its face. Front three-quarter view, friendly and energetic. Strong clean silhouette with modeled depth, soft studio lighting and smooth glossy materials, still readable at 150 pixels tall. Center the entire character and staff with modest even padding. Transparent RGBA background, no scenery, no bird, no ground or drop shadow, no extra effects outside the silhouette, no text.
+
+## 桌宠进度和动作
+
+微笑、思考、执行、完成分别对应空闲、规划、工具执行和任务成功。思考阶段切换到 [全身思考姿势](../../../assets/light-agent-pet-thinking.png)，执行和完成通过不同幅度的浮动呈现。桌宠保留 Windows 的动画设置。
+
+思考素材由内置图像生成工具生成，随后清理了原图的背景光晕。两次提示如下。
+
+> Use case: identity-preserve. Make a full-body thinking pose for the exact light-agent 3D desktop mascot in the reference. Match the reference toy-render style and identity closely: same blue-purple round orb, gold jackal ears and helmet, cyan-violet infinity eye band, cyan jewel, purple gloves, gold infinity belt and boots, same gold crescent staff in one hand. The other hand gently rests under the chin in a curious thinking gesture. A slight head tilt, thoughtful eyes looking up, small closed-mouth thoughtful smile. Full figure and staff visible, centered at the same scale and front three-quarter view as the reference, with modest padding. Transparent RGBA background with clean edges, no shadow, scenery, text, floating icons, or outline.
+
+> Use case: background-extraction. Preserve the supplied full-body 3D thinking mascot exactly, including pose, ears, face, shiny gold trim, hands, boots and entire crescent staff. Remove every trace of the pale glow, halo, studio background, color spill and shadow around the mascot, including the space between ears, around the staff, and between the feet. Deliver a clean transparent RGBA sprite: all pixels outside the character silhouette must be fully transparent, with only a narrow antialiased edge. Keep same framing and pose. No new background, no effects, no text.

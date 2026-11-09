@@ -64,6 +64,7 @@ static HICON g_icon_small = nullptr;
 static std::wstring g_url_main;
 static std::wstring g_url_error;
 static HWND g_task_pet = nullptr;
+static std::wstring g_task_pet_title;
 static std::wstring g_task_pet_status;
 
 static void publish_task_pet_state() {
@@ -71,12 +72,25 @@ static void publish_task_pet_state() {
 }
 
 static std::wstring g_task_pet_asset;
-static std::vector<uint32_t> g_task_pet_pixels;
-static UINT g_task_pet_width = 0;
-static UINT g_task_pet_height = 0;
+struct TaskPetSprite {
+    std::vector<uint32_t> pixels;
+    UINT width = 0;
+    UINT height = 0;
+};
+enum class TaskPetMood { Smile, Think, Move, Celebrate };
+static TaskPetSprite g_task_pet_smile, g_task_pet_thinking;
+static TaskPetMood g_task_pet_mood = TaskPetMood::Smile;
+static ULONGLONG g_task_pet_mood_since = 0;
 static bool g_task_pet_animate = false;
 
-static bool load_task_pet() {
+static void set_task_pet_mood(TaskPetMood mood) {
+    if (g_task_pet_mood != mood) {
+        g_task_pet_mood = mood;
+        g_task_pet_mood_since = GetTickCount64();
+    }
+}
+
+static bool load_task_pet_sprite(const std::wstring &path, TaskPetSprite &sprite) {
     IWICImagingFactory *factory = nullptr;
     IWICBitmapDecoder *decoder = nullptr;
     IWICBitmapFrameDecode *frame = nullptr;
@@ -86,7 +100,7 @@ static bool load_task_pet() {
     HRESULT result = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
                                       IID_IWICImagingFactory, reinterpret_cast<void **>(&factory));
     if (SUCCEEDED(result))
-        result = factory->CreateDecoderFromFilename(g_task_pet_asset.c_str(), nullptr, GENERIC_READ,
+        result = factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
                                                     WICDecodeMetadataCacheOnLoad, &decoder);
     if (SUCCEEDED(result)) result = decoder->GetFrame(0, &frame);
     if (SUCCEEDED(result)) result = frame->GetSize(&width, &height);
@@ -103,9 +117,9 @@ static bool load_task_pet() {
         result = scaler->Initialize(converter, width, height, WICBitmapInterpolationModeFant);
     }
     if (SUCCEEDED(result)) {
-        g_task_pet_pixels.resize(width * height);
+        sprite.pixels.resize(width * height);
         result = scaler->CopyPixels(nullptr, width * 4, width * height * 4,
-                                    reinterpret_cast<BYTE *>(g_task_pet_pixels.data()));
+                                    reinterpret_cast<BYTE *>(sprite.pixels.data()));
     }
     if (scaler) scaler->Release();
     if (converter) converter->Release();
@@ -113,11 +127,11 @@ static bool load_task_pet() {
     if (decoder) decoder->Release();
     if (factory) factory->Release();
     if (FAILED(result)) {
-        g_task_pet_pixels.clear();
+        sprite = {};
         return false;
     }
-    g_task_pet_width = width;
-    g_task_pet_height = height;
+    sprite.width = width;
+    sprite.height = height;
     return true;
 }
 
@@ -126,8 +140,10 @@ static bool render_task_pet(HWND hwnd) {
     GetClientRect(hwnd, &bounds);
     const int width = bounds.right;
     const int height = bounds.bottom;
-    if (width <= 0 || height <= 0 || g_task_pet_pixels.empty()) return false;
-    const auto fit = [height](int value) { return MulDiv(value, height, 202); };
+    const TaskPetSprite &sprite = g_task_pet_mood == TaskPetMood::Think && !g_task_pet_thinking.pixels.empty()
+        ? g_task_pet_thinking : g_task_pet_smile;
+    if (width <= 0 || height <= 0 || sprite.pixels.empty()) return false;
+    const auto fit = [height](int value) { return MulDiv(value, height, 228); };
     BITMAPINFO info{};
     info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     info.bmiHeader.biWidth = width;
@@ -146,7 +162,7 @@ static bool render_task_pet(HWND hwnd) {
     auto *pixels = static_cast<uint32_t *>(memory);
     std::memset(pixels, 0, static_cast<size_t>(width) * height * sizeof(*pixels));
 
-    RECT caption{fit(7), fit(168), width - fit(7), fit(195)};
+    RECT caption{fit(7), fit(168), width - fit(7), fit(221)};
     HBRUSH brush = CreateSolidBrush(RGB(30, 27, 51));
     HGDIOBJ old_brush = SelectObject(dc, brush);
     SelectObject(dc, GetStockObject(NULL_PEN));
@@ -155,9 +171,29 @@ static bool render_task_pet(HWND hwnd) {
     DeleteObject(brush);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(241, 235, 255));
-    SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
-    DrawTextW(dc, g_task_pet_status.c_str(), -1, &caption,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+    HGDIOBJ old_font = SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
+    RECT status = caption;
+    status.left += fit(12);
+    status.right -= fit(12);
+    if (!g_task_pet_title.empty()) {
+        RECT title = status;
+        title.bottom = title.top + fit(28);
+        HFONT bold = CreateFontW(-fit(15), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                                 DEFAULT_CHARSET, 0, 0, DEFAULT_QUALITY, 0, nullptr);
+        if (bold) SelectObject(dc, bold);
+        DrawTextW(dc, g_task_pet_title.c_str(), -1, &title,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+        if (bold) {
+            SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
+            DeleteObject(bold);
+        }
+        status.top = title.bottom - fit(3);
+        SetTextColor(dc, RGB(192, 187, 211));
+    }
+    DrawTextW(dc, g_task_pet_status.c_str(), -1, &status,
+              (g_task_pet_title.empty() ? DT_CENTER : DT_LEFT) | DT_VCENTER | DT_SINGLELINE |
+              DT_NOPREFIX | DT_END_ELLIPSIS);
+    SelectObject(dc, old_font);
     GdiFlush();
     // GDI paints the caption RGB. Restore its alpha before adding the already
     // premultiplied sprite so the mascot's soft edges remain transparent.
@@ -165,14 +201,28 @@ static bool render_task_pet(HWND hwnd) {
         for (int x = caption.left; x < caption.right; ++x)
             if (pixels[y * width + x] & 0x00ffffffu) pixels[y * width + x] |= 0xff000000u;
 
-    const double phase = (GetTickCount64() % 3800) * (6.283185307 / 3800);
-    const int bob = g_task_pet_animate ? static_cast<int>(fit(4) * std::sin(phase)) : 0;
-    const int left = (width - static_cast<int>(g_task_pet_width)) / 2;
-    const int top = fit(8) + bob;
-    if (left >= 0 && top + static_cast<int>(g_task_pet_height) <= caption.top) {
-        for (UINT row = 0; row < g_task_pet_height; ++row)
-            std::memcpy(pixels + (top + row) * width + left, g_task_pet_pixels.data() + row * g_task_pet_width,
-                        g_task_pet_width * sizeof(*pixels));
+    int bob = 0, sway = 0;
+    if (g_task_pet_animate) {
+        const ULONGLONG elapsed = GetTickCount64() - g_task_pet_mood_since;
+        if (g_task_pet_mood == TaskPetMood::Move) {
+            const double phase = (elapsed % 1100) * (6.283185307 / 1100);
+            bob = -static_cast<int>(fit(7) * std::abs(std::sin(phase)));
+            sway = static_cast<int>(fit(7) * std::cos(phase));
+        } else if (g_task_pet_mood == TaskPetMood::Celebrate && elapsed < 1050) {
+            const double phase = (elapsed % 525) * (3.141592654 / 525);
+            bob = -static_cast<int>(fit(8) * std::sin(phase));
+        } else {
+            const int period = g_task_pet_mood == TaskPetMood::Think ? 4800 : 3800;
+            bob = static_cast<int>(fit(3) * std::sin((elapsed % period) * (6.283185307 / period)));
+        }
+    }
+    const int left = (width - static_cast<int>(sprite.width)) / 2 + sway;
+    const int top = fit(10) + bob;
+    if (left >= 0 && left + static_cast<int>(sprite.width) <= width &&
+        top >= 0 && top + static_cast<int>(sprite.height) <= caption.top) {
+        for (UINT row = 0; row < sprite.height; ++row)
+            std::memcpy(pixels + (top + row) * width + left, sprite.pixels.data() + row * sprite.width,
+                        sprite.width * sizeof(*pixels));
     }
 
     SIZE size{width, height};
@@ -185,16 +235,44 @@ static bool render_task_pet(HWND hwnd) {
     return ok;
 }
 
+static void task_pet_new_chat() {
+    if (!g_hwnd || !g_web) return;
+    if (IsIconic(g_hwnd)) ShowWindow(g_hwnd, SW_RESTORE);
+    SetForegroundWindow(g_hwnd);
+    if (g_ctrl) g_ctrl->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+    g_web->PostWebMessageAsString(L"task-pet:new-chat");
+}
+
 static LRESULT CALLBACK task_pet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    static POINT pressed_at{};
+    static RECT initial_bounds{};
+    static bool dragged = false;
     if (msg == WM_TIMER && wp == 1) {
         render_task_pet(hwnd);
         return 0;
     }
     if (msg == WM_LBUTTONDOWN) {
+        pressed_at = POINT{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        ClientToScreen(hwnd, &pressed_at);
+        GetWindowRect(hwnd, &initial_bounds);
+        dragged = false;
+        SetCapture(hwnd);
+        return 0;
+    }
+    if ((msg == WM_MOUSEMOVE || msg == WM_LBUTTONUP) && GetCapture() == hwnd) {
         POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
         ClientToScreen(hwnd, &point);
-        ReleaseCapture();
-        SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, MAKELPARAM(point.x, point.y));
+        const int dx = point.x - pressed_at.x;
+        const int dy = point.y - pressed_at.y;
+        dragged = dragged || std::abs(dx) >= GetSystemMetrics(SM_CXDRAG)
+                          || std::abs(dy) >= GetSystemMetrics(SM_CYDRAG);
+        if (dragged)
+            SetWindowPos(hwnd, nullptr, initial_bounds.left + dx, initial_bounds.top + dy,
+                         0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        if (msg == WM_LBUTTONUP) {
+            ReleaseCapture();
+            if (!dragged) task_pet_new_chat();
+        }
         return 0;
     }
     if (msg == WM_CONTEXTMENU) {
@@ -202,19 +280,22 @@ static LRESULT CALLBACK task_pet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (point.x == -1 && point.y == -1) GetCursorPos(&point);
         HMENU menu = CreatePopupMenu();
         if (menu) {
-            AppendMenuW(menu, MF_STRING, 1, L"关闭桌宠");
+            AppendMenuW(menu, MF_STRING, 1, L"新建聊天");
+            AppendMenuW(menu, MF_STRING, 2, L"关闭桌宠");
             SetForegroundWindow(hwnd);
             const UINT choice = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY,
                                                point.x, point.y, 0, hwnd, nullptr);
             DestroyMenu(menu);
-            if (choice == 1) DestroyWindow(hwnd);
+            if (choice == 1) task_pet_new_chat();
+            if (choice == 2) DestroyWindow(hwnd);
         }
         return 0;
     }
     if (msg == WM_NCDESTROY) {
         KillTimer(hwnd, 1);
         g_task_pet = nullptr;
-        g_task_pet_pixels.clear();
+        g_task_pet_smile = {};
+        g_task_pet_thinking = {};
         publish_task_pet_state();
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
@@ -226,23 +307,29 @@ static void set_task_pet_enabled(bool enabled) {
         publish_task_pet_state();
         return;
     }
-    if (!load_task_pet()) {
+    if (!load_task_pet_sprite(g_task_pet_asset, g_task_pet_smile)) {
         if (g_web) g_web->PostWebMessageAsString(L"task-pet:unavailable");
         publish_task_pet_state();
         return;
     }
+    const size_t separator = g_task_pet_asset.find_last_of(L"\\/");
+    const std::wstring asset_dir = separator == std::wstring::npos ? L"" : g_task_pet_asset.substr(0, separator + 1);
+    load_task_pet_sprite(asset_dir + L"light-agent-pet-thinking.png", g_task_pet_thinking);
     RECT work{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
     WNDCLASSW window_class{};
+    window_class.style = CS_DBLCLKS;
     window_class.lpfnWndProc = task_pet_proc;
     window_class.hInstance = GetModuleHandleW(nullptr);
     window_class.lpszClassName = L"LightAgentTaskPet";
-    window_class.hCursor = LoadCursorA(nullptr, IDC_ARROW);
+    window_class.hCursor = LoadCursorA(nullptr, IDC_HAND);
     RegisterClassW(&window_class);
+    g_task_pet_title.clear();
+    set_task_pet_mood(TaskPetMood::Smile);
     g_task_pet_status = L"正在获取任务状态…";
     g_task_pet = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED, window_class.lpszClassName,
         L"light-agent · 任务状态", WS_POPUP,
-        work.right - scaled(196), work.bottom - scaled(218), scaled(180), scaled(202),
+        work.right - scaled(276), work.bottom - scaled(244), scaled(260), scaled(228),
         nullptr, nullptr, window_class.hInstance, nullptr);
     if (g_task_pet && render_task_pet(g_task_pet)) {
         BOOL animate = TRUE;
@@ -253,7 +340,8 @@ static void set_task_pet_enabled(bool enabled) {
     } else {
         if (g_web) g_web->PostWebMessageAsString(L"task-pet:unavailable");
         if (g_task_pet) DestroyWindow(g_task_pet);
-        g_task_pet_pixels.clear();
+        g_task_pet_smile = {};
+        g_task_pet_thinking = {};
     }
     publish_task_pet_state();
 }
@@ -285,8 +373,22 @@ public:
             else if (!wcscmp(message, L"task-pet:close")) set_task_pet_enabled(false);
             else if (!wcscmp(message, L"task-pet:query")) publish_task_pet_state();
             else if (!wcscmp(message, L"task-pet:toggle")) set_task_pet_enabled(!g_task_pet);
-            else if (g_task_pet && !wcsncmp(message, L"task-pet:status:", 16) && wcslen(message) < 80) {
-                g_task_pet_status = message + 16;
+            else if (g_task_pet && !wcsncmp(message, L"task-pet:status:", 16) && wcslen(message) < 400) {
+                const wchar_t *status = message + 16;
+                const wchar_t *line = wcschr(status, L'\n');
+                const wchar_t *next_line = line ? wcschr(line + 1, L'\n') : nullptr;
+                TaskPetMood mood = TaskPetMood::Smile;
+                if (next_line) {
+                    const std::wstring mode(status, line);
+                    if (mode == L"think") mood = TaskPetMood::Think;
+                    else if (mode == L"move") mood = TaskPetMood::Move;
+                    else if (mode == L"celebrate") mood = TaskPetMood::Celebrate;
+                    status = line + 1;
+                    line = next_line;
+                }
+                set_task_pet_mood(mood);
+                g_task_pet_title = line ? std::wstring(status, line) : L"";
+                g_task_pet_status = line ? line + 1 : status;
                 render_task_pet(g_task_pet);
             }
         }
