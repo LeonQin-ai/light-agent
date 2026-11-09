@@ -62,8 +62,13 @@ try:
      assert Path(task['workspace'])==path
     for path in folders[:3]:assert (path/'result.txt').read_bytes()==(path/'marker.txt').read_bytes()
     assert not (base/'result.txt').exists()
-    records=req('/v1/flows/list')['records'];assert len(records)==3
-    assert all(r['status']=='DONE' for r in records),records
+    # The scheduler publishes terminal state before its durable Flow callback.
+    deadline=time.monotonic()+5
+    while True:
+     records=req('/v1/flows/list')['records']
+     if len(records)==3 and all(r['status']=='DONE' for r in records):break
+     assert time.monotonic()<deadline,records
+     time.sleep(.02)
     record=next(r for r in records if r['task_id']==auto);assert record['automatic'] and Path(record['workspace'])==folders[2]
     # An actually failed chat must retain status without browser storage.
     sid=req('/v1/chat/sessions',{'workspace':str(folders[3])})['id']
