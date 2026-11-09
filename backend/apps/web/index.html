@@ -3887,6 +3887,7 @@ function chatTemperatureChange(){
   $('chat-temperature-value').value=Number(temperature.value).toFixed(2);
 }
 async function loadChat(){
+  initTaskPet();
   syncChatPermission();
   const box = $('chat-box'); if(!box) return;
   if(CHAT_SESSION === 'default' && !CHAT_NEW_SESSION) await chatNewSession({ensure:true});
@@ -6544,6 +6545,8 @@ function initTaskPet(){
   const bridge=window.chrome?.webview;
   if(!bridge || new URLSearchParams(location.search).get('desktop')!=='1')return;
   const button=$('chat-task-pet');
+  if(!button || button.dataset.ready)return;
+  button.dataset.ready='1';
   button.hidden=false;
   const publish=async()=>{
     const {obj,status}=await call('GET','/v1/scheduler',null,2500);
@@ -6557,7 +6560,6 @@ function initTaskPet(){
   };
   setInterval(publish,5000);
 }
-initTaskPet();
 applyTheme(localStorage.getItem('cognitive-os-agent-theme') || 'dark');
 void appearanceLoad();
 

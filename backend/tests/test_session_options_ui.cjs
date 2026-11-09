@@ -3,6 +3,7 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  const page=await browser.newPage(),sessions=[],submitted=[],errors=[];page.on('pageerror',e=>errors.push(e.message));let globalWrites=0;
  await page.addInitScript(()=>{
   window.petMessages=[];
+  window.chrome ??= {};
   window.chrome.webview={postMessage:message=>window.petMessages.push(message)};
  });
  await page.route('http://ui.test/**',async route=>{
@@ -17,7 +18,10 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  if(u.pathname==='/v1/chat'){submitted.push(r.postDataJSON());obj={id:7};}
  if(u.pathname==='/v1/tasks/7')obj={id:7,status:'DONE',output:'verified'};
  return route.fulfill({contentType:'application/json',body:JSON.stringify(obj)});});
- await page.goto('http://ui.test/?desktop=1');await page.waitForFunction(()=>CHAT_SESSION==='a' && $('chat-model').options.length===3);
+ await page.goto('http://ui.test/?desktop=1');
+ await page.waitForFunction(()=>CHAT_SESSION==='a' && $('chat-model').options.length===3).catch(error=>{
+  throw new Error(errors.join('\n') || error.message);
+ });
  await page.locator('#chat-task-pet').click();
  await page.waitForFunction(()=>petMessages.includes('task-pet:status:运行中 2 · 排队 1'));
  assert.ok(await page.evaluate(()=>petMessages.includes('task-pet:toggle')));
