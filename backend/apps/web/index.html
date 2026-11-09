@@ -354,10 +354,6 @@
     background:var(--accent); border:0; color:#fff; font-size:16px; cursor:pointer; line-height:1;
   }
   .pillbar .pill-send:hover{filter:brightness(1.12)}
-  .thinking-toggle{height:34px;display:flex;align-items:center;gap:6px;flex-shrink:0;padding:0 11px;border:1px solid var(--border);border-radius:18px;background:color-mix(in srgb,var(--card) 82%,var(--accent-soft));color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;transition:background var(--tr-dur),color var(--tr-dur),border-color var(--tr-dur),box-shadow var(--tr-dur)}
-  .thinking-toggle:hover{color:var(--fg);border-color:color-mix(in srgb,var(--accent) 45%,var(--border));background:var(--accent-soft)}
-  .thinking-toggle.on{color:#fff;border-color:transparent;background:linear-gradient(135deg,#7c3aed,#4f46e5);box-shadow:0 4px 14px rgba(99,102,241,.28)}
-  .thinking-toggle svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.thinking-toggle .chevron{width:12px;height:12px;stroke-width:2}
   .brand{display:flex; align-items:center; gap:11px; min-height:76px; padding:17px 17px 16px; border-bottom:1px solid var(--border)}
   .logo{
     width:34px; height:34px; border-radius:9px; flex-shrink:0; display:grid; place-items:center;
@@ -738,8 +734,11 @@
 .pillbar .pill-ic{grid-column:1;grid-row:2;font-size:26px}
 .composer-policy{grid-column:2;grid-row:2;color:#ed6b20;font-size:13px;white-space:nowrap}
 .pillbar #chat-model{grid-column:3;grid-row:2;justify-self:end;width:min(260px,100%);min-width:0;border:0;background:transparent;font-size:13px;padding:7px}
-.pillbar .thinking-toggle.on{color:#6d28d9;background:var(--accent-soft);box-shadow:none}
-.pillbar .thinking-toggle{grid-column:4;grid-row:2;border:0;background:transparent;padding:0 3px;font-weight:400}
+.composer-temperature{grid-column:4;grid-row:2;position:relative;color:var(--fg);font-size:13px;white-space:nowrap}
+.composer-temperature summary{cursor:pointer;padding:7px 4px;color:var(--muted)}
+.composer-temperature-panel{position:absolute;right:0;bottom:calc(100% + 8px);z-index:4;width:228px;padding:12px;display:grid;gap:10px;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 6px 24px #0004}
+.composer-temperature-slider{display:flex;align-items:center;gap:8px}
+.composer-temperature-slider input{flex:1;min-width:0}
 .composer-mic{grid-column:5;grid-row:2;border:0;background:none;color:var(--fg);font-size:23px;padding:5px}
 .pillbar #chat-send,.pillbar #chat-cancel{grid-column:5;grid-row:2;width:42px;height:42px;padding:0!important;border:0;border-radius:50%;background:#8953ef;color:white}
 #chat-resume{grid-column:1/-1;grid-row:3;justify-self:end}
@@ -749,8 +748,7 @@
 .workspace-group .side-recent-row{margin-left:12px}.workspace-group[open]>summary{color:var(--fg)}
 #workspace-dialog{max-width:min(540px,92vw);width:100%;padding:24px;border:1px solid var(--border);border-radius:18px;background:var(--card);color:var(--fg)}
 #workspace-dialog input{width:100%;margin:7px 0 15px}#workspace-dialog::backdrop{background:#0006}
-@media(max-width:640px){.pillbar{grid-template-columns:auto minmax(0,1fr) auto auto!important;gap:4px;padding:12px!important}.composer-policy{display:block;grid-column:1/-1;grid-row:3;max-width:100%;justify-self:start}.pillbar #chat-model{grid-column:2}.pillbar .thinking-toggle.on{color:#6d28d9;background:var(--accent-soft);box-shadow:none}
-.pillbar .thinking-toggle{grid-column:3}.composer-mic{grid-column:4}.pillbar #chat-send,.pillbar #chat-cancel{grid-column:4}#chat-workspace{max-width:55vw}}
+@media(max-width:640px){.pillbar{grid-template-columns:auto minmax(0,1fr) auto auto!important;gap:4px;padding:12px!important}.composer-policy{display:block;grid-column:1/-1;grid-row:3;max-width:100%;justify-self:start}.pillbar #chat-model{grid-column:2}.composer-temperature{grid-column:3}.composer-temperature-panel{width:210px}
 .content.chat-content{display:flex;flex-direction:column;min-height:0;overflow-y:hidden}
 .chat-content .chat-wrap{min-height:0;flex:1;overflow:hidden}
 .chat-content #chat-hero{min-height:0}
@@ -960,10 +958,6 @@
     background-color:var(--accent)!important;
     color:#fff!important;
   }
-  body.has-wallpaper .thinking-toggle.on{
-    background-color:var(--accent-soft)!important;
-    color:#6d28d9!important;
-  }
   /* Wallpaper remains visible around readable, bounded interaction surfaces. */
   body:is(.has-wallpaper,[data-theme=dragongirl]){
     --fg:#faf8fc;--muted:#e2dce8;--border:rgba(255,255,255,.28);
@@ -998,7 +992,7 @@
   body:is(.has-wallpaper,[data-theme=dragongirl]) #chat-hero{
     color:#fff;text-shadow:0 2px 12px #000,0 0 3px #000;
   }
-  body:is(.has-wallpaper,[data-theme=dragongirl]) :is(select,button.sec,.thinking-toggle,.composer-policy){
+  body:is(.has-wallpaper,[data-theme=dragongirl]) :is(select,button.sec,.composer-policy){
     background-color:rgba(25,22,34,.88)!important;color:#faf8fc!important;
   }
   body:is(.has-wallpaper,[data-theme=dragongirl]) .appearance-dialog{
@@ -1405,9 +1399,6 @@ panels.chat = `
           共享记忆（全局设置，适用于所有会话）
         </label>
         <span class="muted" id="chat-session-meta"></span>
-        <label><input type="checkbox" id="chat-temperature-custom" onchange="chatTemperatureChange()"> 自定义模型温度</label>
-        <label>温度 <input type="range" id="chat-temperature" min="0" max="1" step="0.05" value="0.2"
-          aria-label="模型温度" oninput="chatTemperatureChange()"> <output id="chat-temperature-value">0.20</output></label>
       </div>
       <div class="hint" style="margin-top:6px">对话模型在上方下拉切换（来自 Model routes）；新增路由请到 <a href="#" onclick="switchPanel('models');return false">Models</a> 页配置。会话支持 取消 / 恢复：运行中点「取消」，取消或失败后点「恢复」重跑上一条输入。</div>
       <details id="ssh-session-details" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px" ontoggle="if(this.open)sshSessionLoad()">
@@ -1451,10 +1442,14 @@ panels.chat = `
       <textarea id="chat-input" placeholder="和 light-agent 一起工作" aria-label="消息" rows="1"></textarea>
       <select class="composer-policy" id="chat-permission" aria-label="执行权限" title="本轮任务权限；现有全局策略仍然生效" onchange="chatPermissionChange(this.value)"><option value="ask">逐次批准</option><option value="auto" selected>自动批准低风险</option><option value="full">完全访问</option></select>
       <select id="chat-model" onchange="chatModelSwitch()" title="对话模型（点击切换）" aria-label="对话模型"></select>
-      <button class="thinking-toggle" id="chat-thinking-toggle" onclick="chatThinkingToggle(!chatThinkingEnabled())" aria-pressed="false" title="深度思考：允许额外规划轮次，适合复杂问题">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20v-8M10.7 5.2A4.4 4.4 0 0 0 4 9c0 .5.1 1 .3 1.5A3.8 3.8 0 0 0 6 17.6c.6 1.8 2.5 2.8 4.3 2.4M13.3 5.2A4.4 4.4 0 0 1 20 9c0 .5-.1 1-.3 1.5a3.8 3.8 0 0 1-1.7 7.1c-.6 1.8-2.5 2.8-4.3 2.4M7.2 8.2c.9.1 1.6.6 2 1.4M16.8 8.2c-.9.1-1.6.6-2 1.4M7.4 14c.8 0 1.5.4 1.9 1M16.6 14c-.8 0-1.5.4-1.9 1"/></svg>
-        <span>深度思考</span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
-      </button>
+      <details class="composer-temperature" id="chat-temperature-menu">
+        <summary>温度 <span id="chat-temperature-summary">默认</span></summary>
+        <div class="composer-temperature-panel">
+          <label><input type="checkbox" id="chat-temperature-custom" onchange="chatTemperatureChange()"> 自定义模型温度</label>
+          <label class="composer-temperature-slider"><input type="range" id="chat-temperature" min="0" max="1" step="0.05" value="0.2"
+            aria-label="模型温度" oninput="chatTemperatureChange()"> <output id="chat-temperature-value">0.20</output></label>
+        </div>
+      </details>
       <button class="sec" id="chat-cancel" onclick="chatCancel()" style="display:none;padding:6px 10px" aria-label="停止执行" title="停止当前任务">■</button>
       <button class="sec" id="chat-resume" onclick="chatResume()" style="display:none;padding:6px 10px" title="恢复：重跑本会话上一条输入">恢复</button>
 
@@ -3881,12 +3876,14 @@ function syncChatPermission(){
   temperature.disabled=!custom;
   temperature.value=custom ? settings.temperature : 0.2;
   $('chat-temperature-value').value=Number(temperature.value).toFixed(2);
+  $('chat-temperature-summary').textContent=temperature.disabled ? '默认' : $('chat-temperature-value').value;
 }
 function chatTemperatureChange(){
   const temperature=$('chat-temperature');
   temperature.disabled=!$('chat-temperature-custom').checked;
   chatOptionSet('temperature',temperature.disabled ? null : Number(temperature.value));
   $('chat-temperature-value').value=Number(temperature.value).toFixed(2);
+  $('chat-temperature-summary').textContent=temperature.disabled ? '默认' : $('chat-temperature-value').value;
 }
 async function loadChat(){
   initTaskPet();
@@ -4273,7 +4270,7 @@ function syncChatSettings(){
   const info = CHAT_TABS_CACHE.find(s => (s.id || 'default') === CHAT_SESSION);
   const cb = $('chat-shared');
   if(cb) cb.checked = CHAT_TABS_CACHE[0]?.shared_memory === true;
-  syncChatThinkingToggle();syncChatPermission();void fillChatModelSelect();
+  syncChatPermission();void fillChatModelSelect();
   const meta = $('chat-session-meta');
   if(meta){
     const bits = [];
@@ -4303,24 +4300,6 @@ function chatRenameSession(id,title){
     CHAT_TABS_CACHE.forEach(s=>{if(s.id===id)s.title=value;});if(CHAT_SELECTED_INFO?.id===id)CHAT_SELECTED_INFO.title=value;sideRecent(CHAT_TABS_CACHE);d.close();};
   d.onclose=()=>d.remove();document.body.append(d);d.showModal();input.select();
 }
-function chatThinkingEnabled(){
-  try { return localStorage.getItem('cognitive-thinking-mode:' + CHAT_SESSION) === '1'; } catch(e) { return false; }
-}
-function syncChatThinkingToggle(){
-  const btn = $('chat-thinking-toggle');
-  if(!btn) return;
-  const enabled = chatThinkingEnabled();
-  btn.classList.toggle('on', enabled);
-  btn.setAttribute('aria-pressed', String(enabled));
-  btn.querySelector('span').textContent=enabled?'深度思考 · 已开启':'深度思考';
-  btn.title = enabled ? '深度思考已开启：允许额外规划轮次' : '深度思考：允许额外规划轮次，适合复杂问题';
-}
-function chatThinkingToggle(enabled){
-  try { localStorage.setItem('cognitive-thinking-mode:' + CHAT_SESSION, enabled ? '1' : '0'); } catch(e) {}
-  syncChatThinkingToggle();
-  toast(enabled ? '已开启深度思考：复杂问题可进行额外规划。' : '已关闭深度思考：优先直接回答或执行必要工具。');
-}
-
 /* 全局共享记忆开关，兼容旧的会话设置 API。 */
 async function chatSharedToggle(shared){
   const r = await call('POST', '/v1/chat/sessions/' + encodeURIComponent(CHAT_SESSION) + '/shared', {shared: !!shared});
@@ -6195,7 +6174,6 @@ function renderChatEntry(entry){
     if(ms) { const m = document.createElement('span'); m.textContent = '用时 ' + durationLabel(ms); metrics.append(m); }
     if(p.llm_ms) { const m = document.createElement('span'); m.textContent = '模型 ' + durationLabel(p.llm_ms); metrics.append(m); }
     if(p.model) { const m = document.createElement('span'); m.textContent = '模型 ' + p.model; metrics.append(m); }
-    if(p.thinking) { const m = document.createElement('span'); m.textContent = '深度思考'; metrics.append(m); }
     if(p.model_call) { const m = document.createElement('span'); m.textContent = '模型请求 ' + p.model_call + ' 次'; metrics.append(m); }
     if(p.model_failures) { const m = document.createElement('span'); m.textContent = '请求失败 ' + p.model_failures + ' 次'; metrics.append(m); }
     if(p.tool_ms) { const m = document.createElement('span'); m.textContent = '工具 ' + durationLabel(p.tool_ms); metrics.append(m); }
@@ -6412,7 +6390,7 @@ async function chatPollTask(session,id,entry){
       if(r.status === 404){
         /* A finished task may have left the scheduler after a restart while
          * its durable chat turn already exists. Reconcile before claiming it
-         * failed; the thinking toggle itself never submits a task. */
+         * failed; changing session options does not submit a task. */
         const history = await call('GET', '/v1/chat/history?session=' + encodeURIComponent(session));
         const messages = CHAT_CACHE[session] || (session === CHAT_SESSION ? CHAT_MSGS : []);
         const at = messages.indexOf(entry);
@@ -6468,7 +6446,7 @@ async function chatSubmit(resume = false){
   if(!resume && input?.disabled) { toast('请先配置对话模型'); return; }
   const msg = input?.value.trim() || '';
   if(!resume && !msg && !CHAT_ATTACH.length) return;
-  const settings=chatOptions(session),thinking=chatThinkingEnabled();
+  const settings=chatOptions(session);
   const permission=$('chat-permission')?.value || settings.permission || 'auto';
   const route=settings.route || undefined;
   const temperature=settings.temperature ?? undefined;
@@ -6496,7 +6474,7 @@ async function chatSubmit(resume = false){
   entry.pending = true; entry.progress = {stage:'submitting'};
   CHAT_CACHE[session] = CHAT_SESSION===session?CHAT_MSGS:destination; renderChatEntry(entry);
   const r = await call('POST',resume ? '/v1/chat/sessions/' + encodeURIComponent(session) + '/resume' : '/v1/chat',
-    resume ? {thinking,route,temperature,permission_mode:permission} : {message:full,session,route,temperature,workspace:executionWorkspace || undefined,permission_mode:permission,thinking,attachments:attachments.map(a=>a.id)});
+    resume ? {route,temperature,permission_mode:permission} : {message:full,session,route,temperature,workspace:executionWorkspace || undefined,permission_mode:permission,attachments:attachments.map(a=>a.id)});
   CHAT_SUBMITTING.delete(session);
   if(!Number.isInteger(r.obj?.id)){
     entry.pending = false; entry.progress.stage = 'failed';
