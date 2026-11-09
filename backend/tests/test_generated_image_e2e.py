@@ -68,8 +68,14 @@ def exercise(protocol,mode):
                     assert not errors,errors
                     assert task['status']==expected,task
                     if protocol=='native':
-                        history=api('/v1/chat/history?session=image-test')
-                        assert any(event.get('commentary')=='正在读取图片以核实交付内容。' for run in history['runs'] for event in run.get('trace',[])),history
+                        journal_deadline=time.monotonic()+5
+                        while True:
+                            history=api('/v1/chat/history?session=image-test')
+                            terminal=[run for run in history['runs'] if run['id']==tid and run['status']==expected]
+                            if terminal:break
+                            assert time.monotonic()<journal_deadline,history
+                            time.sleep(.02)
+                        assert any(event.get('commentary')=='正在读取图片以核实交付内容。' for run in terminal for event in run.get('trace',[])),history
                     if expected=='DONE':
                         previews=[s['image_preview'] for s in task['steps'] if s.get('image_preview')]
                         assert previews and len({p['id'] for p in previews})==1,task
