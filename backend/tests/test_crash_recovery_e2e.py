@@ -15,6 +15,7 @@ class Provider(BaseHTTPRequestHandler):
                 writes.append('CONTINUED'); answer=json.dumps([{'tool':'file_write','args':{'path':'after-recovery.txt','content':'CONTINUED'}}])
             else: answer='文件已生成。'
         else:
+            assert 'CRASH_RECOVERY_CASE' in current, current
             n=counts.get('recovery',0); counts['recovery']=n+1
             if n==0:
                 writes.append('PARTIAL_STAGE'); answer=json.dumps([{'tool':'file_write','args':{'path':'recover.txt','content':'PARTIAL_STAGE'}}])
@@ -36,7 +37,7 @@ with tempfile.TemporaryDirectory(prefix='coa-crash-recovery-') as folder:
     state = Path(folder)
     provider = ThreadingHTTPServer(('127.0.0.1',0), Provider)
     threading.Thread(target=provider.serve_forever,daemon=True).start()
-    (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'skill-test',
+    (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'skill-test','llm.api_key':'fixture',
         'llm.base_url':f'http://127.0.0.1:{provider.server_port}','reasoning.max_rounds':6}),encoding='utf-8')
     with socket.socket() as sock:
         sock.bind(('127.0.0.1',0)); port = sock.getsockname()[1]
@@ -57,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix='coa-crash-recovery-') as folder:
                     assert process.poll() is None and time.monotonic()<deadline
                     time.sleep(.1)
             original='ORIGINAL_CHECKPOINT\n'; (state/'recover.txt').write_text(original)
-            started=request('/v1/tasks',{'prompt':'创建 recover.txt 并完成 CRASH_RECOVERY_CASE'})
+            started=request('/v1/chat',{'session':'crash-recovery','message':'创建 recover.txt 并完成 CRASH_RECOVERY_CASE','permission_mode':'full'})
             assert started['id']==0,started
             assert entered.wait(15),'task never entered held model request'
             live=request('/v1/tasks/0'); assert live['status']=='RUNNING',live
@@ -97,7 +98,7 @@ with tempfile.TemporaryDirectory(prefix='coa-crash-recovery-') as folder:
                 raise AssertionError('malformed task ID unexpectedly resumed task zero')
             except urllib.error.HTTPError as error:
                 assert error.code==400,error
-            replay=request('/v1/tasks/0/resume',{}); assert replay['id']>0,replay
+            replay=request('/v1/chat/sessions/crash-recovery/resume',{'permission_mode':'full'}); assert replay['id']>0,replay
             deadline=time.monotonic()+20
             while True:
                 task=request('/v1/tasks/'+str(replay['id']))
