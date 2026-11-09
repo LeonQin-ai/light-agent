@@ -34,6 +34,7 @@
 #include <shlwapi.h>
 #include <unknwn.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -61,22 +62,107 @@ static std::wstring g_url_error;
 static HWND g_task_pet = nullptr;
 static std::wstring g_task_pet_status;
 
+static void pet_ellipse(HDC dc, int left, int top, int right, int bottom, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(color);
+    HGDIOBJ previous = SelectObject(dc, brush);
+    Ellipse(dc, left, top, right, bottom);
+    SelectObject(dc, previous);
+    DeleteObject(brush);
+}
+
+static void draw_task_pet(HDC dc, const RECT &bounds, double phase) {
+    HBRUSH background = CreateSolidBrush(RGB(15, 17, 32));
+    FillRect(dc, &bounds, background);
+    DeleteObject(background);
+
+    const int center = (bounds.left + bounds.right) / 2;
+    const int face_height = scaled(114);
+    const double yaw = 0.50 * std::sin(phase);
+    const int face_width = static_cast<int>(face_height * std::cos(yaw));
+    const int depth = static_cast<int>(scaled(18) * std::sin(yaw));
+    const int top = scaled(25) + static_cast<int>(scaled(5) * std::cos(phase));
+    const int left = center - face_width / 2 - depth / 2;
+    const int right = left + face_width;
+    const int bottom = top + face_height;
+    const int bevel = scaled(18);
+
+    HGDIOBJ old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+    pet_ellipse(dc, center - scaled(72), scaled(147), center + scaled(72), scaled(179), RGB(27, 29, 58));
+    pet_ellipse(dc, center - scaled(53), scaled(152), center + scaled(53), scaled(173), RGB(40, 37, 83));
+
+    // Project the extrusion of the logo face around the vertical axis.
+    const int lift = scaled(8);
+    for (int layer = lift; layer >= 0; --layer) {
+        const int offset = depth * layer / lift;
+        const int shade = 30 * layer / lift;
+        HBRUSH rim = CreateSolidBrush(RGB(112 - shade, 100 - shade, 229 - shade));
+        HGDIOBJ old_brush = SelectObject(dc, rim);
+        RoundRect(dc, left + offset, top + layer, right + offset, bottom + layer, bevel, bevel);
+        SelectObject(dc, old_brush);
+        DeleteObject(rim);
+    }
+
+    const int inset = scaled(3);
+    HICON logo = g_icon_big ? g_icon_big : g_icon_small;
+    if (logo) {
+        HRGN face = CreateRoundRectRgn(left + inset, top + inset, right - inset, bottom - inset, bevel, bevel);
+        const int saved = SaveDC(dc);
+        if (face && saved) SelectClipRgn(dc, face);
+        DrawIconEx(dc, left + inset, top + inset, logo, face_width - 2 * inset, face_height - 2 * inset,
+                   0, nullptr, DI_NORMAL);
+        if (saved) RestoreDC(dc, saved);
+        if (face) DeleteObject(face);
+    }
+    SelectObject(dc, old_pen);
+
+    RECT caption = bounds;
+    caption.top = scaled(180);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, RGB(225, 224, 249));
+    SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
+    DrawTextW(dc, g_task_pet_status.c_str(), -1, &caption,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+}
+
 static LRESULT CALLBACK task_pet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_CREATE) {
+        BOOL animate = TRUE;
+        SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animate, 0);
+        if (animate) SetTimer(hwnd, 1, 40, nullptr);
+        return 0;
+    }
+    if (msg == WM_TIMER && wp == 1) {
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
+    if (msg == WM_ERASEBKGND) return 1;
     if (msg == WM_PAINT) {
         PAINTSTRUCT paint;
         HDC dc = BeginPaint(hwnd, &paint);
         RECT bounds;
         GetClientRect(hwnd, &bounds);
-        FillRect(dc, &bounds, GetSysColorBrush(COLOR_WINDOW));
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
-        SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
-        DrawTextW(dc, g_task_pet_status.c_str(), -1, &bounds,
-                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        BOOL animate = TRUE;
+        SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animate, 0);
+        const double phase = animate ? (GetTickCount64() % 6000) * (6.283185307 / 6000) : 0.9;
+        HDC buffer = CreateCompatibleDC(dc);
+        HBITMAP bitmap = buffer ? CreateCompatibleBitmap(dc, bounds.right, bounds.bottom) : nullptr;
+        if (bitmap) {
+            HGDIOBJ previous = SelectObject(buffer, bitmap);
+            draw_task_pet(buffer, bounds, phase);
+            BitBlt(dc, 0, 0, bounds.right, bounds.bottom, buffer, 0, 0, SRCCOPY);
+            SelectObject(buffer, previous);
+            DeleteObject(bitmap);
+        } else {
+            draw_task_pet(dc, bounds, phase);
+        }
+        if (buffer) DeleteDC(buffer);
         EndPaint(hwnd, &paint);
         return 0;
     }
-    if (msg == WM_NCDESTROY) g_task_pet = nullptr;
+    if (msg == WM_NCDESTROY) {
+        KillTimer(hwnd, 1);
+        g_task_pet = nullptr;
+    }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
@@ -97,7 +183,7 @@ static void toggle_task_pet() {
     g_task_pet_status = L"正在获取任务状态…";
     g_task_pet = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, window_class.lpszClassName,
         L"light-agent · 任务状态", WS_POPUP | WS_CAPTION | WS_SYSMENU,
-        work.right - scaled(264), work.bottom - scaled(104), scaled(248), scaled(88),
+        work.right - scaled(238), work.bottom - scaled(258), scaled(222), scaled(242),
         nullptr, nullptr, window_class.hInstance, nullptr);
     if (g_task_pet) ShowWindow(g_task_pet, SW_SHOWNOACTIVATE);
 }
