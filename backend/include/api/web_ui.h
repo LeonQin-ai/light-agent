@@ -753,6 +753,7 @@ static const char web_index_html[] =
     "#workspace-dialog{max-width:min(540px,92vw);width:100%;padding:24px;border:1px solid var(--border);border-radius:18px;background:var(--card);color:var(--fg)}\n"
     "#workspace-dialog input{width:100%;margin:7px 0 15px}#workspace-dialog::backdrop{background:#0006}\n"
     "@media(max-width:640px){.pillbar{grid-template-columns:auto minmax(0,1fr) auto auto!important;gap:4px;padding:12px!important}.composer-policy{display:block;grid-column:1/-1;grid-row:3;max-width:100%;justify-self:start}.pillbar #chat-model{grid-column:2}.composer-temperature{grid-column:3}.composer-temperature-panel{width:210px}\n"
+    ".composer-mic,.pillbar #chat-send,.pillbar #chat-cancel{grid-column:4}#chat-workspace{max-width:55vw}}\n"
     ".content.chat-content{display:flex;flex-direction:column;min-height:0;overflow-y:hidden}\n"
     ".chat-content .chat-wrap{min-height:0;flex:1;overflow:hidden}\n"
     ".chat-content #chat-hero{min-height:0}\n"
