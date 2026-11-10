@@ -40,7 +40,7 @@ try:
             records=state/'memory/records';records.mkdir(exist_ok=True)
             for suffix,content in [('a','PROJECT_PROOF_C19 private A'),('b','SECRET_PRIVATE_B')]:
                 (records/f'mem_{suffix}.md').write_text(
-                    f'---\nid: mem_{suffix}\ntype: episodic\nscope: session/{suffix}\nstatus: trusted\n---\n{content}\n',encoding='utf8')
+                    f'---\nid: mem_{suffix}\ntype: episodic\nscope: session/{suffix}\nstatus: trusted\n---\n{content}\n',encoding='utf8',newline='\n')
         config={'llm.provider':'openai','llm.model':'summary-fixture','llm.api_key':'PRIVATE_API_KEY',
                 'llm.base_url':f'http://127.0.0.1:{server.server_port}','auth.key':'fixture-auth','scheduler.workers':2}
         (state/'light-agent.json').write_text(json.dumps(config),encoding='utf8')
