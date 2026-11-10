@@ -555,7 +555,15 @@ static int verified_edit_replacement(reasoning *r,int slot,const char *path) {
     if (!strstr(r->unresolved_failure_errors[slot],"file_edit: old_string not found")) return 0;
     long long size=fs_file_size(path);
     if (size<=0 || size>1024*1024 || !run_has_verified_artifact(r,path)) return 0;
-    cJSON *args=cJSON_Parse(r->unresolved_failure_args[slot]);
+    /* Mutation bodies are intentionally absent from model-visible failure
+     * summaries. Compare only against the latest matching in-run receipt. */
+    cJSON *args=NULL;
+    for (int i=r->n_steps-1;i>=0;i--) {
+        struct run_step *step=&r->steps[i];
+        if (step->ok!=0 || strcmp(step->tool,"file_edit") || !step->target[0]) continue;
+        char target[2048];normalized_evidence_path(r,step->target,target,sizeof(target));
+        if (!strcmp(path,target)) { args=cJSON_Parse(step->args);break; }
+    }
     const char *old=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"old_string"));
     const char *replacement=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"new_string"));
     int proved=0;
