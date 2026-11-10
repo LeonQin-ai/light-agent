@@ -804,16 +804,53 @@ char *catalog_skills_json(void) {
 
 /* ================= provider model catalog (issue #18) ================= */
 
+static int catalog_endpoint_is(const char *url, const char *endpoint) {
+    size_t n = strlen(endpoint);
+    return !strncmp(url,endpoint,n) && (!url[n] || (url[n]=='/' && !url[n+1]));
+}
+
 /* Ark model card, verified 2026-10-21. Capacities, not request defaults.
  * https://ark.volcengine.com/region:cn-beijing/model/detail?name=deepseek-v4-1-flash */
 int catalog_model_capabilities(const char *provider, const char *base_url, const char *model,
                                catalog_model_capability *out) {
     if (!out) return 0;
     memset(out, 0, sizeof(*out));
-    if (!provider || strcmp(provider,"openai") || !base_url || !model) return 0;
+    if (!provider || !base_url || !model) return 0;
+    /* DeepSeek /models publishes exact totals for its official deployment. */
+    int openai = !strcmp(provider,"openai");
+    int anthropic = !strcmp(provider,"anthropic");
+    if (((openai && (catalog_endpoint_is(base_url,"https://api.deepseek.com") ||
+                     catalog_endpoint_is(base_url,"https://api.deepseek.com/v1"))) ||
+         (anthropic && catalog_endpoint_is(base_url,"https://api.deepseek.com/anthropic"))) &&
+        (!strcmp(model,"deepseek-flash") || !strcmp(model,"deepseek-v4-pro"))) {
+        out->context_window=1048576;
+        out->max_output_tokens=393216;
+        out->source_url="https://api-docs.deepseek.com/api/list-models/";
+        return 1;
+    }
+
+    int zai_standard = openai && catalog_endpoint_is(base_url,"https://api.z.ai/api/paas/v4");
+    int zai_coding = openai && catalog_endpoint_is(base_url,"https://api.z.ai/api/coding/paas/v4");
+    int zai_anthropic = anthropic && catalog_endpoint_is(base_url,"https://api.z.ai/api/anthropic");
+    const char *zai_source = NULL;
+    if (zai_standard && !strcmp(model,"glm-5.2"))
+        zai_source="https://docs.z.ai/guides/llm/glm-5.2";
+    else if ((zai_standard || zai_coding || zai_anthropic) && !strcmp(model,"glm-5.3"))
+        zai_source="https://docs.z.ai/guides/llm/glm-5.3";
+    else if ((zai_standard || zai_coding) && !strcmp(model,"glm-5.3-flash"))
+        zai_source="https://docs.z.ai/guides/vlm/glm-5.3-flash";
+    if (zai_source) {
+        /* The model cards specify 1M / 128K without exact integers. Use
+         * conservative decimal bounds unless live metadata says otherwise. */
+        out->context_window=1000000;
+        out->max_output_tokens=128000;
+        out->source_url=zai_source;
+        return 1;
+    }
+
+    if (!openai) return 0;
     /* Deployment-specific model card; never infer proxy/alias capacities. */
-    if ((!strcmp(base_url,"https://integrate.api.nvidia.com/v1") ||
-         !strcmp(base_url,"https://integrate.api.nvidia.com/v1/")) &&
+    if (catalog_endpoint_is(base_url,"https://integrate.api.nvidia.com/v1") &&
         !strcmp(model,"z-ai/glm-5.3-flash")) {
         out->context_window=1048576;
         out->source_url="https://build.nvidia.com/z-ai/glm-5-3-flash/modelcard";
@@ -822,11 +859,8 @@ int catalog_model_capabilities(const char *provider, const char *base_url, const
     const char *bases[] = {"https://ark.cn-beijing.volces.com/api/plan/v3",
                            "https://ark.cn-beijing.volces.com/api/v3"};
     int endpoint = 0;
-    for (size_t i=0;i<sizeof(bases)/sizeof(bases[0]);i++) {
-        size_t n=strlen(bases[i]);
-        if (!strncmp(base_url,bases[i],n) && (!base_url[n] ||
-            (base_url[n]=='/' && !base_url[n+1]))) endpoint=1;
-    }
+    for (size_t i=0;i<sizeof(bases)/sizeof(bases[0]);i++)
+        if (catalog_endpoint_is(base_url,bases[i])) endpoint=1;
     const char *ids[] = {"deepseek-v4.1-flash", "deepseek-v4-1-flash-261017", "deepseek-v4-1-flash-260910"};
     int matched=0;
     for(size_t i=0;i<sizeof(ids)/sizeof(ids[0]);i++) if(!strcmp(model,ids[i])) matched=1;
