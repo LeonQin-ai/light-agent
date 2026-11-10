@@ -74,7 +74,9 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
         expected='DONE'
     elif mode in ('script_verified_edit','script_unverified_edit'):
         replacement=CONTENT if mode=='script_verified_edit' else 'NOT_PRESENT'
-        replies=[write,action('file_edit',path='report.any',old_string='ABSENT',new_string=replacement),read,done]
+        replies=[action('file_write',path='report.any',content='OLD_RENDER'),
+                 action('file_edit',path='report.any',old_string='ABSENT',new_string=replacement),
+                 action('shell',command='python produce.py',outputs=['report.any']),read,done]
         expected='DONE' if mode=='script_verified_edit' else 'FAILED'
     elif mode=='script_unchanged':
         # Declaring outputs on a read-only command must not fake a write: the
@@ -158,6 +160,8 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
                 for path in sources:(work/path).write_text('SOURCE',encoding='utf8')
             if mode in ('script_late_contract','script_windows_case'):
                 (work/'produce.py').write_text("from pathlib import Path\nPath('Évidence.any').write_text('REAL_OUTPUT',encoding='utf8')",encoding='utf8')
+            if mode in ('script_verified_edit','script_unverified_edit'):
+                (work/'produce.py').write_text(f"from pathlib import Path\nPath('report.any').write_text({CONTENT!r},encoding='utf8')",encoding='utf8')
             if mode=='batch50':
                 (work/'produce50.py').write_text("from pathlib import Path\nfor i in range(1,51): Path(f'chapter{i:02d}.md').write_text(f'CHAPTER {i} VERIFIED CONTENT',encoding='utf8')\n",encoding='utf8')
             (work/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'contract-fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':16}))
