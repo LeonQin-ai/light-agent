@@ -2,29 +2,46 @@
 import json,os,socket,subprocess,tempfile,time,urllib.request,threading
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
+from fixture_http_response import respond_json
 backend=Path(__file__).resolve().parents[1]
 build=backend/os.environ.get('COA_BUILD_DIR','build')
 build.mkdir(parents=True,exist_ok=True)
 ark='https://ark.cn-beijing.volces.com/api/plan/v3'
+turns={}
+def native_call(name,args,index):
+ return {'id':f'call-{index}','type':'function','function':{'name':name,'arguments':json.dumps(args)}}
 class Provider(BaseHTTPRequestHandler):
  def log_message(self,*_):pass
  def do_GET(self):
   assert self.headers.get('Authorization')=='Bearer fixture-key'
   data={'data':[{'id':f'noise-{i}'} for i in range(250)]+[{'id':'discovered','top_provider':{'context_length':1048576,'max_completion_tokens':32768}}]}
   encoded=json.dumps(data).encode();self.send_response(200);self.send_header('Content-Length',str(len(encoded)));self.end_headers();self.wfile.write(encoded)
+ def do_POST(self):
+  req=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  prompt=req['messages'][-1]['content'].rsplit('## Current request',1)[-1]
+  mode='big' if 'WINDOW_LARGE_CHECK' in prompt else 'small'
+  turn=turns.setdefault(mode,[])
+  turn.append((len(req['messages'][-1]['content']), 'FIRST_PAGE_MARKER_185641' in req['messages'][-1]['content'], req['max_tokens']))
+  n=len(turn)-1
+  if n<6:
+   calls=[native_call('file_read',{'path':'fixture-data.txt','offset_bytes':i*4000},i)
+          for i in range(n*24,(n+1)*24)]
+  else:
+   calls=[native_call('complete_task',{'status':'complete','requires_tools':False,'answer':'budget checked'},999)]
+  respond_json(self,json.dumps({'choices':[{'message':{'content':'','tool_calls':calls},'finish_reason':'tool_calls'}]}).encode())
 provider=ThreadingHTTPServer(('127.0.0.1',0),Provider)
 threading.Thread(target=provider.serve_forever,daemon=True).start()
 with tempfile.TemporaryDirectory(prefix='coa-capabilities-') as tmp:
  state=Path(tmp)
  (state/'routes.json').write_text(json.dumps([{'name':'legacy','provider':'openai','model':'deepseek-v4.1-flash','base_url':ark,'context_window':262144}]),encoding='utf-8')
- (state/'light-agent.json').write_text(json.dumps({'llm.provider':'mock'}),encoding='utf-8')
+ (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture-key','llm.base_url':f'http://127.0.0.1:{provider.server_port}','context.observation_budget':900000}),encoding='utf-8')
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  def api(path,body=None):
   req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
   with urllib.request.urlopen(req,timeout=5) as response:return json.load(response)
  def route(name):return next(x for x in api('/v1/routes') if x['name']==name)
  def start(log):
-  p=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',str(state),'--workspace',str(state),'serve',str(port)],cwd=backend,stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+  p=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',str(state),'--workspace',str(state),'serve',str(port)],cwd=backend,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
   for _ in range(100):
    try:api('/v1/scheduler');return p
    except OSError:assert p.poll() is None;time.sleep(.1)
@@ -82,6 +99,24 @@ with tempfile.TemporaryDirectory(prefix='coa-capabilities-') as tmp:
    assert result['ok'] and len(result['models'])==251,result
    x=route('auto');assert x['context_window']==1048576 and x['max_output_tokens']==32768 and x['context_source']=='provider_metadata',x
    assert route('manual')['context_window']==65536
+   pages=[]
+   for i in range(144):
+    prefix='FIRST_PAGE_MARKER_185641' if i==0 else f'page_{i:03d}'
+    pages.append((prefix+' '+chr(97+i%26)*4000)[:4000])
+   (state/'fixture-data.txt').write_bytes(''.join(pages).encode())
+   for selected,label in [('auto','WINDOW_LARGE_CHECK'),('manual','WINDOW_SMALL_CHECK')]:
+    task_id=api('/v1/chat',{'session':'budget-switch','route':selected,'message':label})['id']
+    deadline=time.monotonic()+45
+    while True:
+     task=api('/v1/tasks/'+str(task_id))
+     if task['status'] not in ('RUNNING','QUEUED'):break
+     assert time.monotonic()<deadline,task_id
+     time.sleep(.05)
+    assert task['status']=='DONE' and task['tool_calls']==144,(selected,task['status'],task['tool_calls'])
+   big,small=turns['big'][6],turns['small'][6]
+   assert big[0]>2*262144 and big[1] and big[2]==32768,big
+   assert small[0]<2*65536 and not small[1] and small[2]==16384,small
+   print('PASS: same-session route switch, request sizes',big[0],small[0],flush=True)
   finally:stop(p)
   p=start(log)
   try:assert route('auto')['context_window']==1048576 and route('manual')['context_window']==65536
