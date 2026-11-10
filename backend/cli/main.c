@@ -337,10 +337,10 @@ int main(int argc, char **argv) {
             cfg.http_port = (uint16_t)port;
         } else {
             config *probe = config_new();
-            char path[1200];
-            if (config_file) snprintf(path, sizeof(path), "%s", config_file);
-            else snprintf(path, sizeof(path), "%s/light-agent.json", state_root);
-            if (probe) config_load_file(probe, path);
+            if (probe) {
+                if (config_file) config_load_file(probe,config_file);
+                else config_load_state(probe,state_root);
+            }
             long port = (long)config_get_int(probe, "http.port", 8080);
             cfg.http_port = (uint16_t)(port > 0 && port <= 65535 ? port : 8080);
             config_free(probe);

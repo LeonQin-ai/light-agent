@@ -800,22 +800,12 @@ int init(runtime_ctx *ctx, const config *cfg) {
     config_apply_json(ctx->config, "{\"llm.provider\":\"mock\",\"llm.model\":\"mock\",\"llm.base_url\":\"\","
                                        "\"scheduler.workers\":8,\"tx.use_transaction\":true,\"http.port\":0,"
                                        "\"workspace\":\".\",\"market.url\":\"\",\"reasoning.max_rounds\":-1}");
-    {
-        char cfgfile[600];
-        if (cfg && cfg->config_file && *cfg->config_file)
-            snprintf(cfgfile, sizeof(cfgfile), "%s", cfg->config_file);
-        else {
-            path_join(cfgfile, sizeof(cfgfile), ctx->state_root, "light-agent.json");
-            if (!fs_exists(cfgfile)) {
-                char legacy[600];
-                path_join(legacy, sizeof(legacy), ctx->state_root, "cognitive-os-agent.json");
-                if (fs_exists(legacy)) snprintf(cfgfile, sizeof(cfgfile), "%s", legacy);
-            }
-        }
-        have_cfg_file = (config_load_file(ctx->config, cfgfile) == 0);
-        if (!have_cfg_file)
-            log_debug("no config file at %s (using defaults + env)", cfgfile);
-    }
+    if (cfg && cfg->config_file && *cfg->config_file)
+        have_cfg_file = config_load_file(ctx->config,cfg->config_file) == 0;
+    else
+        have_cfg_file = config_load_state(ctx->config,ctx->state_root) == 0;
+    if (!have_cfg_file)
+        log_debug("no readable configuration (using defaults + env)");
 
     config_apply_env(ctx->config, "COA_");
 

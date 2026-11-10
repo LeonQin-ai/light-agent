@@ -16,6 +16,8 @@ config *config_new(void);
 int config_apply_json(config *c, const char *json_text);
 /* Load and merge a JSON config file. Returns 0 ok, -1 if file unreadable/invalid. */
 int config_load_file(config *c, const char *path);
+/* Read the renamed default configuration, falling back to the old filename. */
+int config_load_state(config *c, const char *state_root);
 /* Merge environment variables with prefix (e.g. "COA_" -> LLM_PROVIDER = llm.provider,
  * case-insensitive mapping: A_B maps to a.b). */
 void config_apply_env(config *c, const char *prefix);

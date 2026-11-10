@@ -69,6 +69,14 @@ int config_apply_json(config *c, const char *json_text) {
     return 0;
 }
 
+int config_load_state(config *c, const char *state_root) {
+    char path[1200];
+    path_join(path,sizeof(path),state_root,"light-agent.json");
+    if (!fs_exists(path))
+        path_join(path,sizeof(path),state_root,"cognitive-os-agent.json");
+    return config_load_file(c,path);
+}
+
 int config_load_file(config *c, const char *path) {
     char *text = fs_read_file(path);
     int r;
