@@ -61,6 +61,17 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
         replies=[declare(artifacts=['report.any']),
                  action('shell',command="printf 'ACTUAL_ARTIFACT_PROOF' > report.any",outputs=['report.any']),
                  read,done];expected='DONE'
+    elif mode in ('script_late_contract','script_windows_case'):
+        filename='Évidence.any'
+        target=filename.lower() if mode=='script_windows_case' else filename
+        producer=action('shell',command='python produce.py',outputs=[filename])
+        read_script=action('file_read',path=target)
+        if mode=='script_windows_case':
+            acceptance={'artifacts':[target]}
+            replies=[producer,read_script,done]
+        else:
+            replies=[producer,read_script,declare(artifacts=[target]),done]
+        expected='DONE'
     elif mode=='script_unchanged':
         # Declaring outputs on a read-only command must not fake a write: the
         # file never changed after the obligation was merged, so the gate holds.
@@ -130,6 +141,8 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
             if mode in ('edit','edit_failed','edit_stale','preexisting','stale','script_unchanged','baseline_capacity','artifact_recovery'):(work/'report.any').write_text('OLD_ARTIFACT',encoding='utf8')
             if mode=='baseline_capacity':
                 for path in sources:(work/path).write_text('SOURCE',encoding='utf8')
+            if mode in ('script_late_contract','script_windows_case'):
+                (work/'produce.py').write_text("from pathlib import Path\nPath('Évidence.any').write_text('REAL_OUTPUT',encoding='utf8')",encoding='utf8')
             if mode=='batch50':
                 (work/'produce50.py').write_text("from pathlib import Path\nfor i in range(1,51): Path(f'chapter{i:02d}.md').write_text(f'CHAPTER {i} VERIFIED CONTENT',encoding='utf8')\n",encoding='utf8')
             (work/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'contract-fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':16}))
@@ -200,6 +213,8 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
 
 if __name__=='__main__':
     exercise('native','image_history')
+    exercise('native','script_late_contract')
+    if os.name=='nt':exercise('native','script_windows_case')
     for protocol in ('native','legacy'):exercise(protocol,'artifact_recovery')
     for protocol in ('native','legacy'):
         for mode in ('rollover','rollover_stale'):exercise(protocol,mode)

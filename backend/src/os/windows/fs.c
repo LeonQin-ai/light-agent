@@ -66,6 +66,31 @@ char *fs_absolute_path(const char *path) {
     return out;
 }
 
+char *fs_windows_final_path(const char *path) {
+    wchar_t *w = fs_wpath(path);
+    if (!w) return NULL;
+    HANDLE handle = CreateFileW(w, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    free(w);
+    if (handle == INVALID_HANDLE_VALUE) return NULL;
+    DWORD size = GetFinalPathNameByHandleW(handle, NULL, 0, FILE_NAME_NORMALIZED);
+    wchar_t *full = size ? malloc((size_t)size * sizeof(wchar_t)) : NULL;
+    DWORD len = full ? GetFinalPathNameByHandleW(handle, full, size, FILE_NAME_NORMALIZED) : 0;
+    CloseHandle(handle);
+    char *out = NULL;
+    if (len && len < size) {
+        if (!wcsncmp(full, L"\\\\?\\UNC\\", 8)) {
+            full[6] = L'\\';
+            out = fs_utf8_from_wide(full + 6);
+        } else if (!wcsncmp(full, L"\\\\?\\", 4) && full[5] == L':') {
+            out = fs_utf8_from_wide(full + 4);
+        }
+    }
+    free(full);
+    if (out) for (char *p = out; *p; ++p) if (*p == '\\') *p = '/';
+    return out;
+}
+
 char *fs_read_file(const char *path) {
     wchar_t *w = fs_wpath(path);
     FILE *f = w ? _wfopen(w, L"rb") : NULL;

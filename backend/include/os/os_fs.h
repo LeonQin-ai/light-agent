@@ -23,6 +23,10 @@ int fs_write_file(const char *path, const void *data, size_t len);
 int fs_append_file(const char *path, const void *data, size_t len);
 
 int fs_exists(const char *path);
+#ifdef _WIN32
+/* Filesystem-resolved path with the on-disk case. Caller frees the result. */
+char *fs_windows_final_path(const char *path);
+#endif
 int fs_is_dir(const char *path);
 /* 64-bit file size in bytes (-1 if the path does not exist / stat fails). */
 long long fs_file_size(const char *path);

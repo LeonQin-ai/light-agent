@@ -286,8 +286,6 @@ struct reasoning {
      * obligation is first merged. A later version change proves the run
      * itself produced the current bytes, so script-mediated artifacts
      * (shell outputs[]) can satisfy acceptance with a version-matched read. */
-    struct { char path[2048]; uint64_t version; } artifact_baseline[64];
-    int artifact_baseline_n;
     uint64_t artifact_versions_seen[2048];
     int artifact_versions_seen_n;
     struct opaque_observation opaque_seen[256];
@@ -395,14 +393,21 @@ static void normalized_evidence_path(reasoning *r, const char *path, char *out, 
         }
         *slash='\0';ancestor_len=(size_t)(slash-ancestor);
     }
-    char *absolute=fs_absolute_path(fs_exists(ancestor)?ancestor:full);
+    const char *existing=fs_exists(ancestor)?ancestor:full;
+#ifdef _WIN32
+    char *absolute=fs_windows_final_path(existing);
+    int canonical=absolute!=NULL;
+    if(!absolute)absolute=fs_absolute_path(existing);
+#else
+    char *absolute=fs_absolute_path(existing);
+#endif
     if(fs_exists(ancestor))snprintf(out,cap,"%s%s",absolute?absolute:ancestor,full+ancestor_len);
     else snprintf(out, cap, "%s", absolute ? absolute : full);
     free(absolute);
     for (char *p = out; *p; ++p) {
         if (*p == '\\') *p = '/';
 #ifdef _WIN32
-        if (*p >= 'A' && *p <= 'Z') *p += 'a' - 'A';
+        if (!canonical && *p >= 'A' && *p <= 'Z') *p += 'a' - 'A';
 #endif
     }
     size_t n = strlen(out);
@@ -623,7 +628,6 @@ static int completion_file_read_allowed(reasoning *r,const char *path){
 }
 static int full_read_verified(reasoning *r,const char *path);
 static int run_has_verified_artifact(reasoning *r,const char *path);
-static uint64_t artifact_baseline_of(reasoning *r,const char *path);
 int reasoning_acceptance_validate(const char *json) {
     cJSON *o=cJSON_ParseWithOpts(json?json:"{}",NULL,1);int valid=cJSON_IsObject(o);cJSON *field;
     if(!valid){cJSON_Delete(o);return -1;}
@@ -660,7 +664,6 @@ static void merge_acceptance(reasoning *r,const cJSON *input) {
                 if(!found) {
                     cJSON *entry=cJSON_CreateString(full);
                     if(cJSON_GetArraySize(paths)>=64||!entry||!cJSON_AddItemToArray(paths,entry)){cJSON_Delete(entry);cJSON_Delete(next);r->acceptance_invalid=1;return;}
-                    if(!strcmp(field->string,"artifacts"))artifact_baseline_of(r,full);
                 }
             }
         }
@@ -3632,15 +3635,6 @@ static int required_pending_reads(reasoning *r) {
 /* Fingerprint of an accepted artifact when its obligation was first merged.
  * Later gate checks reuse the stored value; a differing current version
  * proves the run itself changed the file. */
-static uint64_t artifact_baseline_of(reasoning *r,const char *path) {
-    for(int i=0;i<r->artifact_baseline_n;i++)
-        if(!strcmp(r->artifact_baseline[i].path,path))return r->artifact_baseline[i].version;
-    if(r->artifact_baseline_n>=(int)(sizeof(r->artifact_baseline)/sizeof(r->artifact_baseline[0])))return 0;
-    int i=r->artifact_baseline_n++;
-    snprintf(r->artifact_baseline[i].path,sizeof(r->artifact_baseline[i].path),"%s",path);
-    r->artifact_baseline[i].version=fs_file_version(path);
-    return r->artifact_baseline[i].version;
-}
 /* A shell action declared this path in outputs[] and its recorded post-action
  * version equals the file's current version: the declared command produced
  * the current bytes. Explicit declarations only, never command-name guessing. */
@@ -3649,7 +3643,9 @@ static int declared_output_current(reasoning *r,const char *path,uint64_t curren
         if(!strcmp(r->artifact_seen[i].path,path) && r->artifact_seen[i].version && r->artifact_seen[i].version==current && r->artifact_seen[i].producer_step<read_step)return 1;
     return 0;
 }
-static int run_has_verified_artifact(reasoning *r,const char *target) {
+static int run_has_verified_artifact(reasoning *r,const char *declared_path) {
+    char target[2048];
+    normalized_evidence_path(r,declared_path,target,sizeof(target));
     for(int ri=0;ri<r->file_receipts_n;ri++)
         if(!strcmp(r->file_receipts[ri].path,target) && r->file_receipts[ri].verified &&
            r->file_receipts[ri].verified==fs_file_version(target) && !fs_is_dir(target) && fs_file_size(target)>0)return 1;
@@ -3665,11 +3661,11 @@ static int run_has_verified_artifact(reasoning *r,const char *target) {
             }
         }
         /* Script-mediated artifact: a shell command that declared the path in
-         * outputs[] produced the current bytes (the file changed after the
-         * obligation was merged), and the version-matched read above proves
+         * outputs[] changed the file during this run, and the
+         * version-matched read above proves
          * the agent verified the final content. Same evidence, different
          * producer — generated artifacts must not force fake file_write calls. */
-        if(artifact_baseline_of(r,target)!=read->evidence_version && declared_output_current(r,target,read->evidence_version,read->id))return 1;
+        if(declared_output_current(r,target,read->evidence_version,read->id))return 1;
         return 0;
     }
     return 0;
@@ -4172,7 +4168,6 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     r->last_model_failure_call=0;
     r->completion_review_required=1;
     cJSON_Delete(r->acceptance);r->acceptance=NULL;r->acceptance_invalid=0;
-    r->artifact_baseline_n=0; /* per-run obligations cannot inherit another task's baseline */
     cJSON_Delete(r->tool_images);r->tool_images=NULL;
     r->prog_llm_ms = r->prog_tool_ms = 0;
     r->last_model_error[0]=0;
