@@ -7,7 +7,7 @@
  */
 #pragma once
 
-#define CAGENT_VERSION "3.1.2"
+#define CAGENT_VERSION "3.1.3"
 
 /* --- feature / platform helpers --- */
 #if defined(_WIN32) || defined(_WIN64)
