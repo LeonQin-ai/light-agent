@@ -4647,8 +4647,10 @@ restart_planning:
             r->completion_review_required=1;
         }
         if(planner_uses_native_tools(r->llm) && r->round_idx==r->max_rounds &&
-           r->round_new_observations>0 && r->all_actions_ok &&
-           !r->unresolved_failed_tool_count && !r->unresolved_failed_tools_overflow && !completion_grace){
+           (r->round_new_observations>0 || (completion_reviewed && r->run_successful_tools>0 &&
+             !r->file_checks_failed && !required_pending_reads(r))) &&
+           r->all_actions_ok && !r->unresolved_failed_tool_count &&
+           !r->unresolved_failed_tools_overflow && !completion_grace){
             completion_grace=1;completion_reviewed=1;
             round_log_append(r,completion_reserve_note);
         }

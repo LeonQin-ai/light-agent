@@ -78,6 +78,9 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
                  action('file_edit',path='report.any',old_string='ABSENT',new_string=replacement),
                  action('shell',command='python produce.py',outputs=['report.any']),read,done]
         expected='DONE' if mode=='script_verified_edit' else 'FAILED'
+    elif mode=='script_budget_readback':
+        acceptance={'artifacts':['report.any']}
+        replies=[write,read,done,read,done];expected='DONE'
     elif mode=='script_unchanged':
         # Declaring outputs on a read-only command must not fake a write: the
         # file never changed after the obligation was merged, so the gate holds.
@@ -128,6 +131,8 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
             request=self.rfile.read(int(self.headers['Content-Length']))
             if mode=='script_late_contract' and calls==3:
                 assert b'Previous completion was rejected:' not in request
+            if mode=='script_budget_readback' and calls==4:
+                assert b'Finalization-only reserve' in request
             if mode=='artifact_recovery' and calls==2:
                 assert b'Previous completion was rejected:' in request and b'report.any' in request
             if mode.startswith('cycle_') and b'Cycle completion review:' in request:
@@ -164,7 +169,7 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
                 (work/'produce.py').write_text(f"from pathlib import Path\nPath('report.any').write_text({CONTENT!r},encoding='utf8')",encoding='utf8')
             if mode=='batch50':
                 (work/'produce50.py').write_text("from pathlib import Path\nfor i in range(1,51): Path(f'chapter{i:02d}.md').write_text(f'CHAPTER {i} VERIFIED CONTENT',encoding='utf8')\n",encoding='utf8')
-            (work/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'contract-fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':16}))
+            (work/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'contract-fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':4 if mode=='script_budget_readback' else 16}))
             with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
             def api(path,body=None):
                 req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
@@ -233,6 +238,7 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
 if __name__=='__main__':
     exercise('native','image_history')
     exercise('native','script_late_contract')
+    exercise('native','script_budget_readback')
     exercise('native','script_verified_edit')
     exercise('native','script_unverified_edit')
     exercise('native','cycle_complete')
