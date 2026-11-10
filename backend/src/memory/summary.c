@@ -1,5 +1,6 @@
 /* A user-visible, read-only summary; separate from lossy session compaction. */
 #include "memory/summary.h"
+#include "memory/runtime.h"
 #include "light-agent.h"
 #include "runtime/tasklog.h"
 #include "os/os_fs.h"
@@ -22,26 +23,40 @@ static int output_budget(const llm *model) {
     return budget>0?(int)budget:1;
 }
 
-static void summary_path(runtime_ctx *ctx, char *out, size_t cap, const char *name) {
+static void summary_path(runtime_ctx *ctx, char *out, size_t cap, const char *name, const char *session) {
     char dir[700];path_join(dir,sizeof dir,ctx->state_root,"memory");
-    fs_mkdirs(dir);path_join(out,cap,dir,name);
+    fs_mkdirs(dir);
+    if (session && *session) {
+        char id[17], scoped_name[80];
+        hash_hex(id,hash64(session,strlen(session)));
+        snprintf(scoped_name,sizeof scoped_name,"%s-%s",id,name);
+        path_join(out,cap,dir,scoped_name);
+    } else path_join(out,cap,dir,name);
 }
-static cJSON *read_job(runtime_ctx *ctx) {
-    char path[800];summary_path(ctx,path,sizeof path,"summary-job.json");
+static cJSON *read_job(runtime_ctx *ctx,const char *session) {
+    char path[800];summary_path(ctx,path,sizeof path,"summary-job.json",session);
     char *text=fs_read_file(path);cJSON *o=text?cJSON_Parse(text):NULL;free(text);return o;
 }
-static cJSON *source_json(runtime_ctx *ctx) {
+static cJSON *source_json(runtime_ctx *ctx,const char *session,int *too_large) {
     cJSON *o=cJSON_CreateObject();
-    char *working=memory_working_json(ctx->memory),*longterm=memory_longterm_json(ctx->memory);
-    cJSON *w=working?cJSON_Parse(working):NULL,*l=longterm?cJSON_Parse(longterm):NULL;
+    char *working=session?NULL:memory_working_json(ctx->memory);
+    char *longterm=session?NULL:memory_longterm_json(ctx->memory);
+    cJSON *w=working?cJSON_Parse(working):cJSON_CreateArray();
+    cJSON *l=longterm?cJSON_Parse(longterm):cJSON_CreateObject();
     free(working);free(longterm);
     if(!o || !cJSON_IsArray(w) || !cJSON_IsObject(l)){cJSON_Delete(o);cJSON_Delete(w);cJSON_Delete(l);return NULL;}
-    cJSON_AddItemToObject(o,"working",w);cJSON_AddItemToObject(o,"longterm",l);return o;
+    cJSON_AddItemToObject(o,"working",w);cJSON_AddItemToObject(o,"longterm",l);
+    char scope[sizeof("session/") + 127];
+    if(session)snprintf(scope,sizeof scope,"session/%s",session);
+    cJSON *records=memory_runtime_summary_records(ctx->memory_v3,session?scope:NULL,SUMMARY_MAX_SOURCE,too_large);
+    if(!records){cJSON_Delete(o);return NULL;}
+    cJSON_AddItemToObject(o,"records",records);
+    return o;
 }
 /* Append-only successful results: ignore an incomplete tail after a crash.
  * Each write begins a fresh line so a later result cannot join a torn record. */
-static cJSON *read_latest(runtime_ctx *ctx) {
-    char path[800];summary_path(ctx,path,sizeof path,"summaries.jsonl");
+static cJSON *read_latest(runtime_ctx *ctx,const char *session) {
+    char path[800];summary_path(ctx,path,sizeof path,"summaries.jsonl",session);
     char *text=fs_read_file(path);cJSON *latest=NULL;
     for(char *p=text;p && *p;){
         char *end=strchr(p,'\n');if(!end)break;*end='\0';
@@ -80,9 +95,9 @@ static int cancel_job(runtime_ctx *ctx,long long id) {
     if(t && t->tag && !strcmp(t->tag,SUMMARY_TAG) && t->status<TS_DONE){atomic_store(&t->cancel_flag,1);rc=0;}
     scheduler_release(ctx->scheduler,t);return rc;
 }
-char *memory_summary_get(runtime_ctx *ctx) {
+char *memory_summary_get(runtime_ctx *ctx,const char *session) {
     mutex_lock(&ctx->summary_lock);
-    cJSON *o=cJSON_CreateObject(),*latest=read_latest(ctx),*job=read_job(ctx);
+    cJSON *o=cJSON_CreateObject(),*latest=read_latest(ctx,session),*job=read_job(ctx,session);
     long long id=job_id(job);char *output=NULL,*status=id>=0?job_status(ctx,id,&output):NULL;
     if(job){
         cJSON_AddStringToObject(job,"status",status?status:"INTERRUPTED");
@@ -90,7 +105,7 @@ char *memory_summary_get(runtime_ctx *ctx) {
         if(result)cJSON_AddItemToObject(job,"result",result);
         if(status && !strcmp(status,"DONE") && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(result,"ok")) &&
            (!latest || job_id(latest)!=id)){
-            char path[800];summary_path(ctx,path,sizeof path,"summaries.jsonl");
+            char path[800];summary_path(ctx,path,sizeof path,"summaries.jsonl",session);
             char *row=cJSON_PrintUnformatted(result);strbuf line;strbuf_init(&line);
             strbuf_append(&line,"\n");strbuf_append(&line,row?row:"");strbuf_append(&line,"\n");
             if(row && !fs_append_file(path,line.buf,line.len)){cJSON_Delete(latest);latest=cJSON_Duplicate(result,1);}
@@ -103,20 +118,22 @@ char *memory_summary_get(runtime_ctx *ctx) {
     char *text=cJSON_PrintUnformatted(o);cJSON_Delete(o);free(status);free(output);
     mutex_unlock(&ctx->summary_lock);return text;
 }
-int memory_summary_start(runtime_ctx *ctx,char **json) {
+int memory_summary_start(runtime_ctx *ctx,const char *session,char **json) {
     if(json)*json=NULL;
     /* Commit a finished previous result before recording the next job. */
-    char *previous=memory_summary_get(ctx);cJSON *state=previous?cJSON_Parse(previous):NULL;free(previous);
+    char *previous=memory_summary_get(ctx,session);cJSON *state=previous?cJSON_Parse(previous):NULL;free(previous);
     int save_failed=cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(state,"job"),"save_error")!=NULL;
     cJSON_Delete(state);if(save_failed)return 500;
-    mutex_lock(&ctx->summary_lock);cJSON *old=read_job(ctx);
+    mutex_lock(&ctx->summary_lock);cJSON *old=read_job(ctx,session);
     long long old_id=job_id(old);char *status=old_id>=0?job_status(ctx,old_id,NULL):NULL;
     cJSON_Delete(old);
     if(status && (!strcmp(status,"RUNNING") || !strcmp(status,"QUEUED"))){free(status);mutex_unlock(&ctx->summary_lock);return 409;}
     free(status);
-    cJSON *source=source_json(ctx);
-    if(!source){mutex_unlock(&ctx->summary_lock);return 500;}
-    int count=cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(source,"working"))+cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(source,"longterm"));
+    int too_large=0;
+    cJSON *source=source_json(ctx,session,&too_large);
+    if(!source){mutex_unlock(&ctx->summary_lock);return too_large?413:500;}
+    int count=cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(source,"working"))+cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(source,"longterm"))+
+              cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(source,"records"));
     if(!count){cJSON_Delete(source);mutex_unlock(&ctx->summary_lock);return 422;}
     char *input=cJSON_PrintUnformatted(source);cJSON_Delete(source);
     if(!input || strlen(input)>SUMMARY_MAX_SOURCE){int code=input?413:500;free(input);mutex_unlock(&ctx->summary_lock);return code;}
@@ -130,19 +147,20 @@ int memory_summary_start(runtime_ctx *ctx,char **json) {
     for(size_t i=0;i<4;i++)cJSON_AddStringToObject(model,names[i],values[i]?values[i]:"");
     cJSON_AddNumberToObject(model,"context_window",(double)window);
     cJSON_AddNumberToObject(model,"max_output_tokens",(double)active->max_output_tokens);
+    if(session)cJSON_AddStringToObject(model,"summary_session",session);
     char *snapshot=cJSON_PrintUnformatted(model);cJSON_Delete(model);
     long long id=snapshot?scheduler_submit_configured(ctx->scheduler,0,input,(void*)4,90000,SUMMARY_TAG,0,NULL,ctx->workspace,0,0,snapshot):-1;
     free(input);free(snapshot);
     if(id<0){mutex_unlock(&ctx->summary_lock);return id==SCHEDULER_FULL?429:500;}
     cJSON *job=cJSON_CreateObject();cJSON_AddNumberToObject(job,"task_id",(double)id);
     cJSON_AddNumberToObject(job,"started_ms",(double)time_now_ms());
-    char *body=cJSON_PrintUnformatted(job);cJSON_Delete(job);char path[800];summary_path(ctx,path,sizeof path,"summary-job.json");
+    char *body=cJSON_PrintUnformatted(job);cJSON_Delete(job);char path[800];summary_path(ctx,path,sizeof path,"summary-job.json",session);
     if(!body || fs_write_file(path,body,strlen(body))){cancel_job(ctx,id);free(body);mutex_unlock(&ctx->summary_lock);return 500;}
     if(json)*json=body;else free(body);
     mutex_unlock(&ctx->summary_lock);return 202;
 }
-int memory_summary_cancel(runtime_ctx *ctx) {
-    mutex_lock(&ctx->summary_lock);cJSON *job=read_job(ctx);long long id=job_id(job);cJSON_Delete(job);
+int memory_summary_cancel(runtime_ctx *ctx,const char *session) {
+    mutex_lock(&ctx->summary_lock);cJSON *job=read_job(ctx,session);long long id=job_id(job);cJSON_Delete(job);
     char *status=id>=0?job_status(ctx,id,NULL):NULL;
     int active=status && (!strcmp(status,"RUNNING") || !strcmp(status,"QUEUED"));
     int rc=active?cancel_job(ctx,id):-1;
@@ -150,6 +168,7 @@ int memory_summary_cancel(runtime_ctx *ctx) {
 }
 int memory_summary_run(runtime_ctx *ctx,task *t,char **answer) {
     cJSON *cfg=t->llm_config?cJSON_Parse(t->llm_config):NULL;
+    const char *session=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(cfg,"summary_session"));
     const char *provider=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(cfg,"provider"));
     const char *model=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(cfg,"model"));
     llm *l=llm_create(provider,cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(cfg,"base_url")),
@@ -174,7 +193,7 @@ int memory_summary_run(runtime_ctx *ctx,task *t,char **answer) {
     const char *visible=resp.content;while(visible && *visible && isspace((unsigned char)*visible))visible++;
     int ok=!rc && !resp.truncated && !resp.tool_actions_json && visible && *visible && !task_should_abort(t);
     cJSON *result=cJSON_CreateObject();cJSON_AddBoolToObject(result,"ok",ok);
-    cJSON_AddNumberToObject(result,"task_id",(double)t->id);cJSON_AddStringToObject(result,"scope","working/longterm");
+    cJSON_AddNumberToObject(result,"task_id",(double)t->id);cJSON_AddStringToObject(result,"scope",session?"session":"working/longterm");
     cJSON_AddStringToObject(result,"model",model?model:"");cJSON_AddNumberToObject(result,"generated_ms",(double)time_now_ms());
     cJSON_AddNumberToObject(result,"elapsed_ms",(double)(time_now_ms()-started));
     cJSON_AddNumberToObject(result,"max_tokens",req.max_tokens);
@@ -187,7 +206,9 @@ int memory_summary_run(runtime_ctx *ctx,task *t,char **answer) {
     cJSON_AddStringToObject(result,"source_hash",hash);
     cJSON *source=cJSON_Parse(t->input);
     cJSON_AddNumberToObject(result,"working_count",cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(source,"working")));
-    cJSON_AddNumberToObject(result,"longterm_count",cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(source,"longterm")));cJSON_Delete(source);
+    cJSON_AddNumberToObject(result,"longterm_count",cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(source,"longterm")));
+    cJSON_AddNumberToObject(result,"record_count",cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(source,"records")));
+    cJSON_Delete(source);
     if(ok)cJSON_AddStringToObject(result,"text",resp.content);
     else cJSON_AddStringToObject(result,"error",resp.truncated?"模型摘要达到输出上限；未覆盖上次成功摘要":"摘要未完成；上次成功摘要已保留");
     if(ok){
@@ -196,7 +217,7 @@ int memory_summary_run(runtime_ctx *ctx,task *t,char **answer) {
          * restart, even when the process dies between the scheduler's
          * status flip and task_done()'s journal append. The GET path keeps
          * its task_id dedupe and retries the append on a failure here. */
-        char path[800];summary_path(ctx,path,sizeof path,"summaries.jsonl");
+        char path[800];summary_path(ctx,path,sizeof path,"summaries.jsonl",session);
         char *row=cJSON_PrintUnformatted(result);
         if(row){
             strbuf line;strbuf_init(&line);

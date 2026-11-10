@@ -1,11 +1,16 @@
 /* runtime.h — thread-safe production bridge for records + Context MMU. */
 #pragma once
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct memory_runtime memory_runtime;
+struct cJSON;
+
+/* Snapshot active records for an exact scope, or global records if scope is NULL. */
+struct cJSON *memory_runtime_summary_records(memory_runtime *rt, const char *scope, size_t budget, int *too_large);
 
 memory_runtime *memory_runtime_new(const char *state_root);
 char *memory_runtime_recall_ex(memory_runtime *rt,const char *scope,const char *query,int char_budget,int include_shared);

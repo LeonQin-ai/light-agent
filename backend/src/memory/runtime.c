@@ -6,6 +6,7 @@
 #include "infra/util.h"
 #include "infra/logging.h"
 #include "os/os_thread.h"
+#include "cJSON.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -118,6 +119,38 @@ int memory_runtime_learn(memory_runtime *rt, const char *scope,
     mutex_unlock(&rt->lock);
     mem_candidate_free(&c);
     return decision == MEM_GATE_REJECT ? 0 : 1;
+}
+
+cJSON *memory_runtime_summary_records(memory_runtime *rt, const char *scope, size_t budget, int *too_large) {
+    cJSON *rows = cJSON_CreateArray();
+    if (!rt || !rows) return rows;
+    mutex_lock(&rt->lock);
+    size_t bytes = 2;
+    for (int i = 0; i < mem_records_count(rt->records); ++i) {
+        const mem_record *record = mem_records_at(rt->records, i);
+        if (record->status >= MEM_STATUS_DEPRECATED || !record->content) continue;
+        if (scope ? strcmp(record->scope, scope) :
+            (strcmp(record->scope, "global") && strcmp(record->scope, "user/global"))) continue;
+        cJSON *item = cJSON_CreateObject();
+        if (!item || !cJSON_AddStringToObject(item, "id", record->id) ||
+            !cJSON_AddStringToObject(item, "type", mem_record_type_name(record->type)) ||
+            !cJSON_AddStringToObject(item, "status", mem_record_status_name(record->status)) ||
+            !cJSON_AddStringToObject(item, "content", record->content)) {
+            cJSON_Delete(item); cJSON_Delete(rows); rows = NULL; break;
+        }
+        char *encoded = cJSON_PrintUnformatted(item);
+        if (!encoded) { cJSON_Delete(item); cJSON_Delete(rows); rows = NULL; break; }
+        size_t size = strlen(encoded) + 1;
+        free(encoded);
+        if (size > budget || bytes > budget - size) {
+            *too_large = 1;
+            cJSON_Delete(item); cJSON_Delete(rows); rows = NULL; break;
+        }
+        bytes += size;
+        cJSON_AddItemToArray(rows, item);
+    }
+    mutex_unlock(&rt->lock);
+    return rows;
 }
 
 int memory_runtime_count(memory_runtime *rt) {

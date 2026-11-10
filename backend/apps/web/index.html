@@ -1772,8 +1772,10 @@ panels.mcp = `
 panels.memory = `
   <div class="card">
     <div class="card-head"><h2>记忆摘要</h2><button class="sec sm" onclick="loadMemorySummary()">刷新摘要</button></div>
-    <p class="hint">根据当前工作记忆和长期事实生成只读摘要，会调用当前激活模型。原始记忆与聊天记录保留；这不是某个会话的压缩摘要。</p>
-    <div class="row"><button id="memory-summary-generate" onclick="generateMemorySummary()">生成记忆摘要</button>
+    <p class="hint">从已保存的记忆生成只读摘要，会调用当前激活模型。选择当前会话时，仅使用该会话的私有长期记忆。</p>
+    <div class="row"><label>摘要范围 <select id="memory-summary-scope" onchange="changeMemorySummaryScope()">
+        <option value="global">全局记忆</option><option value="session">当前会话私有记忆</option>
+      </select></label><button id="memory-summary-generate" onclick="generateMemorySummary()">生成记忆摘要</button>
       <button class="sec" id="memory-summary-cancel" hidden onclick="cancelMemorySummary()">取消生成</button>
       <span id="memory-summary-status" class="muted" role="status" aria-live="polite">正在读取…</span></div>
     <p id="memory-summary-meta" class="hint"></p>
@@ -2227,12 +2229,25 @@ async function load(panel){
 }
 
 let MEMORY_SUMMARY_TIMER=null, MEMORY_SUMMARY_FETCHING=false, MEMORY_SUMMARY_ACTION=false;
+function memorySummaryUrl(){
+  return '/v1/memory/summary'+($('memory-summary-scope')?.value==='session'?
+    '?session='+encodeURIComponent(CHAT_SESSION || 'default'):'');
+}
+function changeMemorySummaryScope(){
+  $('memory-summary-text').textContent='尚未生成记忆摘要。';
+  $('memory-summary-meta').textContent='';
+  $('memory-summary-copy').hidden=true;
+  $('memory-summary-generate').disabled=true;
+  $('memory-summary-cancel').hidden=true;
+  MEMORY_SUMMARY_FETCHING=false;
+  void loadMemorySummary();
+}
 async function loadMemorySummary(){
-  const status=$('memory-summary-status');if(!status || MEMORY_SUMMARY_FETCHING===status)return;
-  clearTimeout(MEMORY_SUMMARY_TIMER);MEMORY_SUMMARY_FETCHING=status;
+  const status=$('memory-summary-status');if(!status || MEMORY_SUMMARY_FETCHING?.status===status)return;
+  clearTimeout(MEMORY_SUMMARY_TIMER);const url=memorySummaryUrl(), request={status,url};MEMORY_SUMMARY_FETCHING=request;
   try{
-    const r=await call('GET','/v1/memory/summary');
-    if(status!==$('memory-summary-status'))return;
+    const r=await call('GET',url);
+    if(status!==$('memory-summary-status') || MEMORY_SUMMARY_FETCHING!==request)return;
     if(r.status!==200)throw Error(r.obj?.error||'摘要读取失败');
     const saved=r.obj?.summary,job=r.obj?.job,active=['RUNNING','QUEUED'].includes(job?.status);
     $('memory-summary-generate').disabled=active||MEMORY_SUMMARY_ACTION;
@@ -2244,21 +2259,22 @@ async function loadMemorySummary(){
       $('memory-summary-text').textContent=saved.text;
       $('memory-summary-copy').hidden=false;
       const usage=saved.usage_available?`${saved.tokens_in} 输入 / ${saved.tokens_out} 输出 tokens`:'模型未提供 token 用量';
-      $('memory-summary-meta').textContent=`${new Date(saved.generated_ms).toLocaleString()} · ${saved.model} · 工作记忆 ${saved.working_count} 条 / 长期事实 ${saved.longterm_count} 条 · ${usage}`;
+      $('memory-summary-meta').textContent=`${new Date(saved.generated_ms).toLocaleString()} · ${saved.model} · 工作记忆 ${saved.working_count} 条 / 长期事实 ${saved.longterm_count} 条 / 持久记录 ${saved.record_count ?? 0} 条 · ${usage}`;
     }
     if(active)MEMORY_SUMMARY_TIMER=setTimeout(()=>{if(current==='memory')void loadMemorySummary();},1000);
-  }catch(e){if(status===$('memory-summary-status'))status.textContent=e.message+'；可点击刷新重试';}
-  finally{if(MEMORY_SUMMARY_FETCHING===status)MEMORY_SUMMARY_FETCHING=false;}
+  }catch(e){if(MEMORY_SUMMARY_FETCHING===request && status===$('memory-summary-status'))status.textContent=e.message+'；可点击刷新重试';}
+  finally{if(MEMORY_SUMMARY_FETCHING===request)MEMORY_SUMMARY_FETCHING=false;}
 }
 async function memorySummaryAction(method){
   if(MEMORY_SUMMARY_ACTION)return;MEMORY_SUMMARY_ACTION=true;
-  const button=$('memory-summary-generate');if(button)button.disabled=true;
+  const button=$('memory-summary-generate'), scope=$('memory-summary-scope');
+  if(button)button.disabled=true;if(scope)scope.disabled=true;
   try{
-    const r=await call(method,'/v1/memory/summary',method==='POST'?{}:null);
+    const r=await call(method,memorySummaryUrl(),method==='POST'?{}:null);
     if(r.status<200||r.status>=300)throw Error(r.obj?.error||'摘要请求失败');
     await loadMemorySummary();
   }catch(e){const status=$('memory-summary-status');if(status)status.textContent=e.message;}
-  finally{MEMORY_SUMMARY_ACTION=false;const currentButton=$('memory-summary-generate');if(currentButton && $('memory-summary-cancel')?.hidden)currentButton.disabled=false;}
+  finally{MEMORY_SUMMARY_ACTION=false;if(scope)scope.disabled=false;const currentButton=$('memory-summary-generate');if(currentButton && $('memory-summary-cancel')?.hidden)currentButton.disabled=false;}
 }
 function generateMemorySummary(){return memorySummaryAction('POST');}
 function cancelMemorySummary(){return memorySummaryAction('DELETE');}

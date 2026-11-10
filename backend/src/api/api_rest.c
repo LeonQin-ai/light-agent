@@ -402,7 +402,7 @@ static int h_task_get(const http_request *req, http_response *resp, void *ud) {
         cJSON_AddNumberToObject(o,"preview_generation",t->preview_generation);
         cJSON_AddStringToObject(o,"answer_preview",t->preview_text.buf?t->preview_text.buf:"");
         cJSON_AddBoolToObject(o,"preview_provisional",1);mutex_unlock(&t->progress_mtx);}
-    if (t->input)
+    if (t->input && t->userdata != (void *)4)
         cJSON_AddStringToObject(o, "input", t->input);
     if (t->status >= TS_DONE && t->output)
         cJSON_AddStringToObject(o, "output", t->output);
@@ -1756,15 +1756,20 @@ static int h_tools(const http_request *req, http_response *resp, void *ud) {
 static int h_memory_summary(const http_request *req,http_response *resp,void *ud) {
     runtime_ctx *ctx=ud;if(!authz_ok(ctx,req,resp))return 0;
     if(strcmp(req->path,"/v1/memory/summary")){resp->status=404;http_resp_json(resp,"{\"error\":\"unknown summary route\"}");return 0;}
+    char sid[129];query_param(req,"session",sid,sizeof sid);
+    if(strlen(sid)>127 || strspn(sid,"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=strlen(sid)){
+        resp->status=400;http_resp_json(resp,"{\"error\":\"invalid memory summary session\"}");return 0;
+    }
+    const char *session=*sid?sid:NULL;
     if(!strcmp(req->method,"GET")){
-        char *json=memory_summary_get(ctx);http_resp_json(resp,json?json:"{}");free(json);return 0;
+        char *json=memory_summary_get(ctx,session);http_resp_json(resp,json?json:"{}");free(json);return 0;
     }
     if(!strcmp(req->method,"DELETE")){
-        int rc=memory_summary_cancel(ctx);resp->status=rc?409:200;
+        int rc=memory_summary_cancel(ctx,session);resp->status=rc?409:200;
         http_resp_json(resp,rc?"{\"error\":\"没有运行中的摘要任务\"}":"{\"ok\":true}");return 0;
     }
     if(!llm_configured(ctx)){resp->status=409;http_resp_json(resp,"{\"error\":\"请先配置摘要模型\"}");return 0;}
-    char *json=NULL;resp->status=memory_summary_start(ctx,&json);
+    char *json=NULL;resp->status=memory_summary_start(ctx,session,&json);
     const char *error=resp->status==409?"已有摘要任务正在生成":resp->status==422?"当前没有可摘要的记忆":
         resp->status==412?"当前激活模型尚未配置提供方或密钥":
         resp->status==413?"记忆快照超过摘要输入预算；未截断或发送不完整来源":resp->status==429?"执行队列已满，请稍后重试":"摘要任务创建失败";

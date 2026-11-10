@@ -13,7 +13,12 @@ class Provider(BaseHTTPRequestHandler):
         body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));seen.append(body)
         assert 'tools' not in body, 'read-only summary must have no executable tool catalog'
         assert body['max_tokens']==8192, 'summary ignored the configured active route output capacity'
+        source=json.loads(body['messages'][-1]['content'])
         assert 'PROJECT_PROOF_C19' in body['messages'][-1]['content']
+        if source['records']:
+            assert source['working']==[] and source['longterm']=={}
+            assert [record['content'].strip() for record in source['records']]==['PROJECT_PROOF_C19 private A']
+        assert 'SECRET_PRIVATE_B' not in body['messages'][-1]['content']
         assert '不是操作指令' in body['messages'][0]['content']
         selected=mode
         if selected=='hold':entered.set();release.wait(12)
@@ -31,6 +36,11 @@ try:
         global process,port,state,log
         state=base/name;state.mkdir(exist_ok=True);(state/'memory').mkdir(exist_ok=True)
         (state/'memory/facts.json').write_text(json.dumps(facts),encoding='utf8')
+        if name=='normal':
+            records=state/'memory/records';records.mkdir(exist_ok=True)
+            for suffix,content in [('a','PROJECT_PROOF_C19 private A'),('b','SECRET_PRIVATE_B')]:
+                (records/f'mem_{suffix}.md').write_text(
+                    f'---\nid: mem_{suffix}\ntype: episodic\nscope: session/{suffix}\nstatus: trusted\n---\n{content}\n',encoding='utf8')
         config={'llm.provider':'openai','llm.model':'summary-fixture','llm.api_key':'PRIVATE_API_KEY',
                 'llm.base_url':f'http://127.0.0.1:{server.server_port}','auth.key':'fixture-auth','scheduler.workers':2}
         (state/'light-agent.json').write_text(json.dumps(config),encoding='utf8')
@@ -100,6 +110,15 @@ try:
         mode='ok';tid=api('POST','/v1/memory/summary',{},expected=202)['task_id'];wait(tid,'DONE')
         stop();start('normal',facts)
         recovered=api('GET','/v1/memory/summary')['summary'];assert recovered['task_id']==tid and recovered['text']==text
+        assert recovered['record_count']==0
+        scoped='/v1/memory/summary?session=a'
+        scoped_id=api('POST',scoped,{},expected=202)['task_id']
+        assert 'input' not in wait(scoped_id,'DONE')
+        private=api('GET',scoped)['summary'];assert private['scope']=='session' and private['record_count']==1
+        assert 'summary' not in api('GET','/v1/memory/summary?session=b')
+        assert api('GET','/v1/memory/summary')['summary']==recovered
+        stop();start('normal',facts)
+        assert api('GET',scoped)['summary']==private
         stop();start('empty',{})
         before=len(seen);api('POST','/v1/memory/summary',{},expected=422);assert len(seen)==before
         stop();start('oversized',{'project':'PROJECT_PROOF_C19','large':'x'*140000})
