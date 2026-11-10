@@ -4719,11 +4719,14 @@ restart_planning:
         result = NULL;
         st = state_machine_run(r->sm, prompt, &result);
         usage_book_round(r);
-        if (st == ST_DONE && !r->had_plan && r->planner_native_end_turn == 1 &&
-            !r->planner_response_truncated && !r->file_checks_failed &&
-            !r->acceptance_invalid && !required_pending_reads(r) && result && *result) {
-            final_text = xstrdup(result);
-            if (final_text) stalled = 0;
+        if (st == ST_DONE && !r->had_plan && !r->planner_response_truncated && result && *result) {
+            if (r->planner_native_end_turn == 2) {
+                final_text = xstrdup(result);
+            } else if (r->planner_native_end_turn == 1 && !r->file_checks_failed &&
+                       !r->acceptance_invalid && !required_pending_reads(r)) {
+                final_text = xstrdup(result);
+                if (final_text) stalled = 0;
+            }
         }
     }
 

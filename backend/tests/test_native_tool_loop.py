@@ -22,7 +22,7 @@ matrix=[
  ('请介绍风险和权限限制，不做任何系统修改。','我需要说明：执行工具受权限约束，说明边界不需要实际修改系统。'),
 ]
 for provider_name in ('openai','anthropic'):
- counts={};catalogs=[];active_case=None;summary_calls={}
+ counts={};catalogs=[];active_case=None;summary_calls={};cycle_reviews={}
  class Provider(BaseHTTPRequestHandler):
   def log_message(self,*args):pass
   def do_POST(self):
@@ -53,7 +53,10 @@ for provider_name in ('openai','anthropic'):
     assert 'arguments_string=1' in error and 'argument_bytes=8' in error and 'parsed_object=0' in error and 'truncated=0' in error,error
     assert '{"path":' not in error, 'diagnostic leaked argument contents'
    calls=[];answer='';stop='stop'
-   if case.startswith('ANSWER_'):answer=matrix[int(case.split('_')[1])][1]
+   if case=='NATIVE_VERIFY_SPIN' and 'Cycle completion review:' in body['messages'][-1]['content']:
+    cycle_reviews[case]=cycle_reviews.get(case,0)+1
+    calls=[('complete_task',{'status':'blocked','requires_tools':False,'answer':'Stopped repeated verification; preserve existing artifacts.'})]
+   elif case.startswith('ANSWER_'):answer=matrix[int(case.split('_')[1])][1]
    elif case in ('NATIVE_READ_PROTOCOL','NATIVE_READ_CONTROL'):
     bad='native.txt</parameter>\n<｜DSML｜ parameter name="offset_bytes" string="false">0' if case=='NATIVE_READ_PROTOCOL' else 'bad\nname.txt'
     if n==0:calls=[('file_read',{'path':bad})]
@@ -227,8 +230,8 @@ for provider_name in ('openai','anthropic'):
     assert empty['status']=='DONE' and counts['NATIVE_EMPTY_WRITE']==3 and (state/'explicit-empty.txt').read_bytes()==b'',empty
     spin=run('NATIVE_VERIFY_SPIN','执行校验并按真实进展收尾。')
     assert spin['status']=='FAILED' and counts['NATIVE_VERIFY_SPIN']<=12,{k:spin.get(k) for k in ('status','round','tool_calls')}
-    assert summary_calls.get('NATIVE_VERIFY_SPIN')==1,summary_calls
-    assert spin['llm_calls']==counts['NATIVE_VERIFY_SPIN']+1,spin['llm_calls']
+    assert cycle_reviews.get('NATIVE_VERIFY_SPIN')==1 and not summary_calls.get('NATIVE_VERIFY_SPIN')
+    assert spin['llm_calls']==counts['NATIVE_VERIFY_SPIN'] and 'Stopped repeated verification' in spin['output'],spin['output']
     advancing=run('NATIVE_VERIFY_PROGRESS','持续生成新内容并校验，全部完成后交付。')
     assert advancing['status']=='DONE' and counts['NATIVE_VERIFY_PROGRESS']==42,advancing
     assert (state/'progress-artifact.txt').read_text()=='actual-new-content-39'
