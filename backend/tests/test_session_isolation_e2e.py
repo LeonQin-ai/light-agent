@@ -6,7 +6,7 @@ root=Path(__file__).resolve().parents[1];build=root/os.environ.get('COA_BUILD_DI
 class Model(BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
-  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));model=body['model'];seen.append((model,self.headers.get('Authorization'),body.get('temperature')))
+  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));model=body['model'];seen.append((model,self.headers.get('Authorization'),body.get('temperature'),body.get('reasoning_effort')))
   if model=='model-a':entered.set();assert release.wait(10)
   message={'content':'','tool_calls':[{'id':'c','type':'function','function':{'name':'complete_task','arguments':json.dumps({'status':'complete','requires_tools':False,'answer':'Selected '+model})}}]}
   raw=json.dumps({'choices':[{'message':message,'finish_reason':'tool_calls'}]}).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
@@ -25,9 +25,9 @@ try:
      try:req('/v1/scheduler');break
      except OSError:assert p.poll() is None;time.sleep(.05)
     for letter in ('a','b'):req('/v1/routes',{'name':'route-'+letter,'provider':'openai','model':'model-'+letter,'api_key':'fixture-'+letter,'base_url':f'http://127.0.0.1:{model.server_port}'})
-    a=req('/v1/chat',{'session':'a','message':'Describe yourself','route':'route-a','permission_mode':'ask','thinking':True,'temperature':0})['id'];assert entered.wait(5)
+    a=req('/v1/chat',{'session':'a','message':'Describe yourself','route':'route-a','permission_mode':'ask','thinking':True,'temperature':0,'reasoning_effort':'low'})['id'];assert entered.wait(5)
     assert req('/v1/scheduler')['current_task_id']==a,'scheduler exposes the running task, including ID zero'
-    b=req('/v1/chat',{'session':'b','message':'Describe yourself','route':'route-b','permission_mode':'full','thinking':False,'temperature':1})['id']
+    b=req('/v1/chat',{'session':'b','message':'Describe yourself','route':'route-b','permission_mode':'full','thinking':False,'temperature':1,'reasoning_effort':'high'})['id']
     release.set()
     for tid,model_name,permission,thinking in ((a,'model-a',1,True),(b,'model-b',0,False)):
      end=time.monotonic()+15
@@ -38,10 +38,17 @@ try:
      assert task['status']=='DONE' and task['model']==model_name and task['permission_mode']==permission and task['thinking']==thinking,task
      assert 'api_key' not in json.dumps(task) and 'fixture-a' not in json.dumps(task)
     assert req('/v1/config/llm')['model']=='global-default','local model selection changed global provider'
-    assert ('model-a','Bearer fixture-a',0) in seen and ('model-b','Bearer fixture-b',1) in seen
+    assert ('model-a','Bearer fixture-a',0,'low') in seen and ('model-b','Bearer fixture-b',1,'high') in seen
     req('/v1/chat',{'session':'c','message':'Describe yourself','temperature':0.5})
     end=time.monotonic()+5
-    while ('global-default','Bearer default-fixture',0.5) not in seen:
+    while ('global-default','Bearer default-fixture',0.5,None) not in seen:
+     assert time.monotonic()<end,seen;time.sleep(.02)
+    try:req('/v1/chat',{'session':'c','message':'Invalid effort','reasoning_effort':'unsupported'})
+    except urllib.error.HTTPError as error:assert error.code==400
+    else:raise AssertionError('invalid reasoning effort was accepted')
+    req('/v1/chat',{'session':'d','message':'Describe yourself','reasoning_effort':'medium'})
+    end=time.monotonic()+5
+    while ('global-default','Bearer default-fixture',None,'medium') not in seen:
      assert time.monotonic()<end,seen;time.sleep(.02)
     assert 'fixture-a' not in (state/'journal/tasks.jsonl').read_text(encoding='utf8'),'credentials leaked to journal'
    finally:release.set();p.terminate();p.wait(timeout=5)

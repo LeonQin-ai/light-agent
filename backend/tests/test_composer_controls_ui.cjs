@@ -20,13 +20,13 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('#chat-permission').selectOption('ask');await page.evaluate(()=>loadChat());
   assert.equal(await page.locator('#chat-permission').inputValue(),'ask');
   assert.equal(await page.locator('#chat-thinking-toggle').count(),0);
-  const temperature=page.locator('#chat-temperature-menu summary');
-  await temperature.click();
-  assert.equal(await page.locator('#chat-temperature').isDisabled(),true);
-  await page.locator('#chat-temperature-custom').check();
-  await page.locator('#chat-temperature').fill('0');
-  assert.equal(await page.locator('#chat-temperature-summary').innerText(),'0.00');
-  await temperature.click();
+  const effort=page.locator('#chat-effort-menu summary');
+  await effort.click();
+  assert.equal(await page.locator('#chat-effort').getAttribute('aria-valuetext'),'默认');
+
+  await page.locator('#chat-effort').fill('1');
+  assert.equal(await page.locator('#chat-effort-summary').innerText(),'轻度');
+  await effort.click();
   await page.evaluate(()=>workspaceDialog());await page.locator('#workspace-browse').click();
   await page.waitForFunction(()=>$('workspace-path').value==='D:/项目 folder');
   await page.locator('#workspace-dialog button').filter({hasText:'取消'}).click();
@@ -42,9 +42,9 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.evaluate(()=>flowLiveProgress({id:42,status:'FAILED',flow_nodes:[{id:'step1',agent:'architect',status:'error',model_error:'provider failed'}]}));
   assert.match(await page.locator('#flow-live').innerText(),/provider failed/);
   await page.setViewportSize({width:390,height:844});await page.evaluate(()=>switchPanel('chat'));assert.equal(await page.locator('#chat-permission').isVisible(),true);
-  await temperature.click();
-  const menu=await page.locator('.composer-temperature-panel').boundingBox();
-  assert.ok(menu.x>=0 && menu.x+menu.width<=390 && menu.y>=0,'temperature panel stays on screen');
+  await effort.click();
+  const menu=await page.locator('.composer-effort-panel').boundingBox();
+  assert.ok(menu.x>=0 && menu.x+menu.width<=390 && menu.y>=0,'effort panel stays on screen');
   assert.deepEqual(errors,[]);console.log('PASS: native folder choice, persistent permission control, unavailable microphone entry removal, escaped one-shot approval, live Flow metrics/tools/errors and mobile access');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

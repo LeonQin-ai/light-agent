@@ -304,6 +304,7 @@ struct reasoning {
     int run_file_reads;
     int run_successful_tools;
     double planner_temperature;
+    char planner_effort[8];
     int thinking_mode; /* task-local preference; set by the chat lane */
     int external_history; /* current request already contains canonical transcript */
     int completion_only; /* reserved final review cannot execute more tools */
@@ -2306,7 +2307,7 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
                                  aug ? aug : input, &r->actions, &r->n_actions,
                                  &raw, &plan_err, images,
                                  &r->planner_response_truncated, output_override, &r->planner_native_end_turn, &diagnostic,
-                                 r->completion_review_required,&completion_json,r->planner_temperature);
+                                 r->completion_review_required,&completion_json,r->planner_temperature,r->planner_effort);
     free(images);
     if(rc==0 && r->planner_native_end_turn==3) {
         cJSON *control=cJSON_Parse(completion_json?completion_json:"{}");
@@ -4198,6 +4199,8 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     cJSON *o = r->run_task && r->run_task->llm_config ? cJSON_Parse(r->run_task->llm_config) : NULL;
     cJSON *temperature = cJSON_GetObjectItemCaseSensitive(o, "temperature");
     r->planner_temperature = cJSON_IsNumber(temperature) ? temperature->valuedouble : -1;
+    const char *effort = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"reasoning_effort"));
+    snprintf(r->planner_effort,sizeof(r->planner_effort),"%s",effort ? effort : "");
     if (cJSON_IsString(cJSON_GetObjectItemCaseSensitive(o, "provider"))) {
         picked=llm_create(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"provider")),
             cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"base_url")),cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"api_key")),

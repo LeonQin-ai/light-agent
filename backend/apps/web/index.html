@@ -734,11 +734,13 @@
 .pillbar .pill-ic{grid-column:1;grid-row:2;font-size:26px}
 .composer-policy{grid-column:2;grid-row:2;color:#ed6b20;font-size:13px;white-space:nowrap}
 .pillbar #chat-model{grid-column:3;grid-row:2;justify-self:end;width:min(260px,100%);min-width:0;border:0;background:transparent;font-size:13px;padding:7px}
-.composer-temperature{grid-column:4;grid-row:2;position:relative;color:var(--fg);font-size:13px;white-space:nowrap}
-.composer-temperature summary{cursor:pointer;padding:7px 4px;color:var(--muted)}
-.composer-temperature-panel{position:absolute;right:0;bottom:calc(100% + 8px);z-index:4;width:228px;padding:12px;display:grid;gap:10px;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 6px 24px #0004}
-.composer-temperature-slider{display:flex;align-items:center;gap:8px}
-.composer-temperature-slider input{flex:1;min-width:0}
+.composer-effort{grid-column:4;grid-row:2;position:relative;color:var(--fg);font-size:13px;white-space:nowrap}
+.composer-effort summary{cursor:pointer;padding:7px 4px;color:var(--muted)}
+.composer-effort-panel{position:absolute;right:0;bottom:calc(100% + 8px);z-index:4;width:228px;padding:12px;display:grid;gap:10px;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 6px 24px #0004}
+.composer-effort-slider{display:flex;align-items:center;gap:8px}
+.composer-effort-slider input{flex:1;min-width:0;accent-color:#9d73ef}
+.composer-effort-panel output{text-align:center;color:#9d73ef;font-weight:700}
+.composer-effort-panel small{text-align:center;color:var(--muted)}
 .composer-mic{grid-column:5;grid-row:2;border:0;background:none;color:var(--fg);font-size:23px;padding:5px}
 .pillbar #chat-send,.pillbar #chat-cancel{grid-column:5;grid-row:2;width:42px;height:42px;padding:0!important;border:0;border-radius:50%;background:#8953ef;color:white}
 #chat-resume{grid-column:1/-1;grid-row:3;justify-self:end}
@@ -748,7 +750,7 @@
 .workspace-group .side-recent-row{margin-left:12px}.workspace-group[open]>summary{color:var(--fg)}
 #workspace-dialog{max-width:min(540px,92vw);width:100%;padding:24px;border:1px solid var(--border);border-radius:18px;background:var(--card);color:var(--fg)}
 #workspace-dialog input{width:100%;margin:7px 0 15px}#workspace-dialog::backdrop{background:#0006}
-@media(max-width:640px){.pillbar{grid-template-columns:auto minmax(0,1fr) auto auto!important;gap:4px;padding:12px!important}.composer-policy{display:block;grid-column:1/-1;grid-row:3;max-width:100%;justify-self:start}.pillbar #chat-model{grid-column:2}.composer-temperature{grid-column:3}.composer-temperature-panel{width:210px}
+@media(max-width:640px){.pillbar{grid-template-columns:auto minmax(0,1fr) auto auto!important;gap:4px;padding:12px!important}.composer-policy{display:block;grid-column:1/-1;grid-row:3;max-width:100%;justify-self:start}.pillbar #chat-model{grid-column:2}.composer-effort{grid-column:3}.composer-effort-panel{width:210px}
 .composer-mic,.pillbar #chat-send,.pillbar #chat-cancel{grid-column:4}#chat-workspace{max-width:55vw}}
 .content.chat-content{display:flex;flex-direction:column;min-height:0;overflow-y:hidden}
 .chat-content .chat-wrap{min-height:0;flex:1;overflow:hidden}
@@ -1443,12 +1445,13 @@ panels.chat = `
       <textarea id="chat-input" placeholder="和 light-agent 一起工作" aria-label="消息" rows="1"></textarea>
       <select class="composer-policy" id="chat-permission" aria-label="执行权限" title="本轮任务权限；现有全局策略仍然生效" onchange="chatPermissionChange(this.value)"><option value="ask">逐次批准</option><option value="auto" selected>自动批准低风险</option><option value="full">完全访问</option></select>
       <select id="chat-model" onchange="chatModelSwitch()" title="对话模型（点击切换）" aria-label="对话模型"></select>
-      <details class="composer-temperature" id="chat-temperature-menu">
-        <summary>温度 <span id="chat-temperature-summary">默认</span></summary>
-        <div class="composer-temperature-panel">
-          <label><input type="checkbox" id="chat-temperature-custom" onchange="chatTemperatureChange()"> 自定义模型温度</label>
-          <label class="composer-temperature-slider"><input type="range" id="chat-temperature" min="0" max="1" step="0.05" value="0.2"
-            aria-label="模型温度" oninput="chatTemperatureChange()"> <output id="chat-temperature-value">0.20</output></label>
+      <details class="composer-effort" id="chat-effort-menu">
+        <summary aria-label="推理强度">推理 <span id="chat-effort-summary">默认</span></summary>
+        <div class="composer-effort-panel">
+          <output id="chat-effort-value" for="chat-effort">默认</output>
+          <label class="composer-effort-slider"><input type="range" id="chat-effort" min="0" max="4" step="1" value="0"
+            aria-label="推理强度" aria-valuetext="默认" oninput="chatEffortChange()"></label>
+          <small>由当前模型接口决定支持的档位</small>
         </div>
       </details>
       <button class="sec" id="chat-cancel" onclick="chatCancel()" style="display:none;padding:6px 10px" aria-label="停止执行" title="停止当前任务">■</button>
@@ -3867,24 +3870,27 @@ function chatApproval(t,session){let box=$('chat-approval');if(!box){box=documen
 function chatOptions(session=CHAT_SESSION){try{return JSON.parse(localStorage.getItem('coa.session-options:'+session)||'{}');}catch{return {};}}
 function chatOptionSet(name,value,session=CHAT_SESSION){const o=chatOptions(session);o[name]=value;localStorage.setItem('coa.session-options:'+session,JSON.stringify(o));}
 function chatPermissionChange(value){chatOptionSet('permission',value);}
+const chatEfforts=[['','默认'],['low','轻度'],['medium','中等'],['high','高度'],['xhigh','极高']];
+function syncChatEffort(value){
+  const slider=$('chat-effort');
+  if(!slider)return;
+  const level=Math.max(0,chatEfforts.findIndex(([key])=>key===value));
+  const label=chatEfforts[level][1];
+  slider.value=level;
+  slider.setAttribute('aria-valuetext',label);
+  $('chat-effort-summary').textContent=label;
+  $('chat-effort-value').value=label;
+}
 function syncChatPermission(){
   const settings=chatOptions();
   const permission=$('chat-permission');
   if(permission)permission.value=settings.permission || 'auto';
-  const temperature=$('chat-temperature'),custom=typeof settings.temperature==='number';
-  if(!temperature)return;
-  $('chat-temperature-custom').checked=custom;
-  temperature.disabled=!custom;
-  temperature.value=custom ? settings.temperature : 0.2;
-  $('chat-temperature-value').value=Number(temperature.value).toFixed(2);
-  $('chat-temperature-summary').textContent=temperature.disabled ? '默认' : $('chat-temperature-value').value;
+  syncChatEffort(settings.reasoning_effort);
 }
-function chatTemperatureChange(){
-  const temperature=$('chat-temperature');
-  temperature.disabled=!$('chat-temperature-custom').checked;
-  chatOptionSet('temperature',temperature.disabled ? null : Number(temperature.value));
-  $('chat-temperature-value').value=Number(temperature.value).toFixed(2);
-  $('chat-temperature-summary').textContent=temperature.disabled ? '默认' : $('chat-temperature-value').value;
+function chatEffortChange(){
+  const effort=chatEfforts[Number($('chat-effort').value)][0];
+  chatOptionSet('reasoning_effort',effort);
+  syncChatEffort(effort);
 }
 async function loadChat(){
   initTaskPet();
@@ -6450,7 +6456,7 @@ async function chatSubmit(resume = false){
   const settings=chatOptions(session);
   const permission=$('chat-permission')?.value || settings.permission || 'auto';
   const route=settings.route || undefined;
-  const temperature=settings.temperature ?? undefined;
+  const reasoning_effort=settings.reasoning_effort || undefined;
   const destination=CHAT_MSGS;
   const attachments = resume ? [] : CHAT_ATTACH.slice();
   CHAT_SUBMITTING.add(session); chatBusyUI(true);
@@ -6475,7 +6481,7 @@ async function chatSubmit(resume = false){
   entry.pending = true; entry.progress = {stage:'submitting'};
   CHAT_CACHE[session] = CHAT_SESSION===session?CHAT_MSGS:destination; renderChatEntry(entry);
   const r = await call('POST',resume ? '/v1/chat/sessions/' + encodeURIComponent(session) + '/resume' : '/v1/chat',
-    resume ? {route,temperature,permission_mode:permission} : {message:full,session,route,temperature,workspace:executionWorkspace || undefined,permission_mode:permission,attachments:attachments.map(a=>a.id)});
+    resume ? {route,reasoning_effort,permission_mode:permission} : {message:full,session,route,reasoning_effort,workspace:executionWorkspace || undefined,permission_mode:permission,attachments:attachments.map(a=>a.id)});
   CHAT_SUBMITTING.delete(session);
   if(!Number.isInteger(r.obj?.id)){
     entry.pending = false; entry.progress.stage = 'failed';

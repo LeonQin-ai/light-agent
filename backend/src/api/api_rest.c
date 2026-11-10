@@ -669,10 +669,18 @@ static char *chat_route_snapshot(runtime_ctx *ctx,cJSON *body,int *invalid){
         *invalid = 1;
         return NULL;
     }
+    cJSON *effort_item = cJSON_GetObjectItemCaseSensitive(body, "reasoning_effort");
+    const char *effort = cJSON_GetStringValue(effort_item);
+    if (effort_item && (!effort || (strcmp(effort,"low") && strcmp(effort,"medium") &&
+                                   strcmp(effort,"high") && strcmp(effort,"xhigh")))) {
+        *invalid = 1;
+        return NULL;
+    }
     if (!choice) {
-        if (!temperature) return NULL;
+        if (!temperature && !effort) return NULL;
         cJSON *settings = cJSON_CreateObject();
-        cJSON_AddNumberToObject(settings, "temperature", temperature->valuedouble);
+        if (temperature) cJSON_AddNumberToObject(settings, "temperature", temperature->valuedouble);
+        if (effort) cJSON_AddStringToObject(settings, "reasoning_effort", effort);
         char *snapshot = cJSON_PrintUnformatted(settings);
         cJSON_Delete(settings);
         if (!snapshot) *invalid = 1;
@@ -685,6 +693,7 @@ static char *chat_route_snapshot(runtime_ctx *ctx,cJSON *body,int *invalid){
         cJSON_AddStringToObject(o,"base_url",r->base_url?r->base_url:"");cJSON_AddStringToObject(o,"api_key",r->api_key?r->api_key:"");
         cJSON_AddNumberToObject(o,"context_window",(double)r->context_window_tokens);cJSON_AddNumberToObject(o,"max_output_tokens",(double)r->max_output_tokens);
         if (temperature) cJSON_AddNumberToObject(o, "temperature", temperature->valuedouble);
+        if (effort) cJSON_AddStringToObject(o, "reasoning_effort", effort);
         char *json=cJSON_PrintUnformatted(o);cJSON_Delete(o);if(!json)*invalid=1;return json;
     }
     *invalid=1;return NULL;
@@ -755,7 +764,7 @@ static int h_chat(const http_request *req, http_response *resp, void *ud) {
     if(access){if(!strcmp(access,"ask"))mode=1;else if(!strcmp(access,"auto"))mode=2;
         else if(strcmp(access,"full")){free(directory);free(safe_msg);free(attachments);cJSON_Delete(root);resp->status=400;http_resp_json(resp,"{\"error\":\"invalid permission mode\"}");return 0;}}
     int invalid_route=0;char *model=chat_route_snapshot(ctx,root,&invalid_route);
-    if(invalid_route){free(directory);free(safe_msg);free(attachments);cJSON_Delete(root);resp->status=400;http_resp_json(resp,"{\"error\":\"invalid chat model route or temperature (expected 0 to 1)\"}");return 0;}
+    if(invalid_route){free(directory);free(safe_msg);free(attachments);cJSON_Delete(root);resp->status=400;http_resp_json(resp,"{\"error\":\"invalid chat model route, temperature, or reasoning effort\"}");return 0;}
     cJSON *acceptance_value=cJSON_GetObjectItemCaseSensitive(root,"acceptance");
     char *acceptance=acceptance_value?cJSON_PrintUnformatted(acceptance_value):NULL;
     if(acceptance_value && (!acceptance||reasoning_acceptance_validate(acceptance))){
