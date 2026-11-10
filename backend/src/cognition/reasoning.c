@@ -692,7 +692,10 @@ static void merge_acceptance(reasoning *r,const cJSON *input) {
             cJSON *path;cJSON_ArrayForEach(path,field) {
                 char full[2048];normalized_evidence_path(r,path->valuestring,full,sizeof(full));
                 if(strlen(full)>=sizeof(full)-1){cJSON_Delete(next);r->acceptance_invalid=1;return;}
-                int found=0;cJSON *old;cJSON_ArrayForEach(old,paths)if(!strcmp(old->valuestring,full))found=1;
+                int found=0;cJSON *old;cJSON_ArrayForEach(old,paths) {
+                    char previous[2048];normalized_evidence_path(r,old->valuestring,previous,sizeof(previous));
+                    if(!strcmp(previous,full)){found=1;break;}
+                }
                 if(!found) {
                     cJSON *entry=cJSON_CreateString(full);
                     if(cJSON_GetArraySize(paths)>=64||!entry||!cJSON_AddItemToArray(paths,entry)){cJSON_Delete(entry);cJSON_Delete(next);r->acceptance_invalid=1;return;}
@@ -3645,14 +3648,17 @@ static void compact_history(reasoning *r, size_t n_drop) {
 static int path_requires_full_read(reasoning *r,const char *path) {
     char full[2048];normalized_evidence_path(r,path,full,sizeof(full));
     cJSON *item;
-    cJSON_ArrayForEach(item,cJSON_GetObjectItemCaseSensitive(r->acceptance,"full_reads"))
-        if(cJSON_IsString(item) && !strcmp(full,item->valuestring))return 1;
+    cJSON_ArrayForEach(item,cJSON_GetObjectItemCaseSensitive(r->acceptance,"full_reads")) {
+        char required[2048];normalized_evidence_path(r,item->valuestring,required,sizeof(required));
+        if(!strcmp(full,required))return 1;
+    }
     return 0;
 }
 static int full_read_verified(reasoning *r,const char *path) {
+    char full[2048];normalized_evidence_path(r,path,full,sizeof(full));
     for(int i=0;i<r->completed_reads_n;i++)
-        if(!strcmp(path,r->completed_reads[i].path)) {
-            uint64_t version=fs_file_version(path);
+        if(!strcmp(full,r->completed_reads[i].path)) {
+            uint64_t version=fs_file_version(full);
             return version && version==r->completed_reads[i].version;
         }
     return 0;
@@ -3663,9 +3669,6 @@ static int required_pending_reads(reasoning *r) {
         if(!full_read_verified(r,item->valuestring))pending++;
     return pending;
 }
-/* Fingerprint of an accepted artifact when its obligation was first merged.
- * Later gate checks reuse the stored value; a differing current version
- * proves the run itself changed the file. */
 /* A shell action declared this path in outputs[] and its recorded post-action
  * version equals the file's current version: the declared command produced
  * the current bytes. Explicit declarations only, never command-name guessing. */

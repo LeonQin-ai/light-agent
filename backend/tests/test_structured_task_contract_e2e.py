@@ -67,7 +67,7 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
         producer=action('shell',command='python produce.py',outputs=[filename])
         read_script=action('file_read',path=target)
         if mode=='script_windows_case':
-            acceptance={'artifacts':[target]}
+            acceptance={'artifacts':[target],'full_reads':[target]}
             replies=[producer,read_script,done]
         else:
             replies=[producer,read_script,declare(artifacts=[target]),done]
