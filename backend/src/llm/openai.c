@@ -83,7 +83,8 @@ static char *build_request_body(const llm_request *req, const char *model, int s
             cJSON_AddStringToObject(root,"tool_choice","auto");
         } else cJSON_Delete(tools);
     }
-    cJSON_AddNumberToObject(root, "temperature", req->temperature);
+    if (req->temperature >= 0)
+        cJSON_AddNumberToObject(root, "temperature", req->temperature);
     if (req->max_tokens > 0)
         cJSON_AddNumberToObject(root, "max_tokens", req->max_tokens);
     if (req->reasoning_effort && *req->reasoning_effort)
