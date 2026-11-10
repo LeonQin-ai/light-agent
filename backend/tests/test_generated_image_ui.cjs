@@ -30,11 +30,15 @@ const data='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA
    await page.waitForFunction(()=>imageFixture.el.querySelector('.chat-images img')?.naturalWidth===1);
    assert.equal(await page.evaluate(()=>imageFixture.el.querySelectorAll('.chat-images img').length),1,'deduplicate root/step previews');
    assert.equal(await page.evaluate(()=>imageFixture.el.querySelectorAll('.chat-answer .chat-images img').length),1,'verified image is inside the reply text container, not above the trace');
-   assert.equal(await page.evaluate(()=>imageFixture.el.querySelectorAll('.chat-stage-updates>div').length),2,'stage conclusions remain visible alongside the final answer');
+   assert.equal(await page.evaluate(()=>imageFixture.el.querySelectorAll('.chat-stage-updates>div').length),0,'successful replies hide transient stage conclusions');
    await page.evaluate(()=>{imageFixture.pending=true;imageFixture.progress.stage='planning';renderChatEntry(imageFixture);});
    assert.equal(await page.evaluate(()=>imageFixture.el.querySelectorAll('.chat-stage-updates>div').length),2,'running reply preserves public stage conclusions');
    if(process.env.UI_EVIDENCE_DIR){fs.mkdirSync(process.env.UI_EVIDENCE_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.UI_EVIDENCE_DIR,`issue256-${width}.png`),fullPage:true});}
    await page.evaluate(()=>{imageFixture.pending=false;imageFixture.progress.stage='completed';renderChatEntry(imageFixture);});
+   assert.equal(await page.evaluate(()=>imageFixture.el.querySelectorAll('.chat-stage-updates>div').length),0,'completion clears previously rendered stage conclusions');
+   await page.evaluate(()=>{imageFixture.progress.stage='failed';renderChatEntry(imageFixture);});
+   assert.equal(await page.evaluate(()=>imageFixture.el.querySelectorAll('.chat-stage-updates>div').length),2,'failed replies preserve stage conclusions');
+   await page.evaluate(()=>{imageFixture.progress.stage='completed';renderChatEntry(imageFixture);});
    assert.equal(await page.evaluate(()=>getComputedStyle(imageFixture.el.querySelector('.chat-answer')).maxHeight),'none','long answer must not clip its delivery image');
    await page.waitForFunction(()=>imageFixture.el.querySelector('.chat-image-button img')?.naturalWidth===1);
    await page.evaluate(()=>imageFixture.el.querySelector('.chat-image-button').click());

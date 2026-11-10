@@ -6127,7 +6127,7 @@ static const char web_index_html[] =
     "  }\n"
     "  el.replaceChildren();\n"
     "  const updates=[...(entry.progressEvents||[]),entry.progress||{}].map(p=>p.commentary).filter(Boolean);\n"
-    "  if(updates.length){\n"
+    "  if(updates.length && (entry.pending || entry.progress?.stage!=='completed')){\n"
     "    const log=document.createElement('div');log.className='chat-stage-updates';log.setAttribute('role','log');log.setAttribute('aria-label','阶段性结论');\n"
     "    log.style.cssText='color:var(--muted);font-size:13px;line-height:1.7;border-left:2px solid var(--border);padding:8px 14px;margin-bottom:14px;white-space:pre-wrap';\n"
     "    let previous='';for(const text of updates){if(text===previous)continue;previous=text;const row=document.createElement('div');row.textContent=text;row.style.marginBottom='8px';log.append(row);}\n"
