@@ -40,10 +40,12 @@ codesign --force --options runtime --sign "$IDENTITY" "$APP/Contents/MacOS/light
 codesign --force --options runtime --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP"
 mkdir -p dist
-ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/light-agent-macos-$(uname -m).zip"
+ARCH=$(uname -m)
+if [[ "$ARCH" == x86_64 ]]; then ARCH=x64; fi
+ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/light-agent-macos-$ARCH.zip"
 # Standard macOS Installer package; no shell commands or manual copying required.
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")
-PKG="dist/light-agent-macos-$(uname -m).pkg"
+PKG="dist/light-agent-macos-$ARCH.pkg"
 pkgbuild --component "$APP" --install-location /Applications \
   --identifier org.cognitiveos.desktop --version "$VERSION" "$PKG"
 if [[ -n "${MACOS_INSTALLER_IDENTITY:-}" ]]; then
