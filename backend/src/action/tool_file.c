@@ -249,10 +249,10 @@ static tool_result *read_image(const tool_ctx *ctx,const char *path) {
     if(!before || !bytes)error="file_read: cannot open image bytes; verify the path and access";
     else if(more)error="file_read: image exceeds the 8 MiB preview limit; produce a smaller preview";
     else if(before!=fs_file_version(path))error="file_read: image changed while being read; wait for the writer to finish";
-    else if(!mime)error="file_read: file has no recognized PNG, JPEG or WebP signature; verify its actual format";
-    else if(!strcmp(mime,"image/png") &&
-            (n<45 || memcmp(bytes+8,"\0\0\0\x0d" "IHDR",8) || memcmp(bytes+n-12,"\0\0\0\0" "IEND",8)))
+    else if(n>=8 && !memcmp(bytes,"\x89PNG\r\n\x1a\n",8) &&
+            (!mime || n<45 || memcmp(bytes+8,"\0\0\0\x0d" "IHDR",8) || memcmp(bytes+n-12,"\0\0\0\0" "IEND",8)))
         error="file_read: invalid or incomplete PNG; regenerate and validate its bytes. PNG chunks use big-endian length, type, payload, CRC, starting with IHDR and ending with IEND";
+    else if(!mime)error="file_read: file has no recognized PNG, JPEG or WebP signature; verify its actual format";
     else if(!strcmp(mime,"image/jpeg") && (n<16 || (unsigned char)bytes[n-2]!=255 || (unsigned char)bytes[n-1]!=217))
         error="file_read: incomplete JPEG; regenerate or download the full image before reading";
     else if(!strcmp(mime,"image/webp") && n<20)
