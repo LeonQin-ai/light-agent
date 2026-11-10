@@ -1266,7 +1266,7 @@ static int h_desktop_animation(const http_request *req,http_response *resp,void 
 #ifdef _WIN32
     const char *local=getenv("LOCALAPPDATA");char dir[2048],path[2200];
     if(!local||!*local){resp->status=503;http_resp_json(resp,"{\"error\":\"local app data unavailable\"}");return 0;}
-    path_join(dir,sizeof dir,local,"cognitive-os-agent");path_join(path,sizeof path,dir,"desktop-startup-animation");
+    path_join(dir,sizeof dir,local,"light-agent");path_join(path,sizeof path,dir,"desktop-startup-animation");
     if(!strcmp(req->method,"PUT")){
         char *body=body_str(req);cJSON *root=body?cJSON_Parse(body):NULL;free(body);
         cJSON *enabled=cJSON_GetObjectItemCaseSensitive(root,"enabled");
@@ -1286,6 +1286,10 @@ static int h_desktop_animation(const http_request *req,http_response *resp,void 
         }
         char value=cJSON_IsTrue(enabled)?'1':'0';cJSON_Delete(root);fs_mkdirs(dir);
         if(fs_write_file(path,&value,1)!=0){resp->status=500;http_resp_json(resp,"{\"error\":\"could not save startup preference\"}");return 0;}
+    }
+    if(!fs_exists(path)){
+        path_join(dir,sizeof dir,local,"cognitive-os-agent");
+        path_join(path,sizeof path,dir,"desktop-startup-animation");
     }
     char *value=fs_read_file(path);int enabled=!value||value[0]!='0';free(value);
     http_resp_json(resp,enabled?"{\"available\":true,\"enabled\":true}":"{\"available\":true,\"enabled\":false}");

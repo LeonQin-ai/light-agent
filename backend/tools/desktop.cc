@@ -1285,14 +1285,18 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         bool animate=true;
         wchar_t local[MAX_PATH];
         if(GetEnvironmentVariableW(L"LOCALAPPDATA",local,MAX_PATH)>0){
-            std::wstring setting=std::wstring(local)+L"\\cognitive-os-agent\\desktop-startup-animation";
+            std::wstring setting=std::wstring(local)+L"\\light-agent\\desktop-startup-animation";
+            if(GetFileAttributesW(setting.c_str())==INVALID_FILE_ATTRIBUTES)
+                setting=std::wstring(local)+L"\\cognitive-os-agent\\desktop-startup-animation";
             FILE *file=_wfopen(setting.c_str(),L"rb");
             if(file){int value=fgetc(file);fclose(file);if(value=='0'){
                 animate=false;
                 size_t head=starting.find("</head>");
                 if(head!=std::string::npos)starting.insert(head,"<style>*,*:before,*:after{animation:none!important}</style>");
             }}
-            std::wstring mediaPath=std::wstring(local)+L"\\cognitive-os-agent\\desktop-startup-media";
+            std::wstring mediaPath=std::wstring(local)+L"\\light-agent\\desktop-startup-media";
+            if(GetFileAttributesW(mediaPath.c_str())==INVALID_FILE_ATTRIBUTES)
+                mediaPath=std::wstring(local)+L"\\cognitive-os-agent\\desktop-startup-media";
             FILE *mediaFile=animate?_wfopen(mediaPath.c_str(),L"rb"):nullptr;
             if(mediaFile){
                 std::string media;char chunk[4096];size_t count;

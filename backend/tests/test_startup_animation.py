@@ -21,6 +21,10 @@ with tempfile.TemporaryDirectory() as folder:
  proc=start()
  try:
   assert api()=={'available':True,'enabled':True}
+  legacy=state/'cognitive-os-agent'
+  legacy.mkdir()
+  (legacy/'desktop-startup-animation').write_text('0')
+  assert api()['enabled'] is False
   assert api('PUT',{'enabled':False})['enabled'] is False
   api('PUT',{'enabled':'false'},400)
   assert api()['enabled'] is False
