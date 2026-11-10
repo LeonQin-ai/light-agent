@@ -41,6 +41,19 @@ static char *build_request_body(const llm_request *req, const char *model, int s
     cJSON_AddNumberToObject(root, "max_tokens", req->max_tokens > 0 ? req->max_tokens : 16384);
     if (req->temperature >= 0)
         cJSON_AddNumberToObject(root, "temperature", req->temperature);
+    if (req->reasoning_effort && *req->reasoning_effort && strcmp(req->reasoning_effort,"none")) {
+        const char *effort = req->reasoning_effort;
+        int claude_46 = model && (!strcmp(model,"claude-sonnet-4-6") || !strcmp(model,"claude-opus-4-6"));
+        int adaptive = claude_46 || (model && (!strcmp(model,"claude-opus-4-7") || !strcmp(model,"claude-opus-4-8")));
+        if (claude_46 && !strcmp(effort,"xhigh")) effort = "max";
+        cJSON *output = cJSON_AddObjectToObject(root, "output_config");
+        cJSON_AddStringToObject(output,"effort",effort);
+        if (adaptive) {
+            cJSON *thinking = cJSON_AddObjectToObject(root,"thinking");
+            cJSON_AddStringToObject(thinking,"type","adaptive");
+            cJSON_DeleteItemFromObjectCaseSensitive(root,"temperature");
+        }
+    }
     if (stream)
         cJSON_AddBoolToObject(root, "stream", 1);
 

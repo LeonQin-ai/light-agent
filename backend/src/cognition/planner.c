@@ -843,8 +843,13 @@ static int plan_with(llm *llm, char *sys_prompt, const char *prompt, planned_act
     /* Bound this model's hidden reasoning so it cannot consume the planner's
      * entire output budget before returning a parseable plan. */
     if (effort && *effort) {
-        if (deepseek_v41 && !strcmp(effort,"medium")) effort = "high";
-        else if (deepseek_v41 && !strcmp(effort,"xhigh")) effort = "max";
+        int deepseek = deepseek_v41 || (llm->model &&
+            (!strcmp(llm->model,"deepseek-flash") || !strcmp(llm->model,"deepseek-v4-pro")));
+        int glm = llm->model && llm->base_url && !strncmp(llm->base_url,"https://api.z.ai/",sizeof("https://api.z.ai/")-1) &&
+            (!strcmp(llm->model,"glm-5.2") || !strcmp(llm->model,"glm-5.3") || !strcmp(llm->model,"glm-5.3-flash"));
+        if ((deepseek || glm) && !strcmp(effort,"medium")) effort = "high";
+        else if ((deepseek || glm) && !strcmp(effort,"xhigh")) effort = "max";
+        else if (glm && !strcmp(llm->model,"glm-5.2") && !strcmp(effort,"low")) effort = "high";
         req.reasoning_effort = effort;
         if (temperature < 0) req.temperature = -1;
     } else {
