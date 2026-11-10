@@ -235,12 +235,12 @@ static bool render_task_pet(HWND hwnd) {
     return ok;
 }
 
-static void task_pet_new_chat() {
+static void task_pet_open_main(const wchar_t *message) {
     if (!g_hwnd || !g_web) return;
     if (IsIconic(g_hwnd)) ShowWindow(g_hwnd, SW_RESTORE);
     SetForegroundWindow(g_hwnd);
     if (g_ctrl) g_ctrl->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
-    g_web->PostWebMessageAsString(L"task-pet:new-chat");
+    g_web->PostWebMessageAsString(message);
 }
 
 static LRESULT CALLBACK task_pet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -271,7 +271,7 @@ static LRESULT CALLBACK task_pet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                          0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         if (msg == WM_LBUTTONUP) {
             ReleaseCapture();
-            if (!dragged) task_pet_new_chat();
+            if (!dragged) task_pet_open_main(L"task-pet:recent-task");
         }
         return 0;
     }
@@ -286,7 +286,7 @@ static LRESULT CALLBACK task_pet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             const UINT choice = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY,
                                                point.x, point.y, 0, hwnd, nullptr);
             DestroyMenu(menu);
-            if (choice == 1) task_pet_new_chat();
+            if (choice == 1) task_pet_open_main(L"task-pet:new-chat");
             if (choice == 2) DestroyWindow(hwnd);
         }
         return 0;

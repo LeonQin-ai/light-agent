@@ -1,7 +1,7 @@
 const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 (async()=>{const browser=await chromium.launch({headless:true,channel:process.env.UI_TEST_BROWSER||'msedge'});try{
  const page=await browser.newPage(),sessions=[],sessionRequests=[],submitted=[],errors=[];page.on('pageerror',e=>errors.push(e.message));let globalWrites=0;
- let petTask={id:0,input:'检视代码并发现优化点',status:'RUNNING',stage:'executing',cur_tool:'file_edit',steps:[
+ let petTask={id:0,session_id:'a',input:'检视代码并发现优化点',status:'RUNNING',stage:'executing',cur_tool:'file_edit',steps:[
   {tool:'file_edit',ok:1,target:'example.c'},{tool:'file_edit',ok:1,target:'example.c'},
   {tool:'file_edit',ok:0,target:'unmodified.c'}]};
  await page.addInitScript(()=>{
@@ -60,6 +60,12 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  await page.locator('#chat-effort').fill('3');
  await page.locator('#chat-effort-menu summary').click();
  await pet.click();
+ await page.evaluate(()=>{
+  switchPanel('agents');
+  window.chrome.webview.dispatchEvent(new MessageEvent('message',{data:'task-pet:recent-task'}));
+ });
+ await page.waitForFunction(()=>current==='chat' && CHAT_SESSION==='a');
+ assert.equal(sessionRequests.length,1,'single-click opens the task without creating a chat');
  await page.locator('#chat-composer-toggle').click();
  await page.evaluate(()=>{
   switchPanel('agents');

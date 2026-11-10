@@ -6535,6 +6535,7 @@ let taskPetState = null;
 let taskPetTimer = null;
 let taskPetListenerReady = false;
 let taskPetLastTask = null;
+let taskPetSession = null;
 function taskPetLine(value, limit){
   return [...String(value ?? '').replace(/[\s\u0000-\u001f]+/g,' ').trim()].slice(0,limit).join('');
 }
@@ -6586,6 +6587,7 @@ function initTaskPet(){
       if(taskPetTimer!==timer || taskPetState!=='open')return;
       if(detail.status===200 && detail.obj?.id===id){
         state=taskPetTaskProgress(detail.obj);
+        taskPetSession=detail.obj.session_id || null;
         taskPetLastTask=['RUNNING','QUEUED'].includes(detail.obj.status)?id:null;
       }else if(!busy){
         taskPetLastTask=null;
@@ -6593,7 +6595,19 @@ function initTaskPet(){
     }
     bridge.postMessage('task-pet:status:'+state);
   };
-  bridge.addEventListener('message',({data})=>{
+  bridge.addEventListener('message',async ({data})=>{
+    if(data==='task-pet:recent-task'){
+      if(taskPetState!=='open')return;
+      const result=await call('GET','/v1/chat/sessions',null,2500);
+      if(taskPetState!=='open')return;
+      const sessions=Array.isArray(result.obj)?result.obj:[];
+      const recent=sessions.find(s=>s.id===taskPetSession) ||
+        sessions.filter(s=>s.last_run || s.turns>0).sort((a,b)=>
+          (b.last_active_ms || 0)-(a.last_active_ms || 0))[0];
+      if(recent?.id)await chatSwitchSession(recent.id);
+      else switchPanel('trace');
+      return;
+    }
     if(data==='task-pet:new-chat'){
       if(taskPetState!=='open')return;
       $('nav-newchat')?.click();
