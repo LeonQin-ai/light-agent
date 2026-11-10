@@ -244,13 +244,20 @@ static tool_result *read_image(const tool_ctx *ctx,const char *path) {
         tool_result *result=tool_result_new(1,cached);free(cached);return result;
     }
     char *bytes=fs_read_file_slice(path,0,8*1024*1024,&n,&more);
+    const char *error=NULL;
     const char *mime=bytes?tool_file_image_mime((unsigned char *)bytes,n):NULL;
-    int complete=mime && ((!strcmp(mime,"image/png") && n>=33 && !memcmp(bytes+n-8,"IEND",4)) ||
-        (!strcmp(mime,"image/jpeg") && n>=16 && (unsigned char)bytes[n-2]==255 && (unsigned char)bytes[n-1]==217) ||
-        (!strcmp(mime,"image/webp") && n>=20));
-    if(!complete || more || !before || before!=fs_file_version(path)) {
-        free(bytes);return tool_result_new(0,"file_read: image is unavailable, changed during read, or exceeds the 8 MiB preview limit; create a smaller PNG/JPEG/WebP preview");
-    }
+    if(!before || !bytes)error="file_read: cannot open image bytes; verify the path and access";
+    else if(more)error="file_read: image exceeds the 8 MiB preview limit; produce a smaller preview";
+    else if(before!=fs_file_version(path))error="file_read: image changed while being read; wait for the writer to finish";
+    else if(!mime)error="file_read: file has no recognized PNG, JPEG or WebP signature; verify its actual format";
+    else if(!strcmp(mime,"image/png") &&
+            (n<45 || memcmp(bytes+8,"\0\0\0\x0d" "IHDR",8) || memcmp(bytes+n-12,"\0\0\0\0" "IEND",8)))
+        error="file_read: invalid or incomplete PNG; regenerate and validate its bytes. PNG chunks use big-endian length, type, payload, CRC, starting with IHDR and ending with IEND";
+    else if(!strcmp(mime,"image/jpeg") && (n<16 || (unsigned char)bytes[n-2]!=255 || (unsigned char)bytes[n-1]!=217))
+        error="file_read: incomplete JPEG; regenerate or download the full image before reading";
+    else if(!strcmp(mime,"image/webp") && n<20)
+        error="file_read: incomplete WebP; regenerate or download the full image before reading";
+    if(error){free(bytes);return tool_result_new(0,error);}
     const char *name=strrchr(path,'/'),*back=strrchr(path,'\\');
     if(back && (!name || back>name))name=back;
     name=name?name+1:path;
