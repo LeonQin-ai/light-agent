@@ -124,6 +124,8 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
         def do_POST(self):
             nonlocal calls
             request=self.rfile.read(int(self.headers['Content-Length']))
+            if mode=='script_late_contract' and calls==3:
+                assert b'Previous completion was rejected:' not in request
             if mode=='artifact_recovery' and calls==2:
                 assert b'Previous completion was rejected:' in request and b'report.any' in request
             if mode.startswith('cycle_') and b'Cycle completion review:' in request:

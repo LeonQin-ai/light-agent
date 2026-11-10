@@ -2208,7 +2208,7 @@ static char *build_context(reasoning *r, const char *prompt) {
     }
     if(r->acceptance){char *contract=cJSON_PrintUnformatted(r->acceptance);strbuf_append(&b,"## Runtime acceptance contract\n");strbuf_append(&b,contract?contract:"{}");strbuf_append(&b,"\n");free(contract);
         if(cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(r->acceptance,"artifacts")))
-            strbuf_append(&b,"For each artifact, produce the requested file in this run and read it back after the last write. This also applies to resumed tasks. A read of a previous run's file is not production. If reusing verified content, explicitly deliver it with file_write and then file_read.\n");
+            strbuf_append(&b,"For each artifact, produce the requested file in this run and read it back after the last write. A successful shell producer with the path in outputs[] is a valid write receipt if it changed the file. If this run already produced the file, proceed directly to file_read; do not rerun the producer for reassurance. A read of a previous run's file alone is not production.\n");
         if(r->file_checks_failed && r->file_check_error[0])
             strbuf_appendf(&b,"Previous completion was rejected: %s Correct the missing evidence with tools before completing again.\n",r->file_check_error);
     }
@@ -2391,7 +2391,7 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
     trace_end(r->trace, llm_span, rc == 0 && raw ? 1 : -1);
     r->prog_llm_ms += time_now_ms() - t_llm0;
     r->prog_llm_calls++;
-    if(rc==0 && completion_json)verify_completion_files(r,completion_json);
+    if(rc==0 && completion_json && r->planner_native_end_turn==1)verify_completion_files(r,completion_json);
     free(completion_json);
     if(rc==0)snprintf(r->public_commentary,sizeof(r->public_commentary),"%s",diagnostic.commentary);
     if (rc == 0 && raw)
