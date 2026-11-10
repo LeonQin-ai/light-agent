@@ -2862,7 +2862,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
     }
 
     if(r->completion_only){
-        strbuf_append(&b,"Planning budget exhausted: final completion review requested additional tools; no actions executed.");
+        strbuf_append(&b,"Final completion review requested additional tools; no actions executed.");
         *out=strbuf_detach(&b);return -1;
     }
 
@@ -4663,6 +4663,31 @@ restart_planning:
             }
             stalled = 1;
             break;
+        }
+    }
+
+    /* Stop repeated tool execution, but give the model one structured
+     * review of the work already observed. A cycle is a reason to stop
+     * calling tools; only a validated completion may make the run DONE. */
+    if (cycle_aborted && planner_uses_native_tools(r->llm) &&
+        r->run_successful_tools > 0 && !run_aborted(r) && !task_has_messages(r->run_task) &&
+        !r->unresolved_failed_tool_count && !r->unresolved_failed_tools_overflow) {
+        completion_grace = 1; /* suppress a second, unstructured request */
+        r->completion_only = 1;
+        round_log_append(r, "[system] Cycle completion review: repeated checks were stopped. "
+                         "Compare the original request and all its acceptance requirements with actual observations. "
+                         "If all required work is delivered, call complete_task with the full answer. "
+                         "If evidence is missing, call complete_task with status blocked and identify what remains. "
+                         "No further tools can execute in this review.");
+        free(result);
+        result = NULL;
+        st = state_machine_run(r->sm, prompt, &result);
+        usage_book_round(r);
+        if (st == ST_DONE && !r->had_plan && r->planner_native_end_turn == 1 &&
+            !r->planner_response_truncated && !r->file_checks_failed &&
+            !r->acceptance_invalid && !required_pending_reads(r) && result && *result) {
+            final_text = xstrdup(result);
+            if (final_text) stalled = 0;
         }
     }
 

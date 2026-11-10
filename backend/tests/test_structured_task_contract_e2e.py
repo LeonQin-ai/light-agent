@@ -106,6 +106,11 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
             change=action('shell',command='git branch review-proof') if name=='branch' else action('git',args='tag review-proof')
             probe=action('glob',path='.git',pattern='**/review-proof')
         replies=[probe,change,probe,done];expected='DONE'
+    elif mode in ('cycle_complete','cycle_missing'):
+        replies=[action('file_read',path='tiny'),action('file_read',path='long.dat',max_bytes=16)]
+        replies*=9
+        if mode=='cycle_missing':acceptance={'artifacts':['missing.txt']}
+        expected='DONE' if mode=='cycle_complete' else 'FAILED'
     elif mode=='observation':acceptance={'requires_observation':True};replies=[done];expected='FAILED'
     elif mode=='mutation':acceptance={'requires_action':True};replies=[action('file_read',path='tiny'),done];expected='FAILED'
     elif mode=='failed_tool':replies=[action('file_read',path='missing'),done];expected='FAILED'
@@ -117,7 +122,11 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
             request=self.rfile.read(int(self.headers['Content-Length']))
             if mode=='artifact_recovery' and calls==2:
                 assert b'Previous completion was rejected:' in request and b'report.any' in request
-            reply=replies[min(calls,len(replies)-1)];calls+=1
+            if mode.startswith('cycle_') and b'Cycle completion review:' in request:
+                assert b'TINY_SOURCE_PROOF' in request
+                reply=done
+            else:reply=replies[min(calls,len(replies)-1)]
+            calls+=1
             actions=reply if isinstance(reply,list) else [reply]
             message={'content':reply if isinstance(reply,str) else json.dumps(actions,ensure_ascii=False)}
             if protocol=='native' and not isinstance(reply,str):
@@ -167,7 +176,7 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
                         if task['status'] not in ('RUNNING','QUEUED'):break
                         assert time.monotonic()<deadline,task;time.sleep(.02)
                     assert task['status']==expected,(protocol,mode,task)
-                    assert calls<=(20 if mode.startswith('rollover') else 16 if mode=='baseline_capacity' else 12 if mode=='batch50' else 10),(mode,calls,task)
+                    assert calls<=(20 if mode.startswith('rollover') else 16 if mode=='baseline_capacity' else 12 if mode in ('batch50','cycle_complete','cycle_missing') else 10),(mode,calls,task)
                     if expected=='DONE':
                         assert task['output']==FINAL,task
                         if mode in ('artifact','artifact_recovery'):assert (work/'report.any').read_text()==CONTENT
@@ -214,6 +223,8 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
 if __name__=='__main__':
     exercise('native','image_history')
     exercise('native','script_late_contract')
+    exercise('native','cycle_complete')
+    exercise('native','cycle_missing')
     if os.name=='nt':exercise('native','script_windows_case')
     for protocol in ('native','legacy'):exercise(protocol,'artifact_recovery')
     for protocol in ('native','legacy'):
