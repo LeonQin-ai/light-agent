@@ -72,6 +72,10 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
         else:
             replies=[producer,read_script,declare(artifacts=[target]),done]
         expected='DONE'
+    elif mode in ('script_verified_edit','script_unverified_edit'):
+        replacement=CONTENT if mode=='script_verified_edit' else 'NOT_PRESENT'
+        replies=[write,action('file_edit',path='report.any',old_string='ABSENT',new_string=replacement),read,done]
+        expected='DONE' if mode=='script_verified_edit' else 'FAILED'
     elif mode=='script_unchanged':
         # Declaring outputs on a read-only command must not fake a write: the
         # file never changed after the obligation was merged, so the gate holds.
@@ -223,6 +227,8 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
 if __name__=='__main__':
     exercise('native','image_history')
     exercise('native','script_late_contract')
+    exercise('native','script_verified_edit')
+    exercise('native','script_unverified_edit')
     exercise('native','cycle_complete')
     exercise('native','cycle_missing')
     if os.name=='nt':exercise('native','script_windows_case')

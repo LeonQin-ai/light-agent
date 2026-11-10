@@ -549,6 +549,29 @@ static int same_nested_workspace_path(reasoning *r,const char *failed,const char
     return strchr(relative,'/') && len>n+1+suffix && actual[len-suffix-1]=='/' && !strcmp(actual+len-suffix,relative);
 }
 
+static int run_has_verified_artifact(reasoning *r,const char *path);
+
+static int verified_edit_replacement(reasoning *r,int slot,const char *path) {
+    if (!strstr(r->unresolved_failure_errors[slot],"file_edit: old_string not found")) return 0;
+    long long size=fs_file_size(path);
+    if (size<=0 || size>1024*1024 || !run_has_verified_artifact(r,path)) return 0;
+    cJSON *args=cJSON_Parse(r->unresolved_failure_args[slot]);
+    const char *old=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"old_string"));
+    const char *replacement=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"new_string"));
+    int proved=0;
+    if (old && *old && replacement && *replacement) {
+        uint64_t version=fs_file_version(path);
+        size_t bytes=0;int more=0;
+        char *content=fs_read_file_slice(path,0,(size_t)size,&bytes,&more);
+        proved=content && !more && bytes==(size_t)size && strlen(content)==bytes &&
+            strstr(content,replacement) && !strstr(content,old) &&
+            version && version==fs_file_version(path);
+        free(content);
+    }
+    cJSON_Delete(args);
+    return proved;
+}
+
 static void resolve_failed_tool(reasoning *r, const char *tool_name, const char *args_json) {
     if (!r || !tool_name || !*tool_name) return;
     char scope[2048]; failure_scope(r, tool_name, args_json, scope, sizeof(scope));
@@ -583,7 +606,9 @@ static void resolve_failed_tool(reasoning *r, const char *tool_name, const char 
             strlen(scope)==(size_t)(slash-failed_scope) &&
             !strncmp(scope,failed_scope,(size_t)(slash-failed_scope)) &&
             !fs_exists(failed_scope);
-        if (retry || replacement || relocated_read || header_relocated || directory_relocated || absent_directory_verified) {
+        int already_edited = !strcmp(tool_name,"file_read") && !strcmp(r->unresolved_failed_tools[i],"file_edit") &&
+            !strcmp(failed_scope,scope) && verified_edit_replacement(r,i,scope);
+        if (retry || replacement || relocated_read || header_relocated || directory_relocated || absent_directory_verified || already_edited) {
             --r->unresolved_failed_tool_count;
             if (i < r->unresolved_failed_tool_count) {
                 memmove(r->unresolved_failed_tools[i], r->unresolved_failed_tools[i + 1],
@@ -627,7 +652,6 @@ static int completion_file_read_allowed(reasoning *r,const char *path){
     return 0;
 }
 static int full_read_verified(reasoning *r,const char *path);
-static int run_has_verified_artifact(reasoning *r,const char *path);
 int reasoning_acceptance_validate(const char *json) {
     cJSON *o=cJSON_ParseWithOpts(json?json:"{}",NULL,1);int valid=cJSON_IsObject(o);cJSON *field;
     if(!valid){cJSON_Delete(o);return -1;}
@@ -1912,7 +1936,6 @@ static char *str_head(const char *s, size_t cap) {
  * Caller frees the returned string. */
 static int path_requires_full_read(reasoning *r, const char *path);
 static int full_read_verified(reasoning *r,const char *path);
-static int run_has_verified_artifact(reasoning *r,const char *path);
 static int required_pending_reads(reasoning *r);
 
 static char *build_context(reasoning *r, const char *prompt) {
