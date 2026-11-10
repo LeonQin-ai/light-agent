@@ -55,7 +55,7 @@ with tempfile.TemporaryDirectory(prefix='coa-capabilities-') as tmp:
    x=route('unknown');assert x['context_window']==262144 and x['context_source']=='fallback',x
    api('/v1/routes',{'name':'nim','provider':'openai','base_url':'https://integrate.api.nvidia.com/v1','model':'z-ai/glm-5.3-flash'})
    assert route('nim')['context_window']==1048576 and route('nim')['context_source']=='catalog'
-   for name,provider,base_url,model,window,output in [
+   for name,protocol,base_url,model,window,output in [
       ('ds','openai','https://api.deepseek.com/','deepseek-flash',1048576,393216),
       ('ds-anthropic','anthropic','https://api.deepseek.com/anthropic','deepseek-flash',1048576,393216),
       ('glm52','openai','https://api.z.ai/api/paas/v4','glm-5.2',1000000,128000),
@@ -64,7 +64,7 @@ with tempfile.TemporaryDirectory(prefix='coa-capabilities-') as tmp:
       ('glm-alias','openai','https://api.z.ai/api/coding/paas/v4','unverified-glm-5.3',262144,0),
       ('ds-proxy','openai','https://api.deepseek.com.example.org/v1','deepseek-flash',262144,0),
    ]:
-    api('/v1/routes',{'name':name,'provider':provider,'model':model,'base_url':base_url})
+    api('/v1/routes',{'name':name,'provider':protocol,'model':model,'base_url':base_url})
     x=route(name)
     assert x['context_window']==window and x.get('max_output_tokens',0)==output,x
     assert x['context_source']==('catalog' if output else 'fallback'),x
