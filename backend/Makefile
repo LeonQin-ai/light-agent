@@ -1,4 +1,4 @@
-# cognitive-os-agent Makefile — used on Linux (gcc) and optionally on Windows with make+gcc.
+# light-agent Makefile — used on Linux (gcc) and optionally on Windows with make+gcc.
 # Also works with the bundled zig via:  make CC="tools/zig/zig cc"
 CC      ?= cc
 CFLAGS  ?= -std=c11 -Wall -Wextra -O1 -g -Iinclude -Ithird_party/cJSON -Ithird_party/wasm3
@@ -30,17 +30,17 @@ include/api/web_ui.h: apps/web/index.html tools/gen_web_ui.py
 $(SRCS): | include/api/web_ui.h
 .DEFAULT_GOAL := all
 
-all: build/cognitive-os-agent build/cognitive-os-agent-test build/cognitive-os-agent-scenario build/mock-llm-server build/test-adapters build/cognitive-os-agent-e2e build/cognitive-os-agent-bench build/bench-runtime
+all: build/light-agent build/light-agent-test build/light-agent-scenario build/mock-llm-server build/test-adapters build/light-agent-e2e build/light-agent-bench build/bench-runtime
 
-build/cognitive-os-agent: $(SRCS) cli/main.c cli/client.h src/terminal_screen.h src/llm/native_preview.h
+build/light-agent: $(SRCS) cli/main.c cli/client.h src/terminal_screen.h src/llm/native_preview.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $(SRCS) cli/main.c $(LDLIBS)
 
-build/cognitive-os-agent-test: $(SRCS) tests/test_all.c
+build/light-agent-test: $(SRCS) tests/test_all.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $(SRCS) tests/test_all.c $(LDLIBS)
 
-build/cognitive-os-agent-test-plan-cycle: $(SRCS) tests/test_plan_cycle.c
+build/light-agent-test-plan-cycle: $(SRCS) tests/test_plan_cycle.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $(SRCS) tests/test_plan_cycle.c $(LDLIBS)
 
@@ -52,30 +52,30 @@ build/test-adapters: $(SRCS) tests/test_adapters.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $(SRCS) tests/test_adapters.c $(LDLIBS)
 
-build/cognitive-os-agent-e2e: $(SRCS) tests/test_e2e.c
+build/light-agent-e2e: $(SRCS) tests/test_e2e.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $(SRCS) tests/test_e2e.c $(LDLIBS)
 
-build/cognitive-os-agent-bench: $(SRCS) tests/bench_agent.c
+build/light-agent-bench: $(SRCS) tests/bench_agent.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $(SRCS) tests/bench_agent.c $(LDLIBS)
 
-build/cognitive-os-agent-bench-real: $(SRCS) tests/bench_real.c
+build/light-agent-bench-real: $(SRCS) tests/bench_real.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $(SRCS) tests/bench_real.c $(LDLIBS)
 
-build/cognitive-os-agent-scenario: $(SRCS) tests/test_scenario.c
+build/light-agent-scenario: $(SRCS) tests/test_scenario.c
 	@mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $(SRCS) tests/test_scenario.c $(LDLIBS)
 
-test: build/cognitive-os-agent-test
-	./build/cognitive-os-agent-test
+test: build/light-agent-test
+	./build/light-agent-test
 
-scenario: build/cognitive-os-agent-scenario
-	./build/cognitive-os-agent-scenario
+scenario: build/light-agent-scenario
+	./build/light-agent-scenario
 
-bench: build/cognitive-os-agent-bench
-	./build/cognitive-os-agent-bench --mock
+bench: build/light-agent-bench
+	./build/light-agent-bench --mock
 
 clean:
 	rm -rf build
@@ -91,7 +91,7 @@ include/api/attachment_extractor.h: tools/attachment_extract.py tools/gen_attach
 
 $(SRCS): | include/api/attachment_extractor.h
 
-build/cognitive-os-agent build/cognitive-os-agent-test build/cognitive-os-agent-scenario build/mock-llm-server build/test-adapters build/cognitive-os-agent-e2e build/cognitive-os-agent-bench build/test-review: include/api/attachment_extractor.h
+build/light-agent build/light-agent-test build/light-agent-scenario build/mock-llm-server build/test-adapters build/light-agent-e2e build/light-agent-bench build/test-review: include/api/attachment_extractor.h
 
 build/bench-runtime: $(SRCS) tests/bench_runtime.c include/api/attachment_extractor.h
 	@mkdir -p build

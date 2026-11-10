@@ -8,7 +8,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from fixture_http_response import respond_json
 root=Path(__file__).resolve().parents[1];build=root/os.environ.get('COA_BUILD_DIR','build')
-binary=build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+binary=build/('light-agent.exe' if os.name=='nt' else 'light-agent')
 INTRO='我已经收集了足够的架构信息。现在读取保存的 web 包目录列表以补全最后的模块结构，然后撰写架构分析文档。'
 NARRATION='我需要阅读尚未完全审查的关键实现文件。让我批量读取基础设施层（文件 I/O 和并发安全最关键）、治理应用服务和上下文压缩服务的核心实现。'
 ARCH='架构分析：ARCH_LAYER_BOUNDARY_PROOF 验证 domain 定义接口，application 组织用例，infrastructure 实现文件存储与互斥锁。'
@@ -98,7 +98,7 @@ def exercise(mode,protocol):
      respond_json(self,raw)
     except Exception as error:errors.append(repr(error));raise
   provider=ThreadingHTTPServer(('127.0.0.1',0),Provider);threading.Thread(target=provider.serve_forever,daemon=True).start()
-  (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'flow-review-fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{provider.server_port}','reasoning.max_rounds':40}),encoding='utf-8')
+  (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'flow-review-fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{provider.server_port}','reasoning.max_rounds':40}),encoding='utf-8')
   with socket.socket() as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
   def api(path,body=None):
    req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})

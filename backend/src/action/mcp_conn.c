@@ -27,7 +27,7 @@
 /* npx may download the server on first run — measured ~30s cold on a
  * npmmirror connection, so allow 90s before declaring the handshake dead. */
 #define MCP_STDIO_TIMEOUT_MS 90000
-#define MCP_CLIENT_NAME "cognitive-os-agent"
+#define MCP_CLIENT_NAME "light-agent"
 #define MCP_CLIENT_VERSION "0.1"
 
 /* Per-connection runtime state. */

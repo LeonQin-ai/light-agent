@@ -12,7 +12,7 @@
 #include "os/os_fs.h"
 #include "infra/util.h"
 #include "infra/logging.h"
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +22,7 @@
 
 #define PLUGIN_VERSION "1.0.0"
 
-static const char *ARCH_PROMPT = "You are the plugin architect of a cognitive OS. Given a capability "
+static const char *ARCH_PROMPT = "You are the plugin architect of a light-agent. Given a capability "
                                  "request, design a standalone POSIX shell script that implements it.\n"
                                  "Respond with ONLY valid JSON (no markdown, no prose):\n"
                                  "{\"name\":\"short-kebab-case-name\",\"description\":\"one-line summary\","

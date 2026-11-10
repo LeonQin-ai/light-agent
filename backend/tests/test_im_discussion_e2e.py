@@ -19,7 +19,7 @@ import urllib.request
 
 BACKEND = Path(__file__).resolve().parents[1]
 BINARY = (BACKEND / os.environ.get('COA_BUILD_DIR', 'build') /
-          ('cognitive-os-agent.exe' if os.name == 'nt' else 'cognitive-os-agent')).resolve()
+          ('light-agent.exe' if os.name == 'nt' else 'light-agent')).resolve()
 TERMINAL = ('DONE', 'FAILED', 'CANCELLED', 'TIMEOUT')
 DONE = '[[DISCUSSION_DONE]]'
 PROTOCOL=os.environ.get('COA_IM_TEST_PROTOCOL','legacy')
@@ -152,7 +152,7 @@ def main():
             (state / 'im/sessions.json').write_text(json.dumps({'next_id': 2, 'sessions': [
                 {'id': 1, 'name': 'legacy', 'kind': 'group', 'members': ['alpha', 'beta'],
                  'messages': []}]}), encoding='utf-8')
-            (state / 'cognitive-os-agent.json').write_text(json.dumps({
+            (state / 'light-agent.json').write_text(json.dumps({
                 'llm.provider': 'openai', 'llm.model': 'discussion-local-fixture',
                 'llm.api_key': 'local-test-only', 'reasoning.max_rounds': 2,
                 'llm.base_url': f'http://127.0.0.1:{provider.server_port}',

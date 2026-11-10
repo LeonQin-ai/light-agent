@@ -1,4 +1,4 @@
-/* cognitive-os-agent.h — Cognitive OS Runtime umbrella header.
+/* light-agent.h — light-agent Runtime umbrella header.
  *
  * Top-level public API. Include this single header from application code.
  * Exposes the runtime context (runtime_ctx) that assembles all layers:
@@ -138,7 +138,7 @@ typedef struct runtime_ctx {
 typedef struct config {
     const char *state_root; /* NULL = "state" */
     const char *workspace;  /* NULL = "." */
-    const char *config_file; /* NULL = <state_root>/cognitive-os-agent.json */
+    const char *config_file; /* NULL = <state_root>/light-agent.json */
     const char *provider;   /* "mock" | "openai" | "anthropic" */
     const char *model;
     const char *base_url;
@@ -189,7 +189,7 @@ char *flow_scope_task(runtime_ctx *ctx, const char *task, const char *agents_jso
 
 /* Switch the active LLM at runtime (provider/base_url/model/api_key). Rebuilds
  * the LLM adapter, swaps it into the reasoning engine under the run-lock, keeps
- * the route table in sync, and persists llm.* to <state_root>/cognitive-os-agent.json so it
+ * the route table in sync, and persists llm.* to <state_root>/light-agent.json so it
  * survives restart. Returns 0 ok, -1 if the provider is invalid. */
 int set_llm(runtime_ctx *ctx, const char *provider, const char *base_url, const char *model, const char *api_key);
 

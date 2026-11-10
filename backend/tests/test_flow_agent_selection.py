@@ -19,7 +19,7 @@ threading.Thread(target=server.serve_forever,daemon=True).start()
 try:
  with tempfile.TemporaryDirectory() as folder:
     state=Path(folder)
-    (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}'}))
+    (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}'}))
     with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     def api(path,body=None,status=200):
         request=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
@@ -28,7 +28,7 @@ try:
         assert response.status==status,(response.status,response.read())
         return json.load(response)
     with (build/'flow-agent-selection.log').open('w') as log:
-     proc=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=root,stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+     proc=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=root,stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
      try:
         for _ in range(100):
             try:api('/v1/scheduler');break

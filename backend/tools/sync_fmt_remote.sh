@@ -1,8 +1,8 @@
 #!/bin/bash
 # Sync formatted src/include to the Linux build server and verify.
-# cli/ is required by the Makefile's cognitive-os-agent rule (client.h/main.c).
+# cli/ is required by the Makefile's light-agent rule (client.h/main.c).
 set -e
-cd /d/AI/code/cognitive-os/backend
+cd /d/AI/code/light-agent/backend
 # third_party (cJSON/wasm3 sources, -I paths) and apps/web/index.html
 # (web_ui.h generation rule) are both required by the Makefile.
 tar czf /d/tmp/fmt.tgz src include tools tests cli Makefile third_party apps

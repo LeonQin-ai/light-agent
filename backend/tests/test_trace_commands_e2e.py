@@ -17,13 +17,13 @@ class Provider(BaseHTTPRequestHandler):
   raw=json.dumps(response).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
 with tempfile.TemporaryDirectory(prefix='coa-trace-commands-',ignore_cleanup_errors=True) as folder:
  state=Path(folder);(state/'marker.txt').write_text('TRACE_TOOL_PROOF',encoding='utf8');server=ThreadingHTTPServer(('127.0.0.1',0),Provider);threading.Thread(target=server.serve_forever,daemon=True).start()
- (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'trace-fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','llm.api_key':'fixture','reasoning.max_rounds':12}),encoding='utf-8')
+ (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'trace-fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','llm.api_key':'fixture','reasoning.max_rounds':12}),encoding='utf-8')
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  def request(path,body=None):
   req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
   with urllib.request.urlopen(req,timeout=5) as response:return json.load(response)
  def start(log):
-  p=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=backend,stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+  p=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=backend,stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
   for _ in range(100):
    try:request('/v1/scheduler');return p
    except OSError:

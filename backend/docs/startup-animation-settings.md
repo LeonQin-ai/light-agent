@@ -7,7 +7,7 @@ handling; it does not delay readiness or disable the system reduced-motion rule.
 
 Authenticated GET/PUT `/v1/desktop/startup-animation` reads/writes a strict
 boolean `enabled`. Persistence is per Windows user, in
-`%LOCALAPPDATA%/cognitive-os-agent/desktop-startup-animation`, so the desktop shell
+`%LOCALAPPDATA%/light-agent/desktop-startup-animation`, so the desktop shell
 can read it before the backend has started. Unsupported platforms report
 `available:false` and reject writes. Browser wallpaper settings are independent.
 

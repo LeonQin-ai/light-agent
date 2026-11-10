@@ -11,14 +11,14 @@ import urllib.request
 from pathlib import Path
 
 backend = Path(__file__).resolve().parents[1]
-binary = backend / 'build' / 'cognitive-os-agent.exe'
+binary = backend / 'build' / 'light-agent.exe'
 png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1sAAAAASUVORK5CYII=')
 with socket.socket() as sock:
     sock.bind(('127.0.0.1', 0))
     port = sock.getsockname()[1]
 with tempfile.TemporaryDirectory(prefix='image-preview-test-', dir=backend / 'build') as directory:
     state = Path(directory)
-    (state / 'cognitive-os-agent.json').write_text('{"llm.provider":"mock"}', encoding='utf-8')
+    (state / 'light-agent.json').write_text('{"llm.provider":"mock"}', encoding='utf-8')
     process = subprocess.Popen([str(binary), '--state', str(state), '--workspace', str(backend), 'serve', str(port)], cwd=backend, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     def request(path, method='GET', data=None):
         req = urllib.request.Request(f'http://127.0.0.1:{port}' + path, method=method, data=data)

@@ -4,7 +4,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 root=Path(__file__).resolve().parents[1]
 build=root/os.environ.get('COA_BUILD_DIR','build')
-binary=build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+binary=build/('light-agent.exe' if os.name=='nt' else 'light-agent')
 ANSWER='\n'.join(f'源代码观察 {i}: result_{i*i+7}' for i in range(3500))+'\nANSWER_END'
 class Provider(BaseHTTPRequestHandler):
     calls=0; mode=''; workspace=None
@@ -30,7 +30,7 @@ try:
         Provider.calls=0;Provider.mode=mode
         with tempfile.TemporaryDirectory(prefix='coa-negative-read-') as directory:
             work=Path(directory);Provider.workspace=work;(work/'other').mkdir()
-            state=work/'state';state.mkdir();(state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.base_url':f'http://127.0.0.1:{provider.server_port}','llm.api_key':'fixture','reasoning.max_rounds':10}),encoding='utf-8')
+            state=work/'state';state.mkdir();(state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.base_url':f'http://127.0.0.1:{provider.server_port}','llm.api_key':'fixture','reasoning.max_rounds':10}),encoding='utf-8')
             def port():
                 with socket.socket() as s:s.bind(('127.0.0.1',0));return s.getsockname()[1]
             current=port()

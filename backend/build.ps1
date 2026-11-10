@@ -34,11 +34,11 @@ try {
     } | ForEach-Object { $_.FullName })
     $sourceFiles += @('third_party/cJSON/cJSON.c','third_party/wasm3/wasm3_all.c')
     $targets = [ordered]@{
-        cli=@('cognitive-os-agent','cli/main.c'); test=@('cognitive-os-agent-test','tests/test_all.c')
-        scenario=@('cognitive-os-agent-scenario','tests/test_scenario.c'); mock=@('mock-llm-server','tools/mock_llm_server.c')
-        adapters=@('test-adapters','tests/test_adapters.c'); e2e=@('cognitive-os-agent-e2e','tests/test_e2e.c')
+        cli=@('light-agent','cli/main.c'); test=@('light-agent-test','tests/test_all.c')
+        scenario=@('light-agent-scenario','tests/test_scenario.c'); mock=@('mock-llm-server','tools/mock_llm_server.c')
+        adapters=@('test-adapters','tests/test_adapters.c'); e2e=@('light-agent-e2e','tests/test_e2e.c')
         review=@('test-review','tests/test_review.c')
-        bench=@('cognitive-os-agent-bench','tests/bench_agent.c')
+        bench=@('light-agent-bench','tests/bench_agent.c')
         'runtime-bench'=@('bench-runtime','tests/bench_runtime.c')
     }
     foreach ($name in $targets.Keys) {

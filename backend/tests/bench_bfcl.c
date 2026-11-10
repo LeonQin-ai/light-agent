@@ -1,6 +1,6 @@
 /* bench_bfcl.c — BFCL-style + Tau-bench-style function-calling evaluation.
  *
- * Categories (mapping the BFCL leaderboards onto cognitive-os-agent's tool catalog):
+ * Categories (mapping the BFCL leaderboards onto light-agent's tool catalog):
  *   simple       exactly one correct call, exact (tool, args) AST match
  *   multiple     tool SELECTION among distractors (git vs shell vs mcp vs file)
  *   parallel     several independent calls; multiset match, order-insensitive
@@ -24,7 +24,7 @@
  *   --mock  offline deterministic planner (expected to score low — sanity
  *           check that the harness actually detects wrong behavior)
  */
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 #include "cognition/planner.h"
 #include "runtime/policy_engine.h"
 #include "llm/llm.h"
@@ -39,7 +39,7 @@
 
 /* planner system prompt — mirrors reasoning.c/planner.c tool catalog */
 static const char *SYS_PROMPT =
-    "You are the planner of a cognitive OS. Decide what tool actions to take "
+    "You are the planner of a light-agent. Decide what tool actions to take "
     "for the user request. Respond with ONLY a JSON array of actions of the "
     "form [{\"tool\":\"...\",\"args\":{...}}].\n"
     "Available tools and their EXACT argument names:\n"
@@ -390,7 +390,7 @@ int main(int argc, char **argv) {
                 cfg.provider ? cfg.provider : "?");
         return 1;
     }
-    printf("cognitive-os-agent BFCL-style benchmark [%s] provider=%s\n\n",
+    printf("light-agent BFCL-style benchmark [%s] provider=%s\n\n",
            real ? "REAL" : "MOCK", ctx.provider ? ctx.provider : "?");
 
     /* register the policy-enforced deny rules in the engine the runtime uses */

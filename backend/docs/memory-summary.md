@@ -53,7 +53,7 @@ cancel/failure preservation, retry and stale-panel responses. Both are in CI.
 Opt-in actual API:
 
 ```sh
-python tests/test_live_memory_summary.py --config /private/cognitive-os-agent.json
+python tests/test_live_memory_summary.py --config /private/light-agent.json
 ```
 
 One configured `deepseek-v4.1-flash` request through a private Runtime passed:

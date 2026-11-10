@@ -1,6 +1,6 @@
 """Offline end-to-end regression for task-bound progress and cancellation.
 
-python tests/test_progress.py build/cognitive-os-agent[.exe]
+python tests/test_progress.py build/light-agent[.exe]
 --serve starts an isolated manual UI fixture on port 18431 (no real credentials).
 """
 import argparse

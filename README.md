@@ -45,7 +45,7 @@ Document generation, browser access, and multimodal tasks depend on the selected
 Download a Windows installer, Linux **x64 / ARM64 (AArch64)** portable archive, or macOS package from **[Releases](https://github.com/LeonQin-ai/light-agent/releases/latest)**. Open the desktop app, or run the server in the extracted Linux package:
 
 ```bash
-./cognitive-os-agent serve 18300
+./light-agent serve 18300
 ```
 
 To build from source:
@@ -62,7 +62,7 @@ cd light-agent/backend
 | Windows / Git Bash | `bash build.sh cli` | Git Bash; script locates or bootstraps pinned Zig |
 | Windows / PowerShell | `.\build.ps1 -Target cli` | PowerShell; script locates or bootstraps pinned Zig |
 
-From `backend`, run `./build/cognitive-os-agent serve 18300` (Windows: `./build/cognitive-os-agent.exe serve 18300`).
+From `backend`, run `./build/light-agent serve 18300` (Windows: `./build/light-agent.exe serve 18300`).
 
 ### 2. Connect a model
 
@@ -77,13 +77,13 @@ Try: **“Read this repository and write a source overview to overview.md. Cite 
 Choose execution and state directories explicitly for CLI deployments:
 
 ```bash
-./build/cognitive-os-agent --workspace /path/to/project --state /path/to/state serve 18300
+./build/light-agent --workspace /path/to/project --state /path/to/state serve 18300
 ```
 
 **Workspace support:** The main branch includes saved workspace folders, per-chat workspace selection, and task-local execution directories. These changes are now integrated into `main`. Workspace selection chooses the execution root; it is not a security sandbox.
 
 ## See the work as it happens
-**Terminal client:** run `cognitive-os-agent chat` to connect to the
+**Terminal client:** run `light-agent chat` to connect to the
 desktop/server Runtime, continue durable conversations, inspect tool execution,
 and cancel with Ctrl+C. Interactive terminals use a full-screen layout; native
 OpenAI-compatible answers arrive incrementally as provisional previews.
@@ -132,7 +132,7 @@ flowchart TD
 | **Coordination** | Role registration, dependency-based Flows, and group discussions. |
 | **Observability** | Model/tool milestones, token accounting where available, task records, and metrics. |
 
-File rollback does not undo arbitrary network or shell side effects. Workspace selection is not process isolation; recovery does not guarantee exactly-once execution. Distributed scheduling and enterprise multi-tenancy remain roadmap work. See the [implementation status](backend/docs/COGNITIVE_OS_DETAILED_DESIGN_V3.1.md).
+File rollback does not undo arbitrary network or shell side effects. Workspace selection is not process isolation; recovery does not guarantee exactly-once execution. Distributed scheduling and enterprise multi-tenancy remain roadmap work. See the [implementation status](backend/docs/LIGHT_AGENT_DETAILED_DESIGN_V3.1.md).
 
 ## Evidence, not just feature claims
 
@@ -181,7 +181,7 @@ COA_TOOL_PROTOCOL=legacy make test
 COA_TOOL_PROTOCOL=legacy make scenario
 ```
 
-On Windows, run `bash build.sh test`, then `./build/cognitive-os-agent-test.exe`. Offline fixtures validate runtime behavior without paid model calls. Live-model evaluations require credentials; browser tests need Playwright. Exact commands and environment settings are in [CI](.github/workflows/ci.yml) and the [developer guide](backend/README.md).
+On Windows, run `bash build.sh test`, then `./build/light-agent-test.exe`. Offline fixtures validate runtime behavior without paid model calls. Live-model evaluations require credentials; browser tests need Playwright. Exact commands and environment settings are in [CI](.github/workflows/ci.yml) and the [developer guide](backend/README.md).
 
 We welcome **reproducible task failures, provider compatibility fixes, tool recovery, context efficiency, UI accessibility, and documentation**. Include version/commit, OS, model/provider, expected behavior, and a redacted trace in bug reports. Never attach API keys or unauthorized private source.
 
@@ -192,10 +192,10 @@ We welcome **reproducible task failures, provider compatibility fixes, tool reco
 | Resource | Contents |
 |---|---|
 | [Developer guide](backend/README.md) | Build, configuration, APIs, extensions, and local models |
-| [Architecture baseline](backend/docs/COGNITIVE_OS_ARCHITECTURE_BASELINE_V3.0.md) | Component boundaries and design direction |
-| [Detailed design](backend/docs/COGNITIVE_OS_DETAILED_DESIGN_V3.1.md) | Implementation status and remaining work |
+| [Architecture baseline](backend/docs/LIGHT_AGENT_ARCHITECTURE_BASELINE_V3.0.md) | Component boundaries and design direction |
+| [Detailed design](backend/docs/LIGHT_AGENT_DETAILED_DESIGN_V3.1.md) | Implementation status and remaining work |
 | [Runtime whitepaper](backend/docs/runtime-whitepaper.md) | Scheduling, memory, execution, and diagrams |
-| [Secret-security design](backend/docs/COGNITIVE_OS_SECRET_SECURITY_DDD_V1.0.md) | Security model and acceptance criteria |
+| [Secret-security design](backend/docs/LIGHT_AGENT_SECRET_SECURITY_DDD_V1.0.md) | Security model and acceptance criteria |
 | [Technical blog](https://leonqin-ai.github.io/) | Eight Chinese engineering articles linked to source and evidence |
 | [Five-minute console recording](backend/docs/runtime-demo.mp4) | Real runtime/tool execution with a deterministic local model fixture |
 

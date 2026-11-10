@@ -77,7 +77,7 @@ with tempfile.TemporaryDirectory(prefix='coa-flow-deps-') as folder:
     (state/'evidence.c').write_bytes(b'READ_EVIDENCE')
     provider=ThreadingHTTPServer(('127.0.0.1',0),Provider)
     threading.Thread(target=provider.serve_forever,daemon=True).start()
-    (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'flow-test',
+    (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'flow-test',
         'llm.api_key':'local-test-only','llm.base_url':f'http://127.0.0.1:{provider.server_port}',
         'reasoning.max_rounds':4}),encoding='utf-8')
     with socket.socket() as reservation:
@@ -95,7 +95,7 @@ with tempfile.TemporaryDirectory(prefix='coa-flow-deps-') as folder:
             assert time.monotonic()<deadline,task
             time.sleep(.05)
     with (backend/'build/flow-dependencies-e2e.log').open('w',encoding='utf-8') as log:
-        process=subprocess.Popen([str(backend/'build/cognitive-os-agent.exe'),'--state',str(state),
+        process=subprocess.Popen([str(backend/'build/light-agent.exe'),'--state',str(state),
             '--workspace',str(state),'serve',str(port)],cwd=backend,stdout=log,stderr=log,
             creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         try:

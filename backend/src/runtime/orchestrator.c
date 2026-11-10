@@ -10,7 +10,7 @@
  * instance per node, parallel) + a final LLM merge into a single answer.
  * Falls back to a plain single-agent run when no agents are registered or
  * the plan is unparseable. */
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 #include "runtime/flow.h"
 #include "infra/util.h"
 #include "infra/logging.h"

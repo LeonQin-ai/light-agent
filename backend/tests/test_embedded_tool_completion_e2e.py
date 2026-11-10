@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / os.environ.get('COA_BUILD_DIR', 'build')
-BINARY = BUILD / ('cognitive-os-agent.exe' if os.name == 'nt' else 'cognitive-os-agent')
+BINARY = BUILD / ('light-agent.exe' if os.name == 'nt' else 'light-agent')
 ANSWER = '项目介绍：RelayAgent 用统一消息入口分发任务。优势：TAIL_ARCHITECTURE_PROOF 证明持久化队列支持失败恢复。'
 
 
@@ -74,7 +74,7 @@ def exercise(protocol, mode):
                 except Exception as error: errors.append(repr(error));raise
         provider=ThreadingHTTPServer(('127.0.0.1',0),Provider)
         threading.Thread(target=provider.serve_forever,daemon=True).start()
-        (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'embedded-fixture',
+        (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'embedded-fixture',
             'llm.base_url':f'http://127.0.0.1:{provider.server_port}','llm.api_key':'fixture','reasoning.max_rounds':12}),encoding='utf-8')
         with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
         def api(path,body=None):

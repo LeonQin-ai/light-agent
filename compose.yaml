@@ -1,7 +1,7 @@
 services:
   cognitive:
     build: .
-    image: cognitive-os-agent:local
+    image: light-agent:local
     ports:
       - "127.0.0.1:18300:18300"
     volumes:

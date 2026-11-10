@@ -26,7 +26,7 @@ try:
   base=Path(tmp).resolve();state=base/'state';state.mkdir();folders=[]
   for name in ('fallback','manual','automatic','failure'):
    path=base/name;path.mkdir();(path/'marker.txt').write_bytes(('proof '+name).encode());folders.append(path)
-  (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{model.server_port}','reasoning.max_rounds':6}),encoding='utf8')
+  (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{model.server_port}','reasoning.max_rounds':6}),encoding='utf8')
   def portnum():
    with socket.socket() as sock:sock.bind(('127.0.0.1',0));return sock.getsockname()[1]
   port=portnum()
@@ -42,7 +42,7 @@ try:
    raise AssertionError('task stalled')
   with (build/'flow-workspace-e2e.log').open('w',encoding='utf8') as log:
    def start():
-    proc=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',str(state),'--workspace',str(base),'serve',str(port)],stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    proc=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',str(state),'--workspace',str(base),'serve',str(port)],stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     for _ in range(100):
      try:req('/v1/scheduler');return proc
      except OSError:assert proc.poll() is None;time.sleep(.05)

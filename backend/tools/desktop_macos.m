@@ -53,7 +53,10 @@
     [self.web loadHTMLString:@"<meta charset='utf-8'><body style='background:#212121;color:#ececec;font:16px -apple-system;display:grid;place-items:center;height:90vh'><div><h2>light-agent</h2><p>正在准备你的工作空间…</p></div>" baseURL:nil];
 
     NSFileManager *fm = NSFileManager.defaultManager;
-    NSURL *support = [[fm URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject URLByAppendingPathComponent:@"Cognitive OS" isDirectory:YES];
+    NSURL *supportRoot = [fm URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
+    NSURL *support = [supportRoot URLByAppendingPathComponent:@"light-agent" isDirectory:YES];
+    NSURL *legacy = [supportRoot URLByAppendingPathComponent:@"Cognitive OS" isDirectory:YES];
+    if (![fm fileExistsAtPath:support.path] && [fm fileExistsAtPath:legacy.path]) support = legacy;
     NSError *error = nil;
     if (![fm createDirectoryAtURL:support withIntermediateDirectories:YES attributes:nil error:&error]) {
         [self showError:error.localizedDescription]; return;
@@ -74,7 +77,7 @@
     unsigned port=ntohs(addr.sin_port); close(fd);
     self.url=[NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%u/",port]];
     self.server=[NSTask new];
-    self.server.executableURL=[NSBundle.mainBundle URLForAuxiliaryExecutable:@"cognitive-os-agent"];
+    self.server.executableURL=[NSBundle.mainBundle URLForAuxiliaryExecutable:@"light-agent"];
     self.server.arguments=@[@"serve", [NSString stringWithFormat:@"%u",port]];
     self.server.currentDirectoryURL=support;
     self.server.standardOutput=output; self.server.standardError=output;
@@ -87,7 +90,7 @@
 - (void)checkReady {
     if(self.closing) return;
     if(!self.server.running || self.deadline.timeIntervalSinceNow<=0) {
-        [self showError:@"本地服务未就绪。请查看 ~/Library/Application Support/Cognitive OS/server.log。"]; return;
+        [self showError:@"本地服务未就绪。请查看 ~/Library/Application Support/light-agent/server.log。"]; return;
     }
     NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:self.url]; request.timeoutInterval=1;
     [[NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {

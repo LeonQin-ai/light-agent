@@ -1,5 +1,5 @@
 /* memory.h — cognitive memory facade.
- * Composes fine-grained sub-stores (see the cognitive-os-agent/memory headers):
+ * Composes fine-grained sub-stores (see the light-agent/memory headers):
  *  - working memory:  short-term ring buffer of recent items (inline)
  *  - long-term facts: kvstore (memory/kv.h)
  *  - episodes:        episodic (memory/episode.h)

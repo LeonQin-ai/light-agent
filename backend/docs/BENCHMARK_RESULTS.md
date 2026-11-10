@@ -1,6 +1,6 @@
 # Benchmark Results
 
-Clean scorecard of cognitive-os-agent on public agent benchmarks. All numbers are **real runs** (full agent loop, no shortcuts); methodology, failure attribution and every framework fix along the way are documented in the detailed report: [`benchmark-report.md`](benchmark-report.md).
+Clean scorecard of light-agent on public agent benchmarks. All numbers are **real runs** (full agent loop, no shortcuts); methodology, failure attribution and every framework fix along the way are documented in the detailed report: [`benchmark-report.md`](benchmark-report.md).
 
 ## Headline results
 
@@ -28,12 +28,12 @@ Clean scorecard of cognitive-os-agent on public agent benchmarks. All numbers ar
 ```bash
 cd backend && ./build.sh
 # offline sanity (no API key)
-./build/cognitive-os-agent-bench-bfcl --mock
-./build/cognitive-os-agent-bench-gaia --mock
+./build/light-agent-bench-bfcl --mock
+./build/light-agent-bench-gaia --mock
 # real runs (export COA_LLM_PROVIDER/BASE_URL/MODEL/API_KEY first)
-./build/cognitive-os-agent-bench-bfcl --real
-./build/cognitive-os-agent-bench-real --real
-./build/cognitive-os-agent-bench-gaia --real --vision
+./build/light-agent-bench-bfcl --real
+./build/light-agent-bench-real --real
+./build/light-agent-bench-gaia --real --vision
 ```
 
 GAIA full-set and SWE-bench harnesses: `gaia-dataset/run_browser.py`, `swebench/swe_run.py` (+ `swe_run_docker.py`) — see the detailed report for the exact configurations behind each score.

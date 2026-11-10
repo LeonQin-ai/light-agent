@@ -10,7 +10,7 @@ import time
 
 backend = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(__doc__)
-parser.add_argument('--binary', type=Path, default=backend/'build'/('cognitive-os-agent-test.exe' if os.name == 'nt' else 'cognitive-os-agent-test'))
+parser.add_argument('--binary', type=Path, default=backend/'build'/('light-agent-test.exe' if os.name == 'nt' else 'light-agent-test'))
 parser.add_argument('--report', type=Path, default=backend/'build'/'memory-baseline.json')
 args = parser.parse_args()
 binary = args.binary.resolve()

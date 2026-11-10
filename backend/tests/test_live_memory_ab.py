@@ -17,7 +17,7 @@ parser.add_argument('--output',type=Path)
 args=parser.parse_args()
 if args.trials < 0 or args.trials > 10: raise SystemExit('trials must be 0..10')
 backend=Path(__file__).resolve().parents[1]
-binary=backend/'build'/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+binary=backend/'build'/('light-agent.exe' if os.name=='nt' else 'light-agent')
 if not args.config and not args.anthropic_env: raise SystemExit('--config or --anthropic-env is required')
 if args.anthropic_env:
     config={'llm.provider':'anthropic','llm.base_url':os.environ.get('ANTHROPIC_BASE_URL',''),
@@ -42,7 +42,7 @@ def run_server(state,workspace,enabled,task_prompt):
     global run_number
     run_number+=1
     cfg=dict(config); cfg['context.mmu.enabled']=1 if enabled else 0
-    (state/'cognitive-os-agent.json').write_text(json.dumps(cfg),encoding='utf-8')
+    (state/'light-agent.json').write_text(json.dumps(cfg),encoding='utf-8')
     p=port(); log=(state/'server.log').open('w',encoding='utf-8')
     proc=subprocess.Popen([str(binary),'--state',str(state),'--workspace',str(workspace),'serve',str(p)],
         cwd=backend,stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))

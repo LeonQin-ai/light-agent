@@ -6,7 +6,7 @@
 
 在 [最新版本](https://github.com/LeonQin-ai/light-agent/releases/latest) 选择系统对应的文件：Windows 使用安装器，macOS 选择 ARM64 或 Intel 应用包，Linux 使用 x64 便携包。版本页的 `SHA256SUMS` 用于核对下载文件。
 
-Windows / macOS 打开应用后进入控制台。Linux 解压后在包目录运行 `./cognitive-os-agent serve 18300`，浏览器打开 `http://localhost:18300/`。详细构建、启动和平台说明以 [开发文档](backend/README.md) 为准。
+Windows / macOS 打开应用后进入控制台。Linux 解压后在包目录运行 `./light-agent serve 18300`，浏览器打开 `http://localhost:18300/`。详细构建、启动和平台说明以 [开发文档](backend/README.md) 为准。
 
 ## 2. 配置模型与独立工作区
 

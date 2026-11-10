@@ -30,7 +30,7 @@ char *codegen_plugin(const char *name, const char *description) {
 
     strbuf_init(&sb);
     strbuf_appendf(&sb,
-                       "/* %s.c — generated cognitive-os-agent plugin: %s */\n"
+                       "/* %s.c — generated light-agent plugin: %s */\n"
                        "#include <string.h>\n\n"
                        "/* Plugin entry point. Returns 0 ok, -1 error. */\n"
                        "int %s_run(const char *args_json, char **out) {\n"

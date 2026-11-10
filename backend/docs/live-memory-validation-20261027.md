@@ -1,7 +1,7 @@
 # Configured API memory validation — 2026-10-27
 
 Provider model: `deepseek-v4.1-flash`. All calls went through freshly built
-Cognitive OS Agent Runtime, using private temporary states and the configured
+light-agent Runtime, using private temporary states and the configured
 API credentials. Production tasks were untouched. Random fictional facts and
 exact output checks prevent credit for guessing. No direct provider calls or
 assistant-authored answers were used.

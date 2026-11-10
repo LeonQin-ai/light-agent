@@ -9,9 +9,9 @@ const root=path.resolve(__dirname,'..'),docs=path.join(root,'docs'),build=path.j
 const smoke=process.argv.includes('--smoke'),seconds=smoke?45:300;
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const quote=p=>'"'+p.replaceAll('\\','/')+'"';
-const binary=path.join(build,'cognitive-os-agent'+(process.platform==='win32'?'.exe':''));
+const binary=path.join(build,'light-agent'+(process.platform==='win32'?'.exe':''));
 const bench=path.join(build,'bench-runtime'+(process.platform==='win32'?'.exe':''));
-const native=path.join(build,'cognitive-os-agent-test'+(process.platform==='win32'?'.exe':''));
+const native=path.join(build,'light-agent-test'+(process.platform==='win32'?'.exe':''));
 const take=fs.mkdtempSync(path.join(build,'live-demo-take-'));
 const state=fs.mkdtempSync(path.join(os.tmpdir(),'coa-live-demo-'));
 const scenarios=new Map(),evidence=[];let runtime,browser,context;
@@ -63,7 +63,7 @@ const provider=http.createServer(async(req,res)=>{
   let success=false;
   try {
     await new Promise(resolve=>provider.listen(0,'127.0.0.1',resolve));
-    fs.writeFileSync(path.join(state,'cognitive-os-agent.json'),JSON.stringify({'llm.provider':'openai',
+    fs.writeFileSync(path.join(state,'light-agent.json'),JSON.stringify({'llm.provider':'openai',
       'llm.model':'local-demo-fixture','llm.api_key':'local-test-only','llm.base_url':'http://127.0.0.1:'+provider.address().port,
       'reasoning.max_rounds':12,'scheduler.workers':2}));
     const reservation=http.createServer();await new Promise(resolve=>reservation.listen(0,'127.0.0.1',resolve));
@@ -86,7 +86,7 @@ const provider=http.createServer(async(req,res)=>{
       document.querySelectorAll('aside,main').forEach(el=>el.style.height='100%');
       const bar=document.createElement('div');bar.id='live-recording-caption';
       bar.style.cssText='position:fixed;top:0;left:0;right:0;height:52px;background:#112437;color:white;z-index:99999;padding:7px 18px;font:14px/19px Microsoft YaHei,sans-serif;display:flex;justify-content:space-between';
-      const title=document.createElement('span');title.id='live-chapter';title.textContent='Cognitive OS · 真实应用连续实操';
+      const title=document.createElement('span');title.id='live-chapter';title.textContent='light-agent · 真实应用连续实操';
       const clock=document.createElement('span');clock.id='live-clock';bar.append(title,clock);document.body.append(bar);
       window.liveStart=Date.now();setInterval(()=>{const s=Math.floor((Date.now()-liveStart)/1000);clock.textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')+' ｜ 本地确定性测试模型 · 真实 Runtime / 工具执行'},250);
     });

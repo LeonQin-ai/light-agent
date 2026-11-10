@@ -125,7 +125,7 @@ class Provider(BaseHTTPRequestHandler):
 
 backend = Path(__file__).resolve().parents[1]
 build = backend / os.environ.get('COA_BUILD_DIR', 'build')
-binary = build / ('cognitive-os-agent.exe' if os.name == 'nt' else 'cognitive-os-agent')
+binary = build / ('light-agent.exe' if os.name == 'nt' else 'light-agent')
 with tempfile.TemporaryDirectory(prefix='coa-source-read-') as directory:
     state = Path(directory)
     (state / 'source.c').write_text('x' * 7970 + 'END_SOURCE' + 'x' * 20, encoding='utf-8')
@@ -141,7 +141,7 @@ with tempfile.TemporaryDirectory(prefix='coa-source-read-') as directory:
             ('MIDDLE_SOURCE_PROOF' if i == 1 else 'x' * 19) + 'x' * 1981, encoding='utf-8')
     provider=ThreadingHTTPServer(('127.0.0.1',0), Provider)
     threading.Thread(target=provider.serve_forever,daemon=True).start()
-    (state / 'cognitive-os-agent.json').write_text(json.dumps({'llm.provider': 'openai',
+    (state / 'light-agent.json').write_text(json.dumps({'llm.provider': 'openai',
         'llm.model':'source-read-test', 'llm.api_key':'local-test-only',
         'llm.base_url':f'http://127.0.0.1:{provider.server_port}', 'reasoning.max_rounds': 12}), encoding='utf-8')
     with socket.socket() as reservation:

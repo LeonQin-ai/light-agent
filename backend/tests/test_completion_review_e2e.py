@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BACKEND = Path(__file__).resolve().parents[1]
 BINARY = BACKEND / os.environ.get('COA_BUILD_DIR', 'build') / (
-    'cognitive-os-agent.exe' if os.name == 'nt' else 'cognitive-os-agent')
+    'light-agent.exe' if os.name == 'nt' else 'light-agent')
 NARRATION = '根据已有信息，我需要继续读取关键文件的剩余部分......'
 ANSWER = ('结果：process_state.h 只声明状态接口；process_state.cpp 的实现表明，'
           '进程重启通过 JOURNAL_REPLAY 恢复。单板重启需要 DISK_FLUSH 持久化，'
@@ -104,7 +104,7 @@ def exercise(protocol, mode):
             if mode == 'dir_existing':
                 (state / 'src').mkdir()
                 (state / 'src/context').write_text('not a directory', encoding='utf-8')
-            (state / 'cognitive-os-agent.json').write_text(json.dumps({
+            (state / 'light-agent.json').write_text(json.dumps({
                 'llm.provider': 'openai', 'llm.model': 'local-review-fixture',
                 'llm.api_key': 'local-test-only',
                 'llm.base_url': f'http://127.0.0.1:{fixture.server_port}',

@@ -4,10 +4,10 @@
  * fix the agent answered "already completed" citing history without acting;
  * after the fix it must plan and execute fresh actions.
  *
- * Build: see command in docs. Uses the user's LLM config from state/cognitive-os-agent.json
+ * Build: see command in docs. Uses the user's LLM config from state/light-agent.json
  * (api_key is never printed). Temp state root: state-probe.
  */
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 #include "os/os_fs.h"
 
 #include <stdio.h>
@@ -16,9 +16,9 @@
 #include "cJSON.h"
 
 int main(void) {
-    /* read the user's live LLM config (state/cognitive-os-agent.json) */
-    char *cfgtxt = fs_read_file("state/cognitive-os-agent.json");
-    if (!cfgtxt) { printf("no state/cognitive-os-agent.json\n"); return 1; }
+    /* read the user's live LLM config (state/light-agent.json) */
+    char *cfgtxt = fs_read_file("state/light-agent.json");
+    if (!cfgtxt) { printf("no state/light-agent.json\n"); return 1; }
     cJSON *root = cJSON_Parse(cfgtxt);
     free(cfgtxt);
     if (!root) { printf("bad config json\n"); return 1; }

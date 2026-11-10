@@ -48,13 +48,13 @@ def exercise(protocol,mode):
             state=Path(folder)
             if mode!='generated':(state/filename).write_bytes(b'not an image\x00' if mode=='invalid' else data)
             (state/'make.py').write_text("import base64\nopen('picture.png','wb').write(base64.b64decode("+repr(base64.b64encode(PNG).decode())+"))\n")
-            (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'anthropic' if protocol=='anthropic' else 'openai','llm.model':'image-fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':8}))
+            (state/'light-agent.json').write_text(json.dumps({'llm.provider':'anthropic' if protocol=='anthropic' else 'openai','llm.model':'image-fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':8}))
             with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
             def api(path,body=None):
                 req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
                 with urllib.request.urlopen(req,timeout=5) as response:return json.load(response)
             with (BUILD/f'image-read-{protocol}-{mode}.log').open('w',encoding='utf8') as log:
-                proc=subprocess.Popen([str(BUILD/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=ROOT,env={**os.environ,'COA_TOOL_PROTOCOL':'legacy' if protocol=='legacy' else 'native'},stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+                proc=subprocess.Popen([str(BUILD/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=ROOT,env={**os.environ,'COA_TOOL_PROTOCOL':'legacy' if protocol=='legacy' else 'native'},stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
                 try:
                     for _ in range(150):
                         try:api('/v1/scheduler');break

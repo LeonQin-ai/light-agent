@@ -14,13 +14,13 @@ parser.add_argument('--config', required=True)
 args = parser.parse_args()
 backend = Path(__file__).resolve().parents[1]
 build = backend / os.environ.get('COA_BUILD_DIR', 'build')
-binary = build / ('cognitive-os-agent.exe' if os.name == 'nt' else 'cognitive-os-agent')
+binary = build / ('light-agent.exe' if os.name == 'nt' else 'light-agent')
 config = json.loads(Path(args.config).read_text(encoding='utf-8-sig'))
 report = {'model': config.get('llm.model'), 'status': 'not_started'}
 with tempfile.TemporaryDirectory(prefix='coa-live-im-') as folder:
     state = Path(folder)
     config.update({'auth.key': '', 'http.bind': '127.0.0.1', 'reasoning.max_rounds': 4})
-    (state / 'cognitive-os-agent.json').write_text(json.dumps(config), encoding='utf-8')
+    (state / 'light-agent.json').write_text(json.dumps(config), encoding='utf-8')
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]

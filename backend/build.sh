@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cognitive-os-agent build script — compiles with the pinned Zig toolchain on Windows.
+# light-agent build script — compiles with the pinned Zig toolchain on Windows.
 #   build.sh            build everything
 #   build.sh cli        build only the CLI
 #   build.sh test       build only the test binary
@@ -79,46 +79,46 @@ case "$TARGET" in
   all)
     echo "[build] bench-runtime"
     $CC $CFLAGS -o build/bench-runtime$EXE $SRCS tests/bench_runtime.c $LIBS
-    echo "[build] cognitive-os-agent"
-    $CC $CFLAGS -o build/cognitive-os-agent$EXE $SRCS cli/main.c $LIBS
-    echo "[build] cognitive-os-agent-test"
-    $CC $CFLAGS -o build/cognitive-os-agent-test$EXE $SRCS tests/test_all.c $LIBS
-    echo "[build] cognitive-os-agent-scenario"
-    $CC $CFLAGS -o build/cognitive-os-agent-scenario$EXE $SRCS tests/test_scenario.c $LIBS
+    echo "[build] light-agent"
+    $CC $CFLAGS -o build/light-agent$EXE $SRCS cli/main.c $LIBS
+    echo "[build] light-agent-test"
+    $CC $CFLAGS -o build/light-agent-test$EXE $SRCS tests/test_all.c $LIBS
+    echo "[build] light-agent-scenario"
+    $CC $CFLAGS -o build/light-agent-scenario$EXE $SRCS tests/test_scenario.c $LIBS
     echo "[build] mock-llm-server"
     $CC $CFLAGS -o build/mock-llm-server$EXE $SRCS tools/mock_llm_server.c $LIBS
     echo "[build] test-adapters"
     $CC $CFLAGS -o build/test-adapters$EXE $SRCS tests/test_adapters.c $LIBS
-    echo "[build] cognitive-os-agent-e2e"
-    $CC $CFLAGS -o build/cognitive-os-agent-e2e$EXE $SRCS tests/test_e2e.c $LIBS
-    echo "[build] cognitive-os-agent-bench"
-    $CC $CFLAGS -o build/cognitive-os-agent-bench$EXE $SRCS tests/bench_agent.c $LIBS
-    echo "[build] cognitive-os-agent-bench-real"
-    $CC $CFLAGS -o build/cognitive-os-agent-bench-real$EXE $SRCS tests/bench_real.c $LIBS
-    echo "[build] cognitive-os-agent-bench-bfcl"
-    $CC $CFLAGS -o build/cognitive-os-agent-bench-bfcl$EXE $SRCS tests/bench_bfcl.c $LIBS
-    echo "[build] cognitive-os-agent-bench-gaia"
-    $CC $CFLAGS -o build/cognitive-os-agent-bench-gaia$EXE $SRCS tests/bench_gaia.c $LIBS
+    echo "[build] light-agent-e2e"
+    $CC $CFLAGS -o build/light-agent-e2e$EXE $SRCS tests/test_e2e.c $LIBS
+    echo "[build] light-agent-bench"
+    $CC $CFLAGS -o build/light-agent-bench$EXE $SRCS tests/bench_agent.c $LIBS
+    echo "[build] light-agent-bench-real"
+    $CC $CFLAGS -o build/light-agent-bench-real$EXE $SRCS tests/bench_real.c $LIBS
+    echo "[build] light-agent-bench-bfcl"
+    $CC $CFLAGS -o build/light-agent-bench-bfcl$EXE $SRCS tests/bench_bfcl.c $LIBS
+    echo "[build] light-agent-bench-gaia"
+    $CC $CFLAGS -o build/light-agent-bench-gaia$EXE $SRCS tests/bench_gaia.c $LIBS
     ;;
   cli)
-    echo "[build] cognitive-os-agent"
-    $CC $CFLAGS -o build/cognitive-os-agent$EXE $SRCS cli/main.c $LIBS
+    echo "[build] light-agent"
+    $CC $CFLAGS -o build/light-agent$EXE $SRCS cli/main.c $LIBS
     ;;
   test)
-    echo "[build] cognitive-os-agent-test"
-    $CC $CFLAGS -o build/cognitive-os-agent-test$EXE $SRCS tests/test_all.c $LIBS
+    echo "[build] light-agent-test"
+    $CC $CFLAGS -o build/light-agent-test$EXE $SRCS tests/test_all.c $LIBS
     ;;
   scenario)
-    echo "[build] cognitive-os-agent-scenario"
-    $CC $CFLAGS -o build/cognitive-os-agent-scenario$EXE $SRCS tests/test_scenario.c $LIBS
+    echo "[build] light-agent-scenario"
+    $CC $CFLAGS -o build/light-agent-scenario$EXE $SRCS tests/test_scenario.c $LIBS
     ;;
   mock)
     echo "[build] mock-llm-server"
     $CC $CFLAGS -o build/mock-llm-server$EXE $SRCS tools/mock_llm_server.c $LIBS
     ;;
   e2e)
-    echo "[build] cognitive-os-agent-e2e"
-    $CC $CFLAGS -o build/cognitive-os-agent-e2e$EXE $SRCS tests/test_e2e.c $LIBS
+    echo "[build] light-agent-e2e"
+    $CC $CFLAGS -o build/light-agent-e2e$EXE $SRCS tests/test_e2e.c $LIBS
     ;;
   runtime-bench)
     echo "[build] bench-runtime"
@@ -131,24 +131,24 @@ case "$TARGET" in
     $CC $CFLAGS -o build/bench-memory-scale$EXE $SRCS tests/bench_memory_scale.c $LIBS $EXTRA_LIBS
     ;;
   bench)
-    echo "[build] cognitive-os-agent-bench"
-    $CC $CFLAGS -o build/cognitive-os-agent-bench$EXE $SRCS tests/bench_agent.c $LIBS
+    echo "[build] light-agent-bench"
+    $CC $CFLAGS -o build/light-agent-bench$EXE $SRCS tests/bench_agent.c $LIBS
     ;;
   bench-real)
-    echo "[build] cognitive-os-agent-bench-real"
-    $CC $CFLAGS -o build/cognitive-os-agent-bench-real$EXE $SRCS tests/bench_real.c $LIBS
+    echo "[build] light-agent-bench-real"
+    $CC $CFLAGS -o build/light-agent-bench-real$EXE $SRCS tests/bench_real.c $LIBS
     ;;
   bench-bfcl)
-    echo "[build] cognitive-os-agent-bench-bfcl"
-    $CC $CFLAGS -o build/cognitive-os-agent-bench-bfcl$EXE $SRCS tests/bench_bfcl.c $LIBS
+    echo "[build] light-agent-bench-bfcl"
+    $CC $CFLAGS -o build/light-agent-bench-bfcl$EXE $SRCS tests/bench_bfcl.c $LIBS
     ;;
   bench-gaia)
-    echo "[build] cognitive-os-agent-bench-gaia"
-    $CC $CFLAGS -o build/cognitive-os-agent-bench-gaia$EXE $SRCS tests/bench_gaia.c $LIBS
+    echo "[build] light-agent-bench-gaia"
+    $CC $CFLAGS -o build/light-agent-bench-gaia$EXE $SRCS tests/bench_gaia.c $LIBS
     ;;
   test-plan-cycle)
-    echo "[build] cognitive-os-agent-test-plan-cycle"
-    $CC $CFLAGS -o build/cognitive-os-agent-test-plan-cycle$EXE $SRCS tests/test_plan_cycle.c $LIBS
+    echo "[build] light-agent-test-plan-cycle"
+    $CC $CFLAGS -o build/light-agent-test-plan-cycle$EXE $SRCS tests/test_plan_cycle.c $LIBS
     ;;
   clean)
     rm -rf build

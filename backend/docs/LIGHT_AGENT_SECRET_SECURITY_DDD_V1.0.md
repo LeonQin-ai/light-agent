@@ -1,4 +1,4 @@
-# Cognitive OS Secret Security Plane Detailed Design Document v1.0
+# light-agent Secret Security Plane Detailed Design Document v1.0
 
 > Status: Architecture Baseline / Implementation Guide  
 > Scope: Personal Edition + Enterprise Edition common security plane  
@@ -11,7 +11,7 @@
 
 ### 1.1 Background
 
-Cognitive OS agents can access terminals, filesystems, APIs, SSH, browsers, MCP servers and remote execution environments. A normal Agent workflow therefore inevitably encounters credentials and other sensitive information:
+light-agent agents can access terminals, filesystems, APIs, SSH, browsers, MCP servers and remote execution environments. A normal Agent workflow therefore inevitably encounters credentials and other sensitive information:
 
 - usernames and passwords;
 - API keys;
@@ -287,7 +287,7 @@ typedef struct {
 Example:
 
 ```text
-cred://project/cognitive-os/test-server/login
+cred://project/light-agent/test-server/login
 ```
 
 The reference must not contain the secret itself.
@@ -603,7 +603,7 @@ Example:
 Agent A
 + capability secret.use
 + target test-server
-+ project cognitive-os
++ project light-agent
 => ALLOW
 
 Agent A
@@ -1028,7 +1028,7 @@ Request example:
 ```json
 {
   "type": "ssh_credential",
-  "scope": "project/cognitive-os",
+  "scope": "project/light-agent",
   "name": "test-server-login",
   "provider": "local"
 }
@@ -1040,7 +1040,7 @@ Response:
 
 ```json
 {
-  "reference": "cred://project/cognitive-os/test-server-login",
+  "reference": "cred://project/light-agent/test-server-login",
   "version": 1,
   "status": "ACTIVE"
 }
@@ -1058,7 +1058,7 @@ Response:
 {
   "reachable": true,
   "authenticated": true,
-  "sessionRef": "session://project/cognitive-os/test-server/7a5d"
+  "sessionRef": "session://project/light-agent/test-server/7a5d"
 }
 ```
 
@@ -1367,7 +1367,7 @@ backend/src/security/
 Public headers:
 
 ```text
-include/cognitive-os/security/
+include/light-agent/security/
 ├── secret.h
 ├── secret_broker.h
 ├── secret_policy.h
@@ -1378,7 +1378,7 @@ include/cognitive-os/security/
 
 ---
 
-# 28. Integration with Existing Cognitive OS Layers
+# 28. Integration with Existing light-agent Layers
 
 ```text
                          UI / CLI / IM
@@ -1610,7 +1610,7 @@ Redaction
 Memory / Logs / UI
 ```
 
-**Cognitive OS Secret Security Plane is therefore a security boundary between cognition and execution: the Agent can request the use of a credential without ever possessing the credential itself.**
+**light-agent Secret Security Plane is therefore a security boundary between cognition and execution: the Agent can request the use of a credential without ever possessing the credential itself.**
 
 ---
 

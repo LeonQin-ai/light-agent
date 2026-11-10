@@ -1,11 +1,11 @@
 /* mock_llm_server.c — standalone OpenAI-compatible mock LLM HTTP server.
  * Serves POST /v1/chat/completions (chat + SSE streaming) with a deterministic
- * plan derived from the last user message, so the full cognitive-os-agent pipeline can be
+ * plan derived from the last user message, so the full light-agent pipeline can be
  * exercised end-to-end against a *real* HTTP LLM endpoint.
  *
  *   ./build/mock-llm-server 9000          (or tools/mock_llm_server on Linux)
  *
- * Then run:  cognitive-os-agent run "创建 test/a.txt 写入内容为 hello"  with provider=openai
+ * Then run:  light-agent run "创建 test/a.txt 写入内容为 hello"  with provider=openai
  *            base_url=http://localhost:9000
  */
 #include "api/http_server.h"

@@ -1,8 +1,8 @@
-// desktop.cc — native WebView2 shell for the cognitive-os-agent desktop edition.
+// desktop.cc — native WebView2 shell for the light-agent desktop edition.
 //
 // The installed app is a single window (no console, no separate browser). On
 // launch it:
-//   1. spawns  cognitive-os-agent.exe serve 18300  (hidden, output to cognitive-os-agent-server.log)
+//   1. spawns  light-agent.exe serve 18300  (hidden, output to light-agent-server.log)
 //   2. opens the window IMMEDIATELY on an inline "starting" page — the boot
 //      can legitimately take several seconds (restored MCP servers pay their
 //      handshake timeouts before the HTTP listener comes up), and a blank
@@ -23,7 +23,7 @@
 //
 // Build (package.sh does this). --subsystem=windows links the shell as a GUI
 // binary so double-clicking it never pops a console window:
-//   zig c++ -std=c++17 -O1 -I third_party/webview -o cognitive-os-agent-desktop.exe tools/desktop.cc \
+//   zig c++ -std=c++17 -O1 -I third_party/webview -o light-agent-desktop.exe tools/desktop.cc \
 //     -Wl,--subsystem=windows -lole32 -loleaut32 -luuid -lshlwapi -luser32 -lgdi32 -lws2_32 -lshell32 -ladvapi32 -lwindowscodecs
 
 #define WIN32_LEAN_AND_MEAN
@@ -761,9 +761,9 @@ background:#101418;color:#c9d4de;font:15px/1.8 system-ui,sans-serif}
 h1{font-size:18px;color:#e8eef4}code{background:#1c242c;padding:2px 6px;border-radius:4px}
 </style></head><body><div class="b">
 <h1>服务未能按时启动</h1>
-<p>如果已有一个 cognitive-os-agent 窗口在运行，请先关闭它（端口 18300
+<p>如果已有一个 light-agent 窗口在运行，请先关闭它（端口 18300
 只能被一个实例占用），然后重新打开本程序。</p>
-<p>详细原因见安装目录下的 <code>cognitive-os-agent-server.log</code>。</p>
+<p>详细原因见安装目录下的 <code>light-agent-server.log</code>。</p>
 </div></body></html>)";
 
 /* data: URL helper — percent-encode the UTF-8 payload so no character in the
@@ -796,7 +796,7 @@ static void navigate_error() {
 /* Spawn the hidden backend server, output redirected to the log file.
  * Returns process handle (caller closes) or NULL on failure. */
 static HANDLE spawn_server(const wchar_t *exe, const wchar_t *dir) {
-    std::wstring log = std::wstring(dir) + L"\\cognitive-os-agent-server.log";
+    std::wstring log = std::wstring(dir) + L"\\light-agent-server.log";
 
     SECURITY_ATTRIBUTES sa;
     sa.nLength = sizeof(sa);
@@ -865,7 +865,7 @@ static DWORD WINAPI boot_waiter(LPVOID) {
             restarts++;
             if (g_server) CloseHandle(g_server);
             std::wstring dir = exe_dir();
-            std::wstring exe = dir + L"\\cognitive-os-agent.exe";
+            std::wstring exe = dir + L"\\light-agent.exe";
             g_server = spawn_server(exe.c_str(), dir.c_str());
             if (!g_server)
                 return 0;
@@ -886,7 +886,7 @@ static DWORD WINAPI boot_waiter(LPVOID) {
                 restarts++;
                 CloseHandle(g_server);
                 std::wstring dir = exe_dir();
-                std::wstring exe = dir + L"\\cognitive-os-agent.exe";
+                std::wstring exe = dir + L"\\light-agent.exe";
                 g_server = spawn_server(exe.c_str(), dir.c_str());
                 if (!g_server)
                     return 0;
@@ -1118,7 +1118,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     g_task_pet_asset = dir + L"\\light-agent-pet.png";
     if (GetFileAttributesW(g_task_pet_asset.c_str()) == INVALID_FILE_ATTRIBUTES)
         g_task_pet_asset = dir + L"\\..\\assets\\light-agent-pet.png";
-    std::wstring exe = dir + L"\\cognitive-os-agent.exe";
+    std::wstring exe = dir + L"\\light-agent.exe";
 
     /* Work around two Edge/WebView2 behaviors that stall navigations on
      * networks where Microsoft's backends are slow or unreachable:
@@ -1148,23 +1148,23 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     wc.hCursor = LoadCursorA(nullptr, MAKEINTRESOURCEA(32512));
     /* Keep the native title/taskbar mark aligned with the web console and
      * installer shortcut. The ICO is installed next to the desktop shell. */
-    std::wstring icon = dir + L"\\cognitive-os-logo.ico";
-    if(GetFileAttributesW(icon.c_str())==INVALID_FILE_ATTRIBUTES)icon=dir+L"\\cognitive-os-agent.ico";
+    std::wstring icon = dir + L"\\light-agent-logo.ico";
+    if(GetFileAttributesW(icon.c_str())==INVALID_FILE_ATTRIBUTES)icon=dir+L"\\light-agent.ico";
     g_icon_big = (HICON)LoadImageW(nullptr, icon.c_str(), IMAGE_ICON, 256, 256,
                                    LR_LOADFROMFILE);
     g_icon_small = (HICON)LoadImageW(nullptr, icon.c_str(), IMAGE_ICON, 32, 32,
                                      LR_LOADFROMFILE);
     wc.hIcon = g_icon_big ? g_icon_big : g_icon_small;
-    wc.lpszClassName = "cognitive-os-agent";
+    wc.lpszClassName = "light-agent";
     RegisterClassA(&wc);
-    g_hwnd = CreateWindowA("cognitive-os-agent", "light-agent",
+    g_hwnd = CreateWindowA("light-agent", "light-agent",
                            WS_POPUP | WS_THICKFRAME | WS_CLIPCHILDREN | WS_MINIMIZEBOX |
                            WS_MAXIMIZEBOX | WS_SYSMENU,
                            CW_USEDEFAULT, CW_USEDEFAULT,
                            1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
     if (!g_hwnd) {
         MessageBoxW(nullptr, L"Failed to create the main window.",
-                    L"cognitive-os-agent", MB_ICONERROR);
+                    L"light-agent", MB_ICONERROR);
         return 1;
     }
     /* Windows 11 adds a DWM border even to a custom thick-frame window.
@@ -1200,22 +1200,22 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
      * window shown → COM STA → env (pump) → controller (pump) → navigate. */
     g_server = spawn_server(exe.c_str(), dir.c_str());
     if (!g_server) {
-        MessageBoxW(nullptr, L"Failed to start the cognitive-os-agent server.",
-                    L"cognitive-os-agent", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Failed to start the light-agent server.",
+                    L"light-agent", MB_ICONERROR);
         return 1;
     }
 
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
         MessageBoxW(nullptr, L"COM initialization failed.",
-                    L"cognitive-os-agent", MB_ICONERROR);
+                    L"light-agent", MB_ICONERROR);
         return 1;
     }
 
     if (!load_runtime()) {
         MessageBoxW(nullptr,
                     L"未找到 WebView2 运行时。\n请安装 Microsoft Edge WebView2 Runtime 后重试。",
-                    L"cognitive-os-agent", MB_ICONERROR);
+                    L"light-agent", MB_ICONERROR);
         return 1;
     }
 
@@ -1239,7 +1239,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     hr = g_create_env(true, 0 /*installed*/, udf, &opts, eh);
     if (FAILED(hr) || !pump_until(&eh->done, 60000) || FAILED(eh->hr) || !eh->env) {
         MessageBoxW(nullptr, L"WebView2 environment creation failed.",
-                    L"cognitive-os-agent", MB_ICONERROR);
+                    L"light-agent", MB_ICONERROR);
         return 1;
     }
 
@@ -1247,7 +1247,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     hr = eh->env->CreateCoreWebView2Controller(g_hwnd, ch);
     if (FAILED(hr) || !pump_until(&ch->done, 60000) || FAILED(ch->hr) || !ch->ctrl) {
         MessageBoxW(nullptr, L"WebView2 controller creation failed.",
-                    L"cognitive-os-agent", MB_ICONERROR);
+                    L"light-agent", MB_ICONERROR);
         return 1;
     }
 
@@ -1256,7 +1256,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     HRESULT hrg = ch->ctrl->get_CoreWebView2(&g_web);
     if (FAILED(hrg) || !g_web) {
         MessageBoxW(nullptr, L"WebView2 object unavailable.",
-                    L"cognitive-os-agent", MB_ICONERROR);
+                    L"light-agent", MB_ICONERROR);
         return 1;
     }
 

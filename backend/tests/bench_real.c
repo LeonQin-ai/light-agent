@@ -1,5 +1,5 @@
 /* bench_real.c — real-LLM evaluation across mainstream agent benchmark families
- * that map onto cognitive-os-agent's current tool set (file_read/file_write/shell/git/mcp)
+ * that map onto light-agent's current tool set (file_read/file_write/shell/git/mcp)
  * and single-shot plan→act reasoning loop:
  *
  *   toolbench   ToolBench (ToolEval)-style: tool retrieval + parameter construction
@@ -11,7 +11,7 @@
  *   --mock  offline deterministic planner (sanity check, no network)
  *
  * NOTE on the other mainstream benchmarks (honest scope boundary):
- *   SWE-bench  needs a read→fix→test *iterative* act-observe loop; cognitive-os-agent's
+ *   SWE-bench  needs a read→fix→test *iterative* act-observe loop; light-agent's
  *              reasoning is single-shot (one plan), so real issue-fixing is out
  *              of scope for now.
  *   GAIA       needs multimodal (image/audio) + web browsing + document parsing.
@@ -22,7 +22,7 @@
  * Reports per-family accuracy, end-to-end success, side-effect correctness,
  * per-task latency, and a one-line JSON summary.
  */
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 #include "llm/llm.h"
 #include "os/os_fs.h"
 #include "os/os_time.h"
@@ -37,7 +37,7 @@ static const char *g_executable_path;
 
 /* planner system prompt — matches reasoning.c/planner.c so the probe is representative */
 static const char *SYS_PROMPT =
-    "You are the planner of a cognitive OS. Decide what tool actions to take "
+    "You are the planner of a light-agent. Decide what tool actions to take "
     "for the user request. Respond with ONLY a JSON array of actions of the "
     "form [{\"tool\":\"...\",\"args\":{...}}].\n"
     "Available tools and their EXACT argument names:\n"
@@ -251,7 +251,7 @@ int main(int argc, char **argv) {
                 cfg.provider ? cfg.provider : "?");
         return 1;
     }
-    printf("cognitive-os-agent real-LLM benchmark [%s] provider=%s\n\n",
+    printf("light-agent real-LLM benchmark [%s] provider=%s\n\n",
            real ? "REAL" : "MOCK", ctx.provider ? ctx.provider : "?");
 
     int mcp_available = register_mcp_fixture(&ctx);

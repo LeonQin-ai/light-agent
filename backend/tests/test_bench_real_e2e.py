@@ -9,8 +9,8 @@ import unittest
 
 
 BACKEND = Path(__file__).resolve().parents[1]
-EXE = BACKEND / "build" / ("cognitive-os-agent-bench-real.exe" if os.name == "nt"
-                            else "cognitive-os-agent-bench-real")
+EXE = BACKEND / "build" / ("light-agent-bench-real.exe" if os.name == "nt"
+                            else "light-agent-bench-real")
 
 
 @unittest.skipUnless(shutil.which("node"), "requires Node.js for the stdio MCP fixture")

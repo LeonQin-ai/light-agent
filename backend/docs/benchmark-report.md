@@ -1,4 +1,4 @@
-# cognitive-os-agent 智能体基准评测报告（2026-08-31）
+# light-agent 智能体基准评测报告（2026-08-31）
 
 > 注（2026-09-05）：全量复测基线（deepseek-chat 真实运行）；分数为同一代码的评测结果。
 >
@@ -48,7 +48,7 @@ LLM 层此前 `content` 只支持纯字符串，多模态模型（如 GLM 系列
 
 ### GAIA 风格 mini 实测（2026-09-08，deepseek-chat 真实运行，榜单式百分比分数）
 
-新增 `tests/bench_gaia.c`（产物 `build/cognitive-os-agent-bench-gaia`）：GAIA **任务形状**复刻（非官方数据集——官方 test 集答案不公开且需 HuggingFace 提交通道），判分采用 **GAIA 官方归一化**（小写、去标点、去冠词、折叠空白后精确匹配末行/全文 + 数值等值兜底），走完整 agent 循环（`run` 多轮 act-observe），fixture 运行时生成（csv/txt 由 C 写入，docx/png 由 `tools/gen_gaia_fixtures.py` 生成）。**17 条任务**（L1×8 + L2×9），输出榜单格式分数（两轮真实运行，deepseek 采样方差如实报告）：
+新增 `tests/bench_gaia.c`（产物 `build/light-agent-bench-gaia`）：GAIA **任务形状**复刻（非官方数据集——官方 test 集答案不公开且需 HuggingFace 提交通道），判分采用 **GAIA 官方归一化**（小写、去标点、去冠词、折叠空白后精确匹配末行/全文 + 数值等值兜底），走完整 agent 循环（`run` 多轮 act-observe），fixture 运行时生成（csv/txt 由 C 写入，docx/png 由 `tools/gen_gaia_fixtures.py` 生成）。**17 条任务**（L1×8 + L2×9），输出榜单格式分数（两轮真实运行，deepseek 采样方差如实报告）：
 
 | 分数 | Run 1 | Run 2 | 说明 |
 |---|---|---|---|
@@ -91,7 +91,7 @@ LLM 层此前 `content` 只支持纯字符串，多模态模型（如 GLM 系列
 
 **GLM-5.3-flash 复跑（2026-09-09，勘误后）**：**17/17 = 100% + vision 1/1**（vision 3 连跑全过，GLM-5.3-flash 经方舟端点支持图像输入）。
 
-**对照 GAIA 官方榜单**（2026-06~08 快照，头部 agent 90-93.36%，多为 GPT-5/Claude/Gemini 集成 + 官方 165 题）：本 17 题为自建 mini 集，任务复杂度远低于官方 L2/L3，**分数只能作方向性参考**；可量化的结论是：GAIA L1/L2 任务形状在 cognitive-os-agent 上可全通（deepseek 平均 ~91%，GLM-5.3-flash 勘误后 17/17），文档解析与多文件聚合两条路径是本轮框架修复打通的。
+**对照 GAIA 官方榜单**（2026-06~08 快照，头部 agent 90-93.36%，多为 GPT-5/Claude/Gemini 集成 + 官方 165 题）：本 17 题为自建 mini 集，任务复杂度远低于官方 L2/L3，**分数只能作方向性参考**；可量化的结论是：GAIA L1/L2 任务形状在 light-agent 上可全通（deepseek 平均 ~91%，GLM-5.3-flash 勘误后 17/17），文档解析与多文件聚合两条路径是本轮框架修复打通的。
 
 ## 官方 GAIA 全量实测（2026-09-09，GLM-5.3-flash 真实运行）
 
@@ -226,7 +226,7 @@ mock 规划器对照：BFCL 7/22、enf 4/4（mock 对违规请求本就不产生
 - **裸 LLM（规则写在提示词里）**：0/4 全部照做，拒绝措辞 0/4。
 - **框架（规则注册进 policy_engine，走真实 planner_plan_ex 路径：违规工具从目录中隐藏 + policy 注入提示词）**：4/4，违规动作一次都未被规划（hard-block 层待命但无需触发——第一层目录隐藏已生效）。
 
-结论：**策略遵循不能依赖 LLM 自觉，必须框架强制**。这是 cognitive-os-agent 相对"裸模型+工具调用 API"的核心差异化能力，现在有了量化证据。
+结论：**策略遵循不能依赖 LLM 自觉，必须框架强制**。这是 light-agent 相对"裸模型+工具调用 API"的核心差异化能力，现在有了量化证据。
 
 ### 真实工程任务实测：todo-cli 全流程（多智能体编排）
 
@@ -252,7 +252,7 @@ mock 规划器对照：BFCL 7/22、enf 4/4（mock 对违规请求本就不产生
 |---|---|---|
 | GPT-4o / Claude-3.5-Sonnet 级 | ~88-90% | 官方 BFCL 榜单头部 |
 | 中型开源模型 | ~60-75% | deepseek-chat 的 function calling 在此档 |
-| deepseek-chat + cognitive-os-agent planner | 12/22 (59%)，parallel 满分 | 失分集中在"多给可选参数"与 over-triggering，属模型侧；planner 提示词（精确工具目录+精确参数名）已把工具选择与并行调用做到 100%/满分 |
+| deepseek-chat + light-agent planner | 12/22 (59%)，parallel 满分 | 失分集中在"多给可选参数"与 over-triggering，属模型侧；planner 提示词（精确工具目录+精确参数名）已把工具选择与并行调用做到 100%/满分 |
 
 **框架的突出点不在裸分数，而在裸模型做不到的三件事（均有量化证据）**：
 1. **策略强制**：0/4 → 4/4（policy-enforced）
@@ -261,16 +261,16 @@ mock 规划器对照：BFCL 7/22、enf 4/4（mock 对违规请求本就不产生
 
 ### 与主流 benchmark 的映射（2026-09-07 更新）
 
-评测对象：cognitive-os-agent（Cognitive OS Runtime）`D:\AI\code\cognitive-os\backend` 当前构建。
+评测对象：light-agent（light-agent Runtime）`D:\AI\code\light-agent\backend` 当前构建。
 真实模型：DeepSeek `deepseek-chat`（OpenAI 兼容端点）。离线对照：内置 mock 规划器。
 
 ## 评测器
 
 | 评测器 | 产物 | 覆盖 |
 |---|---|---|
-| `tests/bench_bfcl.c` | `build/cognitive-os-agent-bench-bfcl` | BFCL 四大场景 + Tau-bench 策略遵循，共 22 条 |
-| `tests/bench_real.c` | `build/cognitive-os-agent-bench-real` | ToolBench 风格工具选择/参数构造 5 条 + AgentBench 风格 OS 命令副作用 4 条 |
-| `tests/bench_gaia.c` | `build/cognitive-os-agent-bench-gaia` | GAIA 风格 L1/L2 任务形状 17 条（官方归一化判分，榜单式百分比分数）+ vision 任务 1 条（`--vision`，需多模态模型） |
+| `tests/bench_bfcl.c` | `build/light-agent-bench-bfcl` | BFCL 四大场景 + Tau-bench 策略遵循，共 22 条 |
+| `tests/bench_real.c` | `build/light-agent-bench-real` | ToolBench 风格工具选择/参数构造 5 条 + AgentBench 风格 OS 命令副作用 4 条 |
+| `tests/bench_gaia.c` | `build/light-agent-bench-gaia` | GAIA 风格 L1/L2 任务形状 17 条（官方归一化判分，榜单式百分比分数）+ vision 任务 1 条（`--vision`，需多模态模型） |
 
 - BFCL 判分为 **AST 级**：输出解析为 `[{tool,args}]`，值类型严格（字符串 `"3"` ≠ 数字 `3`），多余/缺失参数都算错；parallel 为多重集合比对（顺序无关）。
 - irrelevance / tau-policy 的正确行为是**不产生任何工具调用**（纯文本回答/拒绝）。
@@ -301,7 +301,7 @@ mock 规划器对照：BFCL 7/22、enf 4/4（mock 对违规请求本就不产生
 
 ## 关键发现
 
-1. **工具选择与参数构造是强项**（ToolBench 5/5、parallel 5/5）。cognitive-os-agent 的 planner 提示词（精确工具目录 + 精确参数名）有效。
+1. **工具选择与参数构造是强项**（ToolBench 5/5、parallel 5/5）。light-agent 的 planner 提示词（精确工具目录 + 精确参数名）有效。
 2. **"严格不许多给参数"是主要失分点**。multiple 的 2 条失败都是工具选对但补了可选参数（`dir:"."`、`args:{}`）。BFCL 官方 AST 判分同样严格；若放宽为"子集匹配"，multiple 可到 4/4。
 3. **过度调用（over-triggering）**：irrelevance 场景模型倾向用 shell "顺手"算 1+1、echo 答案。这是当前 LLM 的通病，缓解方向是在 planner 提示词中强化"纯文本问题禁止调用工具"。
 4. **策略遵循（Tau-bench 类）曾是最大短板：0/4**。当前 planner 系统提示没有"业务规则优先于用户请求"的约束。**已修复**：在 `build_context`/SYS_PROMPT 注入 policy 层：请求与规则冲突时必须拒绝并在文本中说明，不允许生成对应工具调用；并已接入 `policy_engine` 做执行侧硬拦截（即使 LLM 违规，动作也会被 policy 引擎拒绝）。
@@ -331,16 +331,16 @@ mock 规划器对照：BFCL 7/22、enf 4/4（mock 对违规请求本就不产生
 ./build.sh bench-bfcl
 ./build.sh bench-gaia
 # 离线 sanity（预期低分，验证判分器有效）
-./build/cognitive-os-agent-bench-bfcl --mock
-./build/cognitive-os-agent-bench --mock
-./build/cognitive-os-agent-bench-gaia --mock
+./build/light-agent-bench-bfcl --mock
+./build/light-agent-bench --mock
+./build/light-agent-bench-gaia --mock
 # 真实评测（先 export LLM_PROVIDER/BASE_URL/MODEL/API_KEY）
-./build/cognitive-os-agent-bench-bfcl --real
-./build/cognitive-os-agent-bench-real --real
-./build/cognitive-os-agent-bench-gaia --real          # GAIA 风格 mini（9 条）
-./build/cognitive-os-agent-bench-gaia --real --vision # 视觉模型（如 GLM）加跑图片任务
+./build/light-agent-bench-bfcl --real
+./build/light-agent-bench-real --real
+./build/light-agent-bench-gaia --real          # GAIA 风格 mini（9 条）
+./build/light-agent-bench-gaia --real --vision # 视觉模型（如 GLM）加跑图片任务
 # 真实工程任务（serve 后提交 /v1/orchestrate，用 UTF-8 JSON 文件体）
 python tools/gen_spec_docx.py  # 需要 python-docx；生成本地需求输入 project_spec.docx
-./build/cognitive-os-agent.exe serve 18530
+./build/light-agent.exe serve 18530
 curl -s -X POST http://127.0.0.1:18530/v1/orchestrate -H "Content-Type: application/json" --data-binary @orch_task.json
 ```

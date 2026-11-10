@@ -1,4 +1,4 @@
-# run.py — WebArena-style mini eval for cognitive-os-agent: real browser tasks
+# run.py — WebArena-style mini eval for light-agent: real browser tasks
 # on stable sandbox sites (books.toscrape.com / quotes.toscrape.com) driven by
 # the Playwright MCP server, scored against programmatically verified ground
 # truths (probe of the live pages at harness-authoring time). Tasks run
@@ -20,7 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.dirname(HERE)
 WORK = os.path.join(BACKEND, 'webarena-run')
 INSTALL_CFG = ('C:/Users/94207/AppData/Local/Temp/opencode/'
-               'cagent-install-test/state/cognitive-os-agent.json')
+               'cagent-install-test/state/light-agent.json')
 RESULTS = os.path.join(HERE, 'results.jsonl')
 PORT = 18600
 TASK_TIMEOUT_S = 1800
@@ -68,11 +68,11 @@ def setup():
     os.makedirs(os.path.join(WORK, 'state'))
     cfg = json.load(open(INSTALL_CFG, encoding='utf-8'))
     cfg['scheduler.workers'] = 1
-    with open(os.path.join(WORK, 'state', 'cognitive-os-agent.json'), 'w',
+    with open(os.path.join(WORK, 'state', 'light-agent.json'), 'w',
               encoding='utf-8') as f:
         json.dump(cfg, f, indent=1)
     log = open(os.path.join(WORK, 'server.log'), 'ab')
-    exe = os.path.join(BACKEND, 'build', 'cognitive-os-agent.exe')
+    exe = os.path.join(BACKEND, 'build', 'light-agent.exe')
     env = dict(os.environ)
     pydir = os.path.dirname(os.path.abspath(sys.executable))
     env['PATH'] = pydir + os.pathsep + env.get('PATH', '')

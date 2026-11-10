@@ -41,11 +41,11 @@ static bool snapshot(HWND hwnd, const char *path) {
 int main() {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     HDESK original = GetThreadDesktop(GetCurrentThreadId());
-    HDESK desktop = CreateDesktopW(L"CognitiveOSChromeTest", nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+    HDESK desktop = CreateDesktopW(L"LightAgentChromeTest", nullptr, nullptr, 0, GENERIC_ALL, nullptr);
     CHECK(desktop && SetThreadDesktop(desktop));
     WNDCLASSW wc = {};
     wc.lpfnWndProc = wnd_proc; wc.hInstance = GetModuleHandleW(nullptr);
-    wc.lpszClassName = L"CognitiveOSChromeTest";
+    wc.lpszClassName = L"LightAgentChromeTest";
     CHECK(RegisterClassW(&wc));
     HWND window = CreateWindowW(wc.lpszClassName, L"Chrome test",
         WS_POPUP | WS_THICKFRAME | WS_CLIPCHILDREN | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU,

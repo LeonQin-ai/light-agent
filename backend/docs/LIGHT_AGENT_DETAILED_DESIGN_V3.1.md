@@ -1,4 +1,4 @@
-# Cognitive OS Detailed Design Document (DDD) v3.1
+# light-agent Detailed Design Document (DDD) v3.1
 
 > Status: Architecture Baseline / Design Review Candidate  
 > Scope: Personal Edition + Enterprise Edition shared runtime  
@@ -10,7 +10,7 @@
 
 ## 1. Document Purpose
 
-This document describes the v3.1 architecture baseline for Cognitive OS and is intended to be directly consumable by developers, AI coding agents, reviewers and QA.
+This document describes the v3.1 architecture baseline for light-agent and is intended to be directly consumable by developers, AI coding agents, reviewers and QA.
 
 The document defines:
 
@@ -65,7 +65,7 @@ This abstraction is sufficient for short-lived tasks but becomes fragile when an
 - switch between local/cloud/remote models;
 - learn reusable procedures from previous execution.
 
-Cognitive OS treats an Agent as a runtime-managed execution entity.
+light-agent treats an Agent as a runtime-managed execution entity.
 
 ```text
 Agent
@@ -525,7 +525,7 @@ typedef struct {
 Long-Term Memory uses Markdown as the source of truth.
 
 ```text
-~/.cognitive-os/
+~/.light-agent/
 memory/
 ├── user/
 ├── agent/
@@ -1339,7 +1339,7 @@ Idempotency-Key: <uuid>
 {
   "name": "kernel-debug-agent",
   "modelProfile": "local-qwen",
-  "memoryNamespace": "project/cognitive-os",
+  "memoryNamespace": "project/light-agent",
   "capabilities": [
     "filesystem.read",
     "shell.exec"
@@ -1929,7 +1929,7 @@ DeepSeek Harness describes itself as an open-source Agent Harness with an “eve
 
 Its primary architectural abstraction is the **Harness + Plugin composition model**.
 
-Cognitive OS deliberately moves the abstraction boundary deeper:
+light-agent deliberately moves the abstraction boundary deeper:
 
 ```text
 DeepSeek Harness
@@ -1939,7 +1939,7 @@ Harness
  ↓
 Plugin / Tool
 
-Cognitive OS
+light-agent
 Agent
  ↓
 Runtime
@@ -1949,7 +1949,7 @@ Memory / Context / Policy / Execution
 Tool / Plugin / Environment
 ```
 
-The difference is not that DeepSeek Harness “cannot” do systems-level work. Its repository explicitly makes plugin composition central. The difference is that Cognitive OS treats memory hierarchy, context MMU, transaction/snapshot semantics and execution-environment abstraction as first-class runtime subsystems. [1]
+The difference is not that DeepSeek Harness “cannot” do systems-level work. Its repository explicitly makes plugin composition central. The difference is that light-agent treats memory hierarchy, context MMU, transaction/snapshot semantics and execution-environment abstraction as first-class runtime subsystems. [1]
 
 ## 28.2 OpenAI Codex CLI
 
@@ -1965,9 +1965,9 @@ Codex is an open-source coding agent implemented in Rust. Its repository documen
 
 ### Trade-offs
 
-Codex is optimized around a coding-agent product/runtime rather than defining a general-purpose Cognitive OS.
+Codex is optimized around a coding-agent product/runtime rather than defining a general-purpose light-agent.
 
-Cognitive OS is intentionally broader:
+light-agent is intentionally broader:
 
 ```text
 coding
@@ -1981,7 +1981,7 @@ coding
 + distributed runtime
 ```
 
-Also, the existence of Codex's current sandbox/approval implementation means Cognitive OS should **not** claim sandboxing itself as unique. The differentiation should be transactional COW execution, explicit execution-environment abstraction and integration with the broader runtime/memory model. [3]
+Also, the existence of Codex's current sandbox/approval implementation means light-agent should **not** claim sandboxing itself as unique. The differentiation should be transactional COW execution, explicit execution-environment abstraction and integration with the broader runtime/memory model. [3]
 
 ## 28.3 Claude Code
 
@@ -1999,7 +1999,7 @@ Claude Code is a terminal-oriented agentic coding product with session continuat
 
 Claude Code is a product-level coding Agent. Its internal runtime architecture is not publicly exposed as a complete open-source implementation, so exact internal design comparisons should not be overstated.
 
-Cognitive OS instead aims to make the runtime abstraction itself the product:
+light-agent instead aims to make the runtime abstraction itself the product:
 
 ```text
 C11 Kernel
@@ -2011,15 +2011,15 @@ Plugin ABI
 Distributed Control Plane
 ```
 
-Anthropic's own documentation shows that Claude Code already uses persistent Markdown memory and context-aware long-running workflows, so Cognitive OS should not position “Markdown memory” or “context management” alone as novel. The differentiation must be the explicit runtime semantics: typed memory lifecycle, L0/L1/L2 representation, HOT/WARM/COLD residency, verification-gated consolidation and transactional execution. [5]
+Anthropic's own documentation shows that Claude Code already uses persistent Markdown memory and context-aware long-running workflows, so light-agent should not position “Markdown memory” or “context management” alone as novel. The differentiation must be the explicit runtime semantics: typed memory lifecycle, L0/L1/L2 representation, HOT/WARM/COLD residency, verification-gated consolidation and transactional execution. [5]
 
 ---
 
 # 29. Competitive Matrix
 
-| Dimension | Cognitive OS | DeepSeek Harness | OpenAI Codex CLI | Claude Code |
+| Dimension | light-agent | DeepSeek Harness | OpenAI Codex CLI | Claude Code |
 |---|---|---|---|---|
-| Primary positioning | **Agent Runtime / Cognitive OS** | Agent Harness | Coding Agent | Coding Agent |
+| Primary positioning | **Agent Runtime / light-agent** | Agent Harness | Coding Agent | Coding Agent |
 | Open-source core | Project-controlled | Yes | Yes | Complete CLI core not public |
 | Primary implementation | **C11** | TypeScript/Cordis ecosystem | Rust | Product implementation not public |
 | Runtime-owned state machine | **First-class** | Strong | Strong | Strong but implementation internal |
@@ -2047,7 +2047,7 @@ The matrix intentionally avoids claims such as “others cannot do X”. The dif
 
 ---
 
-# 30. Strengths of the Cognitive OS Architecture
+# 30. Strengths of the light-agent Architecture
 
 ## 30.1 Systems-Level Boundary
 
@@ -2633,7 +2633,7 @@ A release passes the architecture gate only if:
 # 37. Final Architecture Summary
 
 ```text
-                         Cognitive OS
+                         light-agent
                               │
                        ┌──────┴──────┐
                        │             │
@@ -2672,7 +2672,7 @@ A release passes the architecture gate only if:
                             Local / Sandbox / VM / Remote
 ```
 
-The essential Cognitive OS loop is:
+The essential light-agent loop is:
 
 ```text
 Perceive
@@ -2733,7 +2733,7 @@ The capacity and latency values in Section 3 remain engineering targets until a 
 
 The Windows instrumented unit run measured **1,190 of 1,248 first-party functions reached (95.4%)**. Real HTTP contract tests raised `api_rest.c` from 50/137 (36.5%) to **132/137 (96.4%)**. The five unreached API functions are the embedded index page, a WebSocket message callback and three asynchronous network worker callbacks; they are implemented and registered, not proven dead. This is function coverage for one platform and one test binary; it is not line, branch, Linux, macOS or production-workload coverage. `backend/tools/coverage.sh --uncovered` reproduces the measurement on Windows with Zig and Git Bash. An uncalled function is not necessarily dead: many REST handlers and tool executors are registered through function pointers. The only confirmed unused private implementation found in this pass was removed; public extension points were retained.
 
-The audit fixed two independent ownership defects in MCP connection and Skill replacement and made the coverage collector safe for concurrent test threads. It also identified a material design-to-code gap: the Secret Security Plane currently detects and redacts secrets at selected boundaries, but it has no encrypted managed-secret store or opaque credential broker. The P0 design in `COGNITIVE_OS_SECRET_SECURITY_DDD_V1.0.md` is therefore **partial**, not an implemented security guarantee. Phase 7 and Phase 8 above remain explicit roadmap work; their distributed and advanced-execution acceptance criteria have not been validated by this local audit.
+The audit fixed two independent ownership defects in MCP connection and Skill replacement and made the coverage collector safe for concurrent test threads. It also identified a material design-to-code gap: the Secret Security Plane currently detects and redacts secrets at selected boundaries, but it has no encrypted managed-secret store or opaque credential broker. The P0 design in `LIGHT_AGENT_SECRET_SECURITY_DDD_V1.0.md` is therefore **partial**, not an implemented security guarantee. Phase 7 and Phase 8 above remain explicit roadmap work; their distributed and advanced-execution acceptance criteria have not been validated by this local audit.
 
 The REST follow-up found and fixed invalid JSON responses for Windows snapshot paths and malformed cron schedules, use-after-free in both IM send paths, a missed query parameter in the task journal, an unsafe/unescaped state response, and a missing authorization check on the tool installer. These defects were found through live HTTP requests rather than by counting route declarations.
 

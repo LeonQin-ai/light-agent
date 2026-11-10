@@ -10,7 +10,7 @@ on the successful path is now released.
 
 ## Deterministic evidence
 
-`cognitive-os-agent-test --rolling-compaction` runs 500 actual reasoning turns
+`light-agent-test --rolling-compaction` runs 500 actual reasoning turns
 and at least 60 compactions. Its test compressor copies only the fixed synthetic
 constraint/todo markers present in its input; it cannot reconstruct missing
 markers. Both must remain in the final summary and planner input.

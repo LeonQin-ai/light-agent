@@ -1,4 +1,4 @@
-"""Opt-in paid API regressions through Cognitive OS Agent, never direct LLM calls.
+"""Opt-in paid API regressions through light-agent, never direct LLM calls.
 
 --config points to installed configuration; keys are never printed. All files
 and task evidence stay in build/. The harness creates only OCR/header/search test inputs and
@@ -51,7 +51,7 @@ def task_summary(task):
 
 with tempfile.TemporaryDirectory(prefix='coa-live-suite-state-') as folder:
     state=Path(folder)
-    (state/'cognitive-os-agent.json').write_text(json.dumps(config),encoding='utf-8')
+    (state/'light-agent.json').write_text(json.dumps(config),encoding='utf-8')
     with socket.socket() as sock:
         sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     def request(path,body=None):
@@ -87,7 +87,7 @@ with tempfile.TemporaryDirectory(prefix='coa-live-suite-state-') as folder:
         (active/'last-valid-task.json').write_text(json.dumps(last_task,ensure_ascii=False),encoding='utf-8')
         raise TimeoutError('Test deadline exceeded; isolated process must stop before further paid tasks')
     with (output/'server.log').open('w',encoding='utf-8') as log:
-        process=subprocess.Popen([str(backend/'build'/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),
+        process=subprocess.Popen([str(backend/'build'/('light-agent.exe' if os.name=='nt' else 'light-agent')),
             '--state',str(state),'--workspace',str(output),'serve',str(port)],cwd=backend,stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':args.protocol},
             creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         try:
@@ -353,7 +353,7 @@ with tempfile.TemporaryDirectory(prefix='coa-live-suite-state-') as folder:
                 report['cases'][case]=result;report['attempts'].append(result);save_report()
                 print(json.dumps(result,ensure_ascii=False),flush=True)
             assert all(report['cases'][c].get('passed') for c in selected),'Some real task regressions failed; inspect report.json'
-            print('PASS: all selected real Cognitive OS Agent tasks completed and passed independent checks',flush=True)
+            print('PASS: all selected real light-agent tasks completed and passed independent checks',flush=True)
         finally:
             process.terminate()
             try:process.wait(timeout=5)

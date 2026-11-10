@@ -86,7 +86,7 @@ def screenshot(window, name):
     win32gui.ReleaseDC(window, handle)
 
 original = user.GetThreadDesktop(kernel.GetCurrentThreadId())
-desktop_name = f'CognitiveOSInstallerTest-{os.getpid()}'
+desktop_name = f'LightAgentInstallerTest-{os.getpid()}'
 desktop = user.CreateDesktopW(desktop_name, None, None, 0, 0x10000000, None)
 assert desktop and user.SetThreadDesktop(desktop), C.get_last_error()
 # MFC initialization creates a hidden window, so import it after switching desktops.
@@ -97,7 +97,7 @@ import win32process
 process = Process()
 wizard_process = None
 try:
-    exe = ROOT / 'dist' / 'cognitive-os-agent-setup.exe'
+    exe = ROOT / 'dist' / 'light-agent-setup.exe'
     # Spaces and Unicode test the actual directory edit and ready-page summary.
     destination = str(ROOT / 'build' / '安装路径验证 with spaces')
     startup = Startup()

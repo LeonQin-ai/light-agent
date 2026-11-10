@@ -10,12 +10,12 @@ import urllib.request
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
-binary = root / os.environ.get('COA_BUILD_DIR', 'build') / ('cognitive-os-agent.exe' if os.name == 'nt' else 'cognitive-os-agent')
+binary = root / os.environ.get('COA_BUILD_DIR', 'build') / ('light-agent.exe' if os.name == 'nt' else 'light-agent')
 with tempfile.TemporaryDirectory(prefix='coa-directory-browser-') as tmp:
     state = Path(tmp)
     (state / 'child').mkdir()
     (state / 'ordinary.txt').write_text('file')
-    (state / 'cognitive-os-agent.json').write_text('{"llm.provider":"mock"}')
+    (state / 'light-agent.json').write_text('{"llm.provider":"mock"}')
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]

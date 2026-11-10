@@ -1,5 +1,5 @@
 /* node.h — cluster node registry (distributed coordination).
- * Tracks worker/observer nodes participating in the Cognitive OS cluster:
+ * Tracks worker/observer nodes participating in the light-agent cluster:
  * identity, endpoint, role, liveness state and last-seen heartbeat. Nodes are
  * marked down after a configurable staleness window by cluster_mark_down. */
 #pragma once

@@ -4,7 +4,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from fixture_http_response import respond_json
 root=Path(__file__).resolve().parents[1];build=root/os.environ.get('COA_BUILD_DIR','build')
-binary=build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+binary=build/('light-agent.exe' if os.name=='nt' else 'light-agent')
 gates={};entered={};group_calls=[];errors=[]
 class Provider(BaseHTTPRequestHandler):
  def log_message(self,*_):pass
@@ -24,7 +24,7 @@ class Provider(BaseHTTPRequestHandler):
   except Exception as e:errors.append(repr(e));raise
 with tempfile.TemporaryDirectory(prefix='coa-im-capacity-') as folder:
  work=Path(folder);provider=ThreadingHTTPServer(('127.0.0.1',0),Provider);threading.Thread(target=provider.serve_forever,daemon=True).start()
- (work/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'capacity-fixture','llm.base_url':f'http://127.0.0.1:{provider.server_port}','llm.api_key':'fixture','scheduler.workers':8,'reasoning.max_rounds':4}),encoding='utf-8')
+ (work/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'capacity-fixture','llm.base_url':f'http://127.0.0.1:{provider.server_port}','llm.api_key':'fixture','scheduler.workers':8,'reasoning.max_rounds':4}),encoding='utf-8')
  with socket.socket() as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
  def api(path,body=None,method=None):
   req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'},method=method)

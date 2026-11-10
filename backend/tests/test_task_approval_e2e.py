@@ -16,7 +16,7 @@ provider=ThreadingHTTPServer(('127.0.0.1',0),Model);threading.Thread(target=prov
 try:
  with tempfile.TemporaryDirectory(prefix='coa-approval-') as folder:
     state=Path(folder)
-    (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{provider.server_port}','reasoning.max_rounds':3}),encoding='utf8')
+    (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{provider.server_port}','reasoning.max_rounds':3}),encoding='utf8')
     with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     def req(method,path,body=None,expected=200):
         r=urllib.request.Request(f'http://127.0.0.1:{port}'+path,method=method,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
@@ -31,7 +31,7 @@ try:
             assert time.monotonic()<deadline,t
             time.sleep(.03)
     with (build/'approval-e2e.log').open('w',encoding='utf8') as log:
-        server=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        server=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         try:
             for _ in range(100):
                 try:req('GET','/v1/scheduler');break
@@ -66,7 +66,7 @@ try:
             assert (state/'proof.txt').read_text()=='approved'
             server.terminate();server.wait(timeout=5);(state/'proof.txt').unlink()
             with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
-            server=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            server=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
             for _ in range(100):
                 try:req('GET','/v1/scheduler');break
                 except OSError:assert server.poll() is None;time.sleep(.05)

@@ -45,7 +45,7 @@ jobs:
           trap 'kill "$MOCK_PID" 2>/dev/null || true' EXIT
           sleep 1
           ./build-macos/test-adapters
-          ./build-macos/cognitive-os-agent-e2e
+          ./build-macos/light-agent-e2e
       - name: Actual process crash recovery
         run: COA_BUILD_DIR=build-macos python3 tests/test_crash_recovery_e2e.py
       - name: Visual provider timeout and recovery regression
@@ -54,7 +54,7 @@ jobs:
           COA_BUILD_DIR=build-macos COA_VISION_TEST_PROTOCOL=native python3 tests/test_vision_wait_e2e.py
       - name: Durable session scale and cursor regression
         run: |
-          ./build-macos/cognitive-os-agent-test --session-scale 300 state-test/session-scale-ci
+          ./build-macos/light-agent-test --session-scale 300 state-test/session-scale-ci
           COA_BUILD_DIR=build-macos python3 tests/test_session_paging_e2e.py
       - name: Strict C11 wasm libc portability
         run: python tests/test_wasm_libc_portability.py
@@ -106,10 +106,10 @@ jobs:
         run: bash package-macos.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: cognitive-os-${{ matrix.runner }}
+          name: light-agent-${{ matrix.runner }}
           path: |
-            backend/dist/Cognitive-OS-macos-*.zip
-            backend/dist/Cognitive-OS-macos-*.pkg
+            backend/dist/light-agent-macos-*.zip
+            backend/dist/light-agent-macos-*.pkg
   linux:
     name: Linux (gcc)
     runs-on: ubuntu-latest
@@ -130,7 +130,7 @@ jobs:
           ./build/mock-llm-server 9000 &
           sleep 1
       - name: Unit tests
-        run: ./build/cognitive-os-agent-test
+        run: ./build/light-agent-test
       - name: Markdown image preview regression
         run: node tests/test_chat_markdown.js
       - name: Isolated memory lifecycle baseline
@@ -140,7 +140,7 @@ jobs:
           make build/bench-memory-scale
           ./build/bench-memory-scale 1000 | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["records"]==1000 and r["exact_target_in_top5"], r; print(r)'
       - name: Planner duplicate-read recovery regression
-        run: make build/cognitive-os-agent-test-plan-cycle && ./build/cognitive-os-agent-test-plan-cycle
+        run: make build/light-agent-test-plan-cycle && ./build/light-agent-test-plan-cycle
       - name: Source read completion API regressions
         run: python3 tests/test_source_read_e2e.py
       - name: Linux folder chooser fallback and provider rate-limit diagnosis
@@ -153,7 +153,7 @@ jobs:
           python3 tests/test_completion_review_e2e.py
           python3 tests/test_embedded_tool_completion_e2e.py
       - name: Progress, cancellation and steering regression
-        run: python3 tests/test_progress.py build/cognitive-os-agent
+        run: python3 tests/test_progress.py build/light-agent
       - name: Single-response repetition regression
         run: python3 tests/test_answer_repetition.py
       - name: Independent todo-cli acceptance verifier regression
@@ -166,7 +166,7 @@ jobs:
           COA_VISION_TEST_PROTOCOL=native python3 tests/test_vision_wait_e2e.py
       - name: Durable session scale and cursor regression
         run: |
-          ./build/cognitive-os-agent-test --session-scale 300 state-test/session-scale-ci
+          ./build/light-agent-test --session-scale 300 state-test/session-scale-ci
           python tests/test_session_paging_e2e.py
       - name: Strict C11 wasm libc portability
         run: python tests/test_wasm_libc_portability.py
@@ -214,13 +214,13 @@ jobs:
       - name: Flow review delivery and cancellation regression
         run: python3 tools/run_ci_regression.py tests/test_flow_review_delivery_e2e.py
       - name: Scenario tests
-        run: ./build/cognitive-os-agent-scenario
+        run: ./build/light-agent-scenario
       - name: Adapter tests (chat + SSE)
         run: ./build/test-adapters
       - name: Benchmark sanity (mock)
-        run: ./build/cognitive-os-agent-bench --mock
+        run: ./build/light-agent-bench --mock
       - name: E2E (mock LLM server)
-        run: ./build/cognitive-os-agent-e2e
+        run: ./build/light-agent-e2e
 
   linux-asan:
     name: Linux (AddressSanitizer)
@@ -235,8 +235,8 @@ jobs:
         run: make CFLAGS="-std=c11 -O1 -g -fsanitize=address -fno-omit-frame-pointer -Iinclude -Ithird_party/cJSON -Ithird_party/wasm3"
       - name: Unit tests under ASAN
         run: |
-          LD_PRELOAD=$(gcc -print-file-name=libasan.so) ASAN_OPTIONS=detect_leaks=0 ./build/cognitive-os-agent-test --scheduler
-          LD_PRELOAD=$(gcc -print-file-name=libasan.so) ASAN_OPTIONS=detect_leaks=0 ./build/cognitive-os-agent-test
+          LD_PRELOAD=$(gcc -print-file-name=libasan.so) ASAN_OPTIONS=detect_leaks=0 ./build/light-agent-test --scheduler
+          LD_PRELOAD=$(gcc -print-file-name=libasan.so) ASAN_OPTIONS=detect_leaks=0 ./build/light-agent-test
       - name: Native tool block continuation under ASAN
         run: ASAN_OPTIONS=detect_leaks=0 python3 tests/test_native_tool_loop.py
       - name: Structured acceptance under ASAN
@@ -301,18 +301,18 @@ jobs:
           zig c++ -std=c++17 -O1 -Wno-nullability-completeness -I third_party/webview -o build/desktop-watchdog-test.exe tests/test_desktop_watchdog.cc -lole32 -loleaut32 -luuid -lshlwapi -luser32 -lgdi32 -lws2_32 -lshell32 -lversion -ladvapi32
           ./build/desktop-watchdog-test.exe
       - name: Unit tests
-        run: ./build/cognitive-os-agent-test.exe
+        run: ./build/light-agent-test.exe
       - name: Independent todo-cli acceptance verifier regression
         run: python tests/test_todo_cli_contract.py
       - name: Scenario tests
-        run: ./build/cognitive-os-agent-scenario.exe
+        run: ./build/light-agent-scenario.exe
       - name: Benchmark sanity (mock)
-        run: ./build/cognitive-os-agent-bench.exe --mock
+        run: ./build/light-agent-bench.exe --mock
       - name: SSH argument and private password regressions
         run: |
-          ./build/cognitive-os-agent-test.exe --ssh-args
-          ./build/cognitive-os-agent-test.exe --ssh-prompt
-          ./build/cognitive-os-agent-test.exe --ssh-only
+          ./build/light-agent-test.exe --ssh-args
+          ./build/light-agent-test.exe --ssh-prompt
+          ./build/light-agent-test.exe --ssh-only
           python -m pip install paramiko
           python tests/test_ssh_password_e2e.py
       - name: Source read completion API regressions
@@ -354,7 +354,7 @@ jobs:
         run: python tests/test_completion_recovery_e2e.py
       - name: Durable session scale and cursor regression
         run: |
-          ./build/cognitive-os-agent-test.exe --session-scale 300 state-test/session-scale-ci
+          ./build/light-agent-test.exe --session-scale 300 state-test/session-scale-ci
           python tests/test_session_paging_e2e.py
       - name: Strict C11 wasm libc portability
         run: python tests/test_wasm_libc_portability.py

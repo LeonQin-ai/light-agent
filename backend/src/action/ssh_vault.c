@@ -726,14 +726,14 @@ int ssh_vault_put(const char *state_root, const char *name, const char *password
     if (!state_root || !*state_root || !ssh_vault_name_valid(name) || !password ||
         !*password || strlen(password) > 1024 || keychain_key(state_root, name, key, sizeof(key))) return -1;
     if (secret_register_ssh_password(password)) return -1;
-    rc = SecKeychainFindGenericPassword(NULL, 18, "cognitive-os-agent", (UInt32)strlen(key), key,
+    rc = SecKeychainFindGenericPassword(NULL, 18, "light-agent", (UInt32)strlen(key), key,
                                          &old_len, &old_data, &item);
     if (old_data) SecKeychainItemFreeContent(NULL, old_data);
     if (rc == errSecSuccess) {
         rc = SecKeychainItemModifyContent(item, NULL, (UInt32)strlen(password), password);
         CFRelease(item);
     } else if (rc == errSecItemNotFound) {
-        rc = SecKeychainAddGenericPassword(NULL, 18, "cognitive-os-agent", (UInt32)strlen(key), key,
+        rc = SecKeychainAddGenericPassword(NULL, 18, "light-agent", (UInt32)strlen(key), key,
                                             (UInt32)strlen(password), password, NULL);
     }
     return rc == errSecSuccess ? 0 : -1;
@@ -744,7 +744,7 @@ char *ssh_vault_get(const char *state_root, const char *name) {
     UInt32 len = 0;
     void *data = NULL;
     if (!state_root || !ssh_vault_name_valid(name) || keychain_key(state_root, name, key, sizeof(key))) return NULL;
-    if (SecKeychainFindGenericPassword(NULL, 18, "cognitive-os-agent", (UInt32)strlen(key), key,
+    if (SecKeychainFindGenericPassword(NULL, 18, "light-agent", (UInt32)strlen(key), key,
                                        &len, &data, NULL) != errSecSuccess) return NULL;
     if (len > 0 && len <= 1024) {
         out = malloc((size_t)len + 1);
@@ -759,7 +759,7 @@ int ssh_vault_delete(const char *state_root, const char *name) {
     char key[1024];
     SecKeychainItemRef item = NULL;
     if (!state_root || !ssh_vault_name_valid(name) || keychain_key(state_root, name, key, sizeof(key))) return -1;
-    OSStatus rc = SecKeychainFindGenericPassword(NULL, 18, "cognitive-os-agent", (UInt32)strlen(key), key,
+    OSStatus rc = SecKeychainFindGenericPassword(NULL, 18, "light-agent", (UInt32)strlen(key), key,
                                                  NULL, NULL, &item);
     if (rc == errSecItemNotFound) return 0;
     if (rc != errSecSuccess) return -1;
@@ -795,7 +795,7 @@ int ssh_vault_put(const char *state_root, const char *name, const char *password
     if (fs_mkdirs(dir)) return -1;
 #if defined(_WIN32)
     DATA_BLOB input = {(DWORD)len, (BYTE *)password}, encrypted = {0};
-    if (!CryptProtectData(&input, L"cognitive-os-agent SSH", NULL, NULL, NULL,
+    if (!CryptProtectData(&input, L"light-agent SSH", NULL, NULL, NULL,
                           CRYPTPROTECT_UI_FORBIDDEN, &encrypted)) return -1;
     char *hex = malloc((size_t)encrypted.cbData * 2 + 1);
     if (!hex) { LocalFree(encrypted.pbData); return -1; }

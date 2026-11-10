@@ -13,9 +13,9 @@ class Provider(BaseHTTPRequestHandler):
 provider=ThreadingHTTPServer(('127.0.0.1',0),Provider)
 threading.Thread(target=provider.serve_forever,daemon=True).start()
 with tempfile.TemporaryDirectory(prefix='coa-rate-limit-') as folder:
- state=Path(folder);state.joinpath('cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture-only','llm.base_url':f'http://127.0.0.1:{provider.server_port}','reasoning.max_rounds':8}),encoding='utf8')
+ state=Path(folder);state.joinpath('light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture-only','llm.base_url':f'http://127.0.0.1:{provider.server_port}','reasoning.max_rounds':8}),encoding='utf8')
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
- binary=root/os.environ.get('COA_BUILD_DIR','build')/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+ binary=root/os.environ.get('COA_BUILD_DIR','build')/('light-agent.exe' if os.name=='nt' else 'light-agent')
  with (root/'build-rate-limit.log').open('w') as log:
   proc=subprocess.Popen([str(binary),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=root,stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
   try:

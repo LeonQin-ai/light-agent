@@ -12,8 +12,8 @@ cd "$(dirname "$0")/.."
 ZIG=""
 if   [ -x tools/zig/zig.exe ]; then ZIG="tools/zig/zig.exe"
 elif [ -x tools/zig/zig     ]; then ZIG="tools/zig/zig"
-elif [ -x ../../cognitive-os-agent/tools/zig/zig.exe ]; then ZIG="../../cognitive-os-agent/tools/zig/zig.exe"
-elif [ -x ../../cognitive-os-agent/tools/zig/zig     ]; then ZIG="../../cognitive-os-agent/tools/zig/zig"
+elif [ -x ../../light-agent/tools/zig/zig.exe ]; then ZIG="../../light-agent/tools/zig/zig.exe"
+elif [ -x ../../light-agent/tools/zig/zig     ]; then ZIG="../../light-agent/tools/zig/zig"
 elif command -v zig >/dev/null 2>&1; then ZIG="zig"
 else
   echo "ERROR: zig not found." >&2
@@ -26,10 +26,10 @@ mkdir -p build
 echo "[cov] building instrumented test binary"
 "$ZIG" cc -std=c11 -Wall -Wextra -O0 -g -finstrument-functions \
     -Iinclude -Ithird_party/cJSON -Ithird_party/wasm3 \
-    -o build/cognitive-os-agent-cov.exe $SRCS -lws2_32 -lwinhttp -lbcrypt -lcrypt32 -lshell32 -lm
+    -o build/light-agent-cov.exe $SRCS -lws2_32 -lwinhttp -lbcrypt -lcrypt32 -lshell32 -lm
 
 echo "[cov] running tests (records cov_hits.txt; log: build/coverage-test.log)"
-if ! ./build/cognitive-os-agent-cov.exe >build/coverage-test.log 2>&1; then
+if ! ./build/light-agent-cov.exe >build/coverage-test.log 2>&1; then
   tail -n 50 build/coverage-test.log >&2
   exit 1
 fi
@@ -41,8 +41,8 @@ echo "[cov] report"
 ROOT="$(pwd)"
 if command -v cygpath >/dev/null 2>&1; then ROOT="$(cygpath -w "$(pwd)")"; fi
 # overall (includes vendored third_party cJSON + wasm3)
-./build/cov_resolve.exe build/cognitive-os-agent-cov.exe build/cov_hits.txt "$ROOT"
+./build/cov_resolve.exe build/light-agent-cov.exe build/cov_hits.txt "$ROOT"
 echo
 # first-party only (src/) — the target number. Vendored wasm3/cJSON are
 # third-party and drag the raw total down via macro-expanded opcode handlers.
-./build/cov_resolve.exe build/cognitive-os-agent-cov.exe build/cov_hits.txt "$ROOT\\src" "${1:-}"
+./build/cov_resolve.exe build/light-agent-cov.exe build/cov_hits.txt "$ROOT\\src" "${1:-}"

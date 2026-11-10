@@ -25,7 +25,7 @@ backend = Path(__file__).resolve().parents[1]
 output = args.reuse_output.resolve() if args.reuse_output else backend/'build'/time.strftime('live-long-task-%Y%m%d-%H%M%S')
 output.mkdir(parents=True,exist_ok=bool(args.reuse_output))
 if args.reuse_output:
-    for name in ('cognitive-os-context-runtime.pptx','technical-qa.md','verification.json'):
+    for name in ('light-agent-context-runtime.pptx','technical-qa.md','verification.json'):
         if not (output/name).is_file(): raise SystemExit('Missing prior agent artifact: '+name)
     for name in ('final-task.json','run-summary.json','samples.jsonl','server.log','task.txt','monitor.json','independent-verification.json'):
         if (output/name).exists(): (output/name).rename(output/('baseline-'+name))
@@ -38,12 +38,12 @@ config['reasoning.max_rounds'] = -1
 config['llm.routing'] = 'fixed'
 sources = ['include/context/mmu.h','src/context/mmu.c','src/retrieval/context_builder.c',
            'src/action/tool_file.c','src/cognition/planner.c','src/cognition/reasoning.c']
-prompt = f'''根据最新 Cognitive OS Agent 源码生成一份 20–24 页中文技术深度 PPT，适合完整技术讲解以及别人提问。
+prompt = f'''根据最新 light-agent 源码生成一份 20–24 页中文技术深度 PPT，适合完整技术讲解以及别人提问。
 只读源码，不修改项目文件。所有写入、脚本、产物都只能放在当前工作目录 {output.as_posix()}。
 需要实际阅读的源码：{json.dumps([(backend/p).as_posix() for p in sources],ensure_ascii=False)}。
 mmu.c、context_builder.c、tool_file.c、planner.c 要完成相关完整分页阅读；reasoning.c 可以先搜索并阅读任务循环、失败恢复和完成判定的相关函数，不要求全文。
 内容必须依据真实实现，覆盖分层记忆与上下文、页缓存与版本失效、检索组装、工具执行、模型上下文及输出预算、无进展检测、失败恢复和路径重新发现、完成证据、并发与局限。
-输出 cognitive-os-context-runtime.pptx（20–24页，每页有具体机制、源码函数或数据流，至少8页标注源码路径/函数；至少18页正文超过60字，至少16页演讲者备注超过100字）、technical-qa.md（至少3000字，包含不少于15个深入技术问题、源码依据、取舍与回答）、verification.json。
+输出 light-agent-context-runtime.pptx（20–24页，每页有具体机制、源码函数或数据流，至少8页标注源码路径/函数；至少18页正文超过60字，至少16页演讲者备注超过100字）、technical-qa.md（至少3000字，包含不少于15个深入技术问题、源码依据、取舍与回答）、verification.json。
 可以使用已安装的 python-pptx。自行编写生成脚本，实际执行；脚本失败应根据真实错误修复后重跑。不要只写脚本或只描述计划。
 完成前自行用 Python 打开 PPTX，检查页数、文字、演讲备注、源码引用，并将检查结果写入 verification.json。最终给出实际文件位置及验证结果，未完成不要宣布完成。
 避免重复读取未变化且已获取的同一页；每一步应基于现有结果推进。'''
@@ -58,7 +58,7 @@ if args.reuse_output:
 
 with tempfile.TemporaryDirectory(prefix='coa-live-long-state-') as directory:
     state = Path(directory)
-    (state/'cognitive-os-agent.json').write_text(json.dumps(config),encoding='utf-8')
+    (state/'light-agent.json').write_text(json.dumps(config),encoding='utf-8')
     with socket.socket() as reservation:
         reservation.bind(('127.0.0.1',0)); port = reservation.getsockname()[1]
     def request(path, body=None):
@@ -66,7 +66,7 @@ with tempfile.TemporaryDirectory(prefix='coa-live-long-state-') as directory:
             data=json.dumps(body).encode() if body is not None else None,
             headers={'Content-Type':'application/json'})
         with urllib.request.urlopen(req,timeout=10) as response: return json.load(response)
-    binary=backend/'build'/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+    binary=backend/'build'/('light-agent.exe' if os.name=='nt' else 'light-agent')
     seen_ids=set(); signatures=collections.Counter(); failures=[]; task={}
     with (output/'server.log').open('w',encoding='utf-8') as log, (output/'samples.jsonl').open('w',encoding='utf-8') as samples:
         process=subprocess.Popen([str(binary),'--state',str(state),'--workspace',str(output),'serve',str(port)],
@@ -102,7 +102,7 @@ with tempfile.TemporaryDirectory(prefix='coa-live-long-state-') as directory:
             (output/'final-task.json').write_text(json.dumps(task,ensure_ascii=False,indent=2),encoding='utf-8')
             (output/'run-summary.json').write_text(json.dumps({**summary,'model':config.get('llm.model'),'failed_steps':failures},ensure_ascii=False,indent=2),encoding='utf-8')
             assert task.get('status')=='DONE', 'Long task did not complete; inspect saved task and samples'
-            deck=output/'cognitive-os-context-runtime.pptx'
+            deck=output/'light-agent-context-runtime.pptx'
             with zipfile.ZipFile(deck) as archive: assert archive.testzip() is None
             from pptx import Presentation
             presentation=Presentation(deck)

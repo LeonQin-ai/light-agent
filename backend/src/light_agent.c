@@ -1,9 +1,9 @@
 #include "os/http_cancel.h"
 #include "api/attachment.h"
-/* cognitive-os-agent.c — runtime context assembly: wires config, bus, metrics, policy,
+/* light-agent.c — runtime context assembly: wires config, bus, metrics, policy,
  * memory, snapshot, tools, LLM, transactions, reasoning, scheduler and the
  * HTTP API into a single runtime_ctx. */
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 #include "api/api_rest.h"
 #include "runtime/event_bus.h"
 #include "memory/summary.h"
@@ -795,7 +795,7 @@ int init(runtime_ctx *ctx, const config *cfg) {
     fs_mkdirs(ctx->workspace); /* tools (esp. shell cwd) need it to exist */
     sock_init();
 
-    /* layered config: defaults -> <state_root>/cognitive-os-agent.json -> env COA_ */
+    /* layered config: defaults -> <state_root>/light-agent.json -> env COA_ */
     ctx->config = config_new();
     config_apply_json(ctx->config, "{\"llm.provider\":\"mock\",\"llm.model\":\"mock\",\"llm.base_url\":\"\","
                                        "\"scheduler.workers\":8,\"tx.use_transaction\":true,\"http.port\":0,"
@@ -804,8 +804,14 @@ int init(runtime_ctx *ctx, const config *cfg) {
         char cfgfile[600];
         if (cfg && cfg->config_file && *cfg->config_file)
             snprintf(cfgfile, sizeof(cfgfile), "%s", cfg->config_file);
-        else
-            path_join(cfgfile, sizeof(cfgfile), ctx->state_root, "cognitive-os-agent.json");
+        else {
+            path_join(cfgfile, sizeof(cfgfile), ctx->state_root, "light-agent.json");
+            if (!fs_exists(cfgfile)) {
+                char legacy[600];
+                path_join(legacy, sizeof(legacy), ctx->state_root, "cognitive-os-agent.json");
+                if (fs_exists(legacy)) snprintf(cfgfile, sizeof(cfgfile), "%s", legacy);
+            }
+        }
         have_cfg_file = (config_load_file(ctx->config, cfgfile) == 0);
         if (!have_cfg_file)
             log_debug("no config file at %s (using defaults + env)", cfgfile);
@@ -1039,7 +1045,7 @@ int init(runtime_ctx *ctx, const config *cfg) {
             router_add(ctx->router, provider, provider, base_url, api_key, model, 1.0);
         } else {
             router_save_file(ctx->router, rpath); /* normalise/ensure file exists */
-            /* Fresh state dir (no cognitive-os-agent.json) but routes were
+            /* Fresh state dir (no light-agent.json) but routes were
              * configured in a previous session: adopt the top route as the
              * active LLM instead of falling back to the offline mock default,
              * and persist it so the next boot starts identically. */
@@ -1063,7 +1069,7 @@ int init(runtime_ctx *ctx, const config *cfg) {
                         config_set_str(ctx->config, "llm.model", best->model ? best->model : "");
                         config_set_str(ctx->config, "llm.base_url", best->base_url ? best->base_url : "");
                         config_set_str(ctx->config, "llm.api_key", best->api_key ? best->api_key : "");
-                        path_join(cfgfile, sizeof(cfgfile), ctx->state_root, "cognitive-os-agent.json");
+                        path_join(cfgfile, sizeof(cfgfile), ctx->state_root, "light-agent.json");
                         if (config_save_file(ctx->config, cfgfile) != 0)
                             log_warn("init: could not persist adopted llm config to %s", cfgfile);
                         log_info("init: no config file; adopted route as active LLM (provider=%s model=%s)",
@@ -1095,7 +1101,7 @@ int init(runtime_ctx *ctx, const config *cfg) {
     /* built-in demo skill (cross-platform: echo works in cmd.exe and sh) */
     if (ctx->skills) {
         const skill demo = {"echo_hello", "Reply with a fixed greeting.", "shell",
-                                "echo hello from cognitive-os-agent", NULL};
+                                "echo hello from light-agent", NULL};
         skill_register(ctx->skills, &demo);
         skill_registry_load(ctx->skills, ctx->state_root);
         int local_skills = skill_registry_load_local(ctx->skills, ctx->state_root);
@@ -1248,13 +1254,13 @@ int init(runtime_ctx *ctx, const config *cfg) {
     if (ctx->bus)
         event_bus_subscribe(ctx->bus, -1, bus_to_ws, ctx);
 
-    log_info("cognitive-os-agent %s initialized (provider=%s workers=%d tx=%s state=%s)", CAGENT_VERSION, provider,
+    log_info("light-agent %s initialized (provider=%s workers=%d tx=%s state=%s)", CAGENT_VERSION, provider,
                  ctx->workers, ctx->use_transaction ? "on" : "off", ctx->state_root);
     if (ctx->bus) {
         cJSON *p = cJSON_CreateObject();
         cJSON_AddStringToObject(p, "version", CAGENT_VERSION);
         cJSON_AddStringToObject(p, "provider", provider);
-        event_bus_publish(ctx->bus, EV_SYSTEM, "cognitive-os-agent", p);
+        event_bus_publish(ctx->bus, EV_SYSTEM, "light-agent", p);
     }
 
     return 0;
@@ -1517,7 +1523,7 @@ int set_llm(runtime_ctx *ctx, const char *provider, const char *base_url, const 
         config_set_str(ctx->config, "llm.base_url", base_url);
         config_set_str(ctx->config, "llm.api_key", api_key);
         char cfgfile[600];
-        path_join(cfgfile, sizeof(cfgfile), ctx->state_root, "cognitive-os-agent.json");
+        path_join(cfgfile, sizeof(cfgfile), ctx->state_root, "light-agent.json");
         if (config_save_file(ctx->config, cfgfile) != 0)
             log_warn("set_llm: could not persist config to %s", cfgfile);
         char rpath[600];
@@ -1528,7 +1534,7 @@ int set_llm(runtime_ctx *ctx, const char *provider, const char *base_url, const 
 
     free(ctx->provider);
     ctx->provider = xstrdup(provider);
-    log_info("cognitive-os-agent: active LLM switched to provider=%s model=%s", provider,
+    log_info("light-agent: active LLM switched to provider=%s model=%s", provider,
                  model ? model : "(default)");
     return 0;
 }
@@ -1591,7 +1597,7 @@ int agent_run(runtime_ctx *ctx, const char *agent, const char *task, char **answ
 int serve(runtime_ctx *ctx) {
     if (!ctx || !ctx->http)
         return -1;
-    log_info("cognitive-os-agent HTTP API serving on port %u", (unsigned)ctx->http_port);
+    log_info("light-agent HTTP API serving on port %u", (unsigned)ctx->http_port);
     return http_server_serve(ctx->http);
 }
 

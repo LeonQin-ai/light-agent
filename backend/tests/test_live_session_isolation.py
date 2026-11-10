@@ -3,13 +3,13 @@ import argparse,json,os,socket,subprocess,tempfile,time,urllib.request
 from pathlib import Path
 p=argparse.ArgumentParser();p.add_argument('--config',required=True);a=p.parse_args();root=Path(__file__).resolve().parents[1];build=root/os.environ.get('COA_BUILD_DIR','build');config=json.loads(Path(a.config).read_text(encoding='utf-8-sig'));report={'model':config.get('llm.model'),'tasks':[]}
 with tempfile.TemporaryDirectory(prefix='coa-live-isolation-') as folder:
- state=Path(folder,'private');state.mkdir();work=Path(folder,'work');work.mkdir();config.update({'auth.key':'','http.bind':'127.0.0.1','reasoning.max_rounds':5});(state/'cognitive-os-agent.json').write_text(json.dumps(config),encoding='utf8')
+ state=Path(folder,'private');state.mkdir();work=Path(folder,'work');work.mkdir();config.update({'auth.key':'','http.bind':'127.0.0.1','reasoning.max_rounds':5});(state/'light-agent.json').write_text(json.dumps(config),encoding='utf8')
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  def req(method,path,body=None):
   r=urllib.request.Request(f'http://127.0.0.1:{port}'+path,method=method,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
   with urllib.request.urlopen(r,timeout=10) as response:return json.load(response)
  with (build/'session-isolation-live.log').open('w',encoding='utf8') as log:
-  proc=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',str(state),'--workspace',str(work),'serve',str(port)],stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0));tasks=[]
+  proc=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',str(state),'--workspace',str(work),'serve',str(port)],stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0));tasks=[]
   try:
    for _ in range(100):
     try:req('GET','/v1/scheduler');break

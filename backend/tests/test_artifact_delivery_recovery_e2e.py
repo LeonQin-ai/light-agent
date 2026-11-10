@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from fixture_http_response import respond_json
 ROOT=Path(__file__).resolve().parents[1]
 BUILD=ROOT/os.environ.get('COA_BUILD_DIR','build')
-BINARY=BUILD/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+BINARY=BUILD/('light-agent.exe' if os.name=='nt' else 'light-agent')
 PROGRESS='我将并行继续阅读两个 README 的关键部分，并探索源码结构。让我读取两个项目的续读部分。'
 FINAL='对比结论：LEFT_SOURCE_PROOF 使用 scaling_cur_freq，RIGHT_SOURCE_PROOF 使用 cpuinfo_cur_freq；comparison.html 已写入并读回验证。'
 HTML='<html><body>LEFT_SOURCE_PROOF scaling_cur_freq; RIGHT_SOURCE_PROOF cpuinfo_cur_freq; 1000</body></html>'
@@ -54,7 +54,7 @@ def exercise(protocol, mode):
    work=Path(folder)
    for directory,proof in [('left','LEFT_SOURCE_PROOF scaling_cur_freq'),('right','RIGHT_SOURCE_PROOF cpuinfo_cur_freq')]:
     (work/directory).mkdir();(work/directory/'README.md').write_text('Project overview only.',encoding='utf8');(work/directory/'source.c').write_text(proof,encoding='utf8')
-   (work/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':20}),encoding='utf8')
+   (work/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':20}),encoding='utf8')
    with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
    def api(path,body=None):
     req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})

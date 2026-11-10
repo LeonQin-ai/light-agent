@@ -6,14 +6,14 @@ p=argparse.ArgumentParser(__doc__);p.add_argument('--config',required=True,type=
 p.add_argument('--report',type=Path,default=root/'build/live-memory-summary.json');a=p.parse_args()
 cfg=json.loads(a.config.read_text(encoding='utf-8-sig'));cfg.update({'auth.key':'','http.bind':'127.0.0.1'})
 report={'model':cfg.get('llm.model'),'passed':False,'scope':'one configured Runtime read-only memory-summary request; no retries'}
-binary=root/'build'/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+binary=root/'build'/('light-agent.exe' if os.name=='nt' else 'light-agent')
 a.report.parent.mkdir(parents=True,exist_ok=True);proc=None
 with tempfile.TemporaryDirectory(prefix='coa-live-summary-') as folder:
  state=Path(folder);work=state/'workspace';work.mkdir();(state/'memory').mkdir()
  project='Project_'+uuid.uuid4().hex[:10];proof=uuid.uuid4().hex[:14]
  facts={'project_name':project,'release_verification_code':proof,'constraint':'Do not modify src/runtime; deliver only a read-only summary. All project data is fictional test data.'}
  (state/'memory/facts.json').write_text(json.dumps(facts),encoding='utf8')
- (state/'cognitive-os-agent.json').write_text(json.dumps(cfg),encoding='utf8')
+ (state/'light-agent.json').write_text(json.dumps(cfg),encoding='utf8')
  def api(method,path,body=None):
   req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,method=method,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
   with urllib.request.urlopen(req,timeout=10) as r:return json.load(r)

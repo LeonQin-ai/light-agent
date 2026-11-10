@@ -644,7 +644,7 @@ static http_stream *http_open(const char *base_url, const char *method, const ch
     blen = body ? strlen(body) : 0;
     strbuf_appendf(&sb, "%s %s HTTP/1.1\r\n", method, path);
     strbuf_appendf(&sb, "Host: %s:%u\r\n", host, (unsigned)port);
-    strbuf_append(&sb, "User-Agent: cognitive-os-agent/0.1\r\n");
+    strbuf_append(&sb, "User-Agent: light-agent/0.1\r\n");
     if (content_type && blen)
         strbuf_appendf(&sb, "Content-Type: %s\r\n", content_type);
     if (blen)

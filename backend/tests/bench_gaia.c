@@ -2,7 +2,7 @@
  *
  * GAIA evaluates: multi-step tool use, cross-file reasoning, document parsing,
  * (Level 3 adds long-horizon web/GUI work — out of scope, see report). Tasks
- * here mirror GAIA task *shapes* reachable with cognitive-os-agent's tools:
+ * here mirror GAIA task *shapes* reachable with light-agent's tools:
  *   L1: single-file / single-fact extraction and arithmetic
  *   L2: multi-file joins, filtering, aggregation
  * plus one LLM-layer vision task (image understanding, requires a multimodal
@@ -19,7 +19,7 @@
  *
  * Modes: --real (default, LLM_* env) / --mock / --vision (adds image task).
  */
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 #include "llm/llm.h"
 #include "api/websocket.h"
 #include "os/os_fs.h"
@@ -348,7 +348,7 @@ int main(int argc, char **argv) {
                 cfg.provider ? cfg.provider : "?");
         return 1;
     }
-    printf("cognitive-os-agent GAIA-style benchmark [%s] provider=%s model=%s\n\n",
+    printf("light-agent GAIA-style benchmark [%s] provider=%s model=%s\n\n",
            real ? "REAL" : "MOCK", ctx.provider ? ctx.provider : "?",
            getenv("LLM_MODEL") ? getenv("LLM_MODEL") : "?");
 

@@ -14,7 +14,7 @@
 #include "cJSON.h"
 
 static const char *SYS_PROMPT =
-    "You are the planner of a cognitive OS. Decide what tool actions to take "
+    "You are the planner of a light-agent. Decide what tool actions to take "
     "for the user request. Respond with ONLY a JSON array of actions of the "
     "form [{\"tool\":\"...\",\"args\":{...}}].\n"
     "Available tools and their EXACT argument names:\n"
@@ -44,7 +44,7 @@ static const char *SYS_PROMPT =
     "  User: \"hello\"\n"
     "  -> [{\"tool\":\"complete_task\",\"args\":{\"status\":\"complete\",\"requires_tools\":false,\"answer\":\"Hello! How can I help you?\"}}]";
 
-static const char *SYS_PROMPT_HEAD = "You are the planner of a cognitive OS. Decide what tool actions to take "
+static const char *SYS_PROMPT_HEAD = "You are the planner of a light-agent. Decide what tool actions to take "
                                      "for the user request. Respond with ONLY a JSON array of actions of the "
                                      "form [{\"tool\":\"...\",\"args\":{...}}].\n"
                                      "Available tools and their EXACT argument names:\n"
@@ -93,7 +93,7 @@ static const char *SYS_PROMPT_TAIL =
     "script via shell — do not count long tables in your head.";
 
 static const char *SYS_NATIVE_HEAD=
-    "You are the planner of a cognitive OS. Decide whether the user request needs tool operations. "
+    "You are the planner of a light-agent. Decide whether the user request needs tool operations. "
     "Use the supplied native function schemas when operations are required. Pass each function's "
     "parameter object directly; never nest an action envelope with tool/args inside its parameters. "
     "When no further operations are needed, call complete_task(status=complete, requires_tools=false, answer). "

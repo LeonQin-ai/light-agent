@@ -24,7 +24,7 @@ state = work/'state'; state.mkdir(exist_ok=True)
 source = json.loads(Path(args.config).read_text(encoding='utf-8'))
 cfg = {k:v for k,v in source.items() if k.startswith('llm.')}
 cfg.update({'reasoning.max_rounds':12,'scheduler.workers':2,'tx.use_transaction':False})
-(state/'cognitive-os-agent.json').write_text(json.dumps(cfg),encoding='utf-8')
+(state/'light-agent.json').write_text(json.dumps(cfg),encoding='utf-8')
 (work/'stats.py').write_text('def average(values):\n    return sum(values) / len(values)\n',encoding='utf-8')
 (work/'test_stats.py').write_text('''from stats import average
 assert average([2, 4, 6]) == 4
@@ -81,4 +81,4 @@ with (work/'server.log').open('w',encoding='utf-8') as log:
         try: server.wait(timeout=5)
         except subprocess.TimeoutExpired: server.kill(); server.wait()
         # Do not retain copied credentials among test artifacts.
-        (state/'cognitive-os-agent.json').unlink(missing_ok=True)
+        (state/'light-agent.json').unlink(missing_ok=True)

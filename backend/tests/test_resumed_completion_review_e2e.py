@@ -47,14 +47,14 @@ for protocol in ('legacy','native'):
       with tempfile.TemporaryDirectory(prefix='coa-resumed-review-') as folder:
         state=Path(folder)
         for i,marker in enumerate(('FIRST_SOURCE','SECOND_SOURCE','FINAL_SOURCE')):(state/f'source{i}.c').write_text(marker+(' '*5000 if i==0 else ''),encoding='utf8')
-        (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture',
+        (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture',
           'llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':12}),encoding='utf8')
         with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
         def api(path,body=None):
             req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
             with urllib.request.urlopen(req,timeout=5) as response:return json.load(response)
         with (build/f'resumed-review-{protocol}.log').open('w',encoding='utf8') as log:
-          proc=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=root,stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':protocol},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+          proc=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=root,stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':protocol},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
           try:
             for _ in range(150):
                 try:api('/v1/scheduler');break

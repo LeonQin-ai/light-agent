@@ -38,7 +38,7 @@ const http=require('node:http');
     await page.evaluate(()=>{document.body.classList.add('desktop-shell');showAppearance();});
     await page.locator('#appearance-theme').selectOption('ocean');
     assert.equal(await page.evaluate(()=>document.body.dataset.theme),'ocean','desktop theme selector remains accessible with the web top bar hidden');
-    assert.equal(await page.evaluate(()=>localStorage.getItem('cognitive-os-agent-theme')),'ocean');
+    assert.equal(await page.evaluate(()=>localStorage.getItem('light-agent-theme')),'ocean');
     await page.evaluate(()=>closeAppearance());
     await page.locator('#sidebar-theme').selectOption('forest');
     assert.equal(await page.evaluate(()=>document.body.dataset.theme),'forest');

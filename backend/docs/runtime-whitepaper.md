@@ -1,4 +1,4 @@
-# Cognitive OS Runtime：边界、状态与可验证性能
+# light-agent Runtime：边界、状态与可验证性能
 
 版本：2026-10-14；对应 #122 的扩展基准和 #129/#130 的修复。
 

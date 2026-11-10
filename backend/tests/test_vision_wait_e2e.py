@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix='coa-vision-wait-') as folder:
     provider=ThreadingHTTPServer(('127.0.0.1',0),Provider)
     threading.Thread(target=provider.serve_forever,daemon=True).start()
     base_url=f'http://127.0.0.1:{provider.server_port}'
-    (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'capture-vision',
+    (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'capture-vision',
         'llm.base_url':base_url,'llm.api_key':'local-fixture'}))
     # Set the mock route's declared context window explicitly. The planner
     # allocates at most one quarter of this to output (capped at 32768), while
@@ -73,7 +73,7 @@ with tempfile.TemporaryDirectory(prefix='coa-vision-wait-') as folder:
         data=json.dumps(body).encode() if isinstance(body,dict) else body
         with urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=data,
             headers={'Content-Type':'application/json'}),timeout=5) as response: return json.load(response)
-    binary=backend/os.environ.get('COA_BUILD_DIR','build')/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+    binary=backend/os.environ.get('COA_BUILD_DIR','build')/('light-agent.exe' if os.name=='nt' else 'light-agent')
     with (binary.parent/'vision-wait-e2e.log').open('w',encoding='utf-8') as log:
         env=os.environ.copy(); env['COA_LLM_VISION_TIMEOUT_MS']='1000';env['COA_TOOL_PROTOCOL']=os.environ.get('COA_VISION_TEST_PROTOCOL','legacy')
         process=subprocess.Popen([str(binary),'--state',str(state),'--workspace',str(state),'serve',str(port)],

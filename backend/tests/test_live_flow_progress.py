@@ -8,13 +8,13 @@ with tempfile.TemporaryDirectory(prefix='coa-flow-live-') as folder:
     config.update({'auth.key':'','http.bind':'127.0.0.1','reasoning.max_rounds':5})
     state=Path(folder,'state');state.mkdir();workspace=Path(folder,'workspace');workspace.mkdir()
     if args.workspace_test:(workspace/'marker.txt').write_bytes(b'FLOW_WORKSPACE_PROOF\r\n')
-    Path(state,'cognitive-os-agent.json').write_text(json.dumps(config),encoding='utf8')
+    Path(state,'light-agent.json').write_text(json.dumps(config),encoding='utf8')
     with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     def req(method,path,body=None):
         r=urllib.request.Request(f'http://127.0.0.1:{port}'+path,method=method,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
         with urllib.request.urlopen(r,timeout=10) as response:return json.load(response)
     with (build/'flow-progress-live.log').open('w',encoding='utf8') as log:
-        server=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',str(state),'--workspace',folder,'serve',str(port)],stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        server=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',str(state),'--workspace',folder,'serve',str(port)],stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         tid=None;stages=set();observed=[];started=time.monotonic()
         try:
             for _ in range(100):

@@ -1218,7 +1218,7 @@ function appearanceAdjust(){
   const shell = document.body;
   shell.style.setProperty('--wallpaper-opacity',String(opacity / 100));
   shell.style.setProperty('--wallpaper-blur',blur + 'px');
-  try { localStorage.setItem('cognitive-os-appearance-settings',JSON.stringify({opacity,blur})); } catch(e) {}
+  try { localStorage.setItem('light-agent-appearance-settings',JSON.stringify({opacity,blur})); } catch(e) {}
 }
 async function appearanceChoose(input){
   const file = input.files?.[0]; input.value = '';
@@ -1260,7 +1260,7 @@ async function saveStartupMedia(file){
 function closeAppearance(){ $('appearance-dialog').close(); }
 async function appearanceLoad(){
   try {
-    const settings = JSON.parse(localStorage.getItem('cognitive-os-appearance-settings') || '{}');
+    const settings = JSON.parse(localStorage.getItem('light-agent-appearance-settings') ?? localStorage.getItem('cognitive-os-appearance-settings') ?? '{}');
     if(Number.isFinite(settings.opacity)) $('appearance-opacity').value = Math.min(65,Math.max(5,settings.opacity));
     if(Number.isFinite(settings.blur)) $('appearance-blur').value = Math.min(18,Math.max(0,settings.blur));
   } catch(e) {}
@@ -2033,7 +2033,7 @@ panels.models = `
   </details>
   <div class="card">
     <h2>Model routes</h2>
-    <div class="hint">管理 LLM 路由：点 <b>Set active</b> 把某条路由设为当前活跃模型（实时切换并持久化到 state/cognitive-os-agent.json）；<b>Delete</b> 移除一条路由。</div>
+    <div class="hint">管理 LLM 路由：点 <b>Set active</b> 把某条路由设为当前活跃模型（实时切换并持久化到 state/light-agent.json）；<b>Delete</b> 移除一条路由。</div>
     <div class="row" style="margin-top:6px">
       <button onclick="loadModels()">Refresh</button>
       <span id="models-stat" class="muted"></span>
@@ -3560,7 +3560,7 @@ function channelRemove(name){
 }
 
 function channelSendTest(name){
-  call('POST', '/v1/im/channels/' + encodeURIComponent(name) + '/send', {text: '测试消息 来自 cognitive-os-agent 控制台'})
+  call('POST', '/v1/im/channels/' + encodeURIComponent(name) + '/send', {text: '测试消息 来自 light-agent 控制台'})
     .then(() => toast('✉️ 已发送测试消息到 ' + name));
 }
 
@@ -3833,7 +3833,7 @@ async function workspaceSelect(path){
 }
 function workspaceDialog(){
   let dialog=$('workspace-dialog');
-  if(!dialog){dialog=document.createElement('dialog');dialog.id='workspace-dialog';dialog.innerHTML='<form onsubmit="event.preventDefault();workspaceAdd()"><h2>添加工作区</h2><label>名称（可选）<input id="workspace-name" placeholder="例如 cognitive-os"></label><label>本机文件夹路径<input id="workspace-path" required placeholder="D:/AI/code/cognitive-os" autocomplete="off"></label><button type="button" id="workspace-browse" class="sec" onclick="workspaceBrowse()">从电脑选择文件夹…</button><p class="hint">任务以这个目录解析相对路径和运行命令。此选择不会创建安全沙箱。</p><div class="row"><span id="workspace-error" role="alert"></span><button type="button" class="sec" onclick="this.closest(\'dialog\').close()">取消</button><button type="submit">添加工作区</button></div></form>';document.body.append(dialog);}
+  if(!dialog){dialog=document.createElement('dialog');dialog.id='workspace-dialog';dialog.innerHTML='<form onsubmit="event.preventDefault();workspaceAdd()"><h2>添加工作区</h2><label>名称（可选）<input id="workspace-name" placeholder="例如 light-agent"></label><label>本机文件夹路径<input id="workspace-path" required placeholder="D:/AI/code/light-agent" autocomplete="off"></label><button type="button" id="workspace-browse" class="sec" onclick="workspaceBrowse()">从电脑选择文件夹…</button><p class="hint">任务以这个目录解析相对路径和运行命令。此选择不会创建安全沙箱。</p><div class="row"><span id="workspace-error" role="alert"></span><button type="button" class="sec" onclick="this.closest(\'dialog\').close()">取消</button><button type="submit">添加工作区</button></div></form>';document.body.append(dialog);}
   if(!$('workspace-directory-picker')){const picker=document.createElement('div');picker.id='workspace-directory-picker';picker.hidden=true;picker.style.cssText='max-height:240px;overflow:auto;margin:12px 0';$('workspace-browse').after(picker);}
   $('workspace-error').textContent='';dialog.showModal();$('workspace-path').focus();
 }
@@ -5938,7 +5938,7 @@ const THEMES = ['dark', 'light', 'ocean', 'forest', 'sunset', 'dragongirl'];
 function applyTheme(t){
   if(!THEMES.includes(t)) t = 'dark';
   document.body.dataset.theme = t;
-  try { localStorage.setItem('cognitive-os-agent-theme', t); } catch(e) {}
+  try { localStorage.setItem('light-agent-theme', t); } catch(e) {}
   const sel = $('theme'); if(sel) sel.value = t;
   for(const id of ['sidebar-theme','appearance-theme']){const el=$(id);if(el)el.value=t;}
 }
@@ -6614,7 +6614,7 @@ function initTaskPet(){
   });
   bridge.postMessage('task-pet:query');
 }
-applyTheme(localStorage.getItem('cognitive-os-agent-theme') || 'dark');
+applyTheme(localStorage.getItem('light-agent-theme') ?? localStorage.getItem('cognitive-os-agent-theme') ?? 'dark');
 void appearanceLoad();
 
 /* ================= 连接状态 ================= */

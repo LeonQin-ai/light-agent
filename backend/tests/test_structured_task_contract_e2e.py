@@ -6,7 +6,7 @@ from fixture_http_response import respond_json
 
 ROOT=Path(__file__).resolve().parents[1]
 BUILD=ROOT/os.environ.get('COA_BUILD_DIR','build')
-BINARY=BUILD/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+BINARY=BUILD/('light-agent.exe' if os.name=='nt' else 'light-agent')
 CONTENT='ACTUAL_ARTIFACT_PROOF'
 FINAL='I will read is a quoted phrase. 已完成；检查依据在实际执行记录中。'
 def action(name,**args):return {'tool':name,'args':args}
@@ -132,7 +132,7 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
                 for path in sources:(work/path).write_text('SOURCE',encoding='utf8')
             if mode=='batch50':
                 (work/'produce50.py').write_text("from pathlib import Path\nfor i in range(1,51): Path(f'chapter{i:02d}.md').write_text(f'CHAPTER {i} VERIFIED CONTENT',encoding='utf8')\n",encoding='utf8')
-            (work/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'contract-fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':16}))
+            (work/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'contract-fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':16}))
             with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
             def api(path,body=None):
                 req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})

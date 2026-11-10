@@ -1,4 +1,4 @@
-/* test_all.c — unit tests for cognitive-os-agent modules.
+/* test_all.c — unit tests for light-agent modules.
  * Build with: zig cc -Iinclude -Ithird_party/cJSON $(find src third_party -name "*.c")
  * or via build.sh test. Exit 0 = all green, non-zero = failure. */
 #ifndef _GNU_SOURCE
@@ -62,7 +62,7 @@
 #include "im/im.h"
 #include "plugin_intelligence/generator.h"
 #include "plugin_runtime/wasm_runner.h"
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 #include "os/os_time.h"
 #include "os/http_cancel.h"
 #include "runtime/hook.h"
@@ -1423,7 +1423,7 @@ static void test_incomplete_run_memory_gate(void) {
     cfg.http_port = 0;
     const char *settings = "{\"reasoning.max_rounds\":1}";
     fs_mkdirs(cfg.state_root);
-    CHECK(fs_write_file("state-test/incomplete-memory/cognitive-os-agent.json",
+    CHECK(fs_write_file("state-test/incomplete-memory/light-agent.json",
                         settings, strlen(settings)) == 0);
     runtime_ctx ctx;
     if (init(&ctx, &cfg) != 0) { CHECK(0); return; }
@@ -2591,7 +2591,7 @@ static void test_planner_dsml(void) {
         /* Exact final planner reply from the 90-step PPT incident. The
          * installed 2026-10-14 binary treated this as a completed answer. */
         "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"file_read\">\n<｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"path\":\"interview-guide.zh-CN.md\",\"offset_bytes\":27994,\"max_bytes\":4000}</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n<｜｜DSML｜｜ invoke name=\"file_read\">\n<｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"path\":\"README.zh-CN.md\",\"offset_bytes\":19996,\"max_bytes\":4000}</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n<｜｜DSML｜｜ invoke name=\"file_read\">\n<｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"path\":\"_generate_process_docs.py\",\"offset_bytes\":7999,\"max_bytes\":4000}</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n<｜｜DSML｜｜ invoke name=\"file_read\">\n<｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"path\":\"interview-guide.zh-CN.md\",\"offset_bytes\":0,\"max_bytes\":4000}</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>",
-        "<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name=\"list_dir\"><｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"path\":\"D:/AI/code/cognitive-os\"}\\</｜｜DSML｜｜ parameter>\\</｜｜DSML｜｜ invoke><｜｜DSML｜｜ invoke name=\"glob\"><｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"pattern\":\"backend/**/*\"}</｜｜DSML｜｜ parameter></｜｜DSML｜｜ invoke></｜｜DSML｜｜ calls>",
+        "<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name=\"list_dir\"><｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"path\":\"D:/AI/code/light-agent\"}\\</｜｜DSML｜｜ parameter>\\</｜｜DSML｜｜ invoke><｜｜DSML｜｜ invoke name=\"glob\"><｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"pattern\":\"backend/**/*\"}</｜｜DSML｜｜ parameter></｜｜DSML｜｜ invoke></｜｜DSML｜｜ calls>",
         "<think>example must be skipped</think><｜DSML｜function_calls><｜DSML｜invoke name='file_write'><｜DSML｜parameter name='path' string='true'>note.txt</｜DSML｜parameter><｜DSML｜parameter name='content' string='true'>hello &amp; 世界</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜function_calls>",
         "<||DSML|| calls><||DSML|| invoke name=\"file_write\"><||DSML|| parameter name=\"args\" string=\"false\">{\"path\":\"note.txt\",\"content\":\"literal </||DSML|| parameter> preserved\"}</||DSML|| parameter></||DSML|| invoke></||DSML|| calls>",
         "<|DSML|calls><|DSML|invoke name='list_dir'></|DSML|invoke><|DSML|invoke name='file_write'><|DSML|parameter name='args' string='false'>{\"path\":",
@@ -2601,7 +2601,7 @@ static void test_planner_dsml(void) {
         "Example only: `<|DSML|calls><|DSML|invoke name='shell'></|DSML|invoke></|DSML|calls>`",
         "[{\"tool\":\"file_write\",\"args\":{\"content\":\"<|DSML|calls>\",\"path\":\"example.txt\"}}]",
         "<|DSML|calls><|DSML|invoke name='file_write'><|DSML|parameter name='content' string='true'>tail\\</|DSML|parameter></|DSML|invoke></|DSML|calls>",
-        "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"list_dir\">\n<｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"path\":\"D:/AI/code/cognitive-os\"}</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n<｜｜DSML｜｜ invoke name=\"list_dir\">\n<｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"path\":\"D:/AI/code/cognitive-os/deliverables\"}</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n<｜｜DSML｜｜ invoke name=\"glob\">\n<｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"pattern\":\"backend/**/*\"}</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>",
+        "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"list_dir\">\n<｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"path\":\"D:/AI/code/light-agent\"}</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n<｜｜DSML｜｜ invoke name=\"list_dir\">\n<｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"path\":\"D:/AI/code/light-agent/deliverables\"}</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n<｜｜DSML｜｜ invoke name=\"glob\">\n<｜｜DSML｜｜ parameter name=\"args\" string=\"false\">{\"pattern\":\"backend/**/*\"}</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>",
         /* Reproduce the restart/PPT task's final model reply: it first
          * explains the Python syntax error, then emits calls, and gateway
          * serialization escapes the closing DSML tags. */
@@ -2632,7 +2632,7 @@ static void test_planner_dsml(void) {
      * scalar args. Prose-prefixed envelopes above must not execute. */
     const char *mixed="<｜｜DSML｜｜ calls>"
         "<｜｜DSML｜｜ invoke name='glob'><｜｜DSML｜｜ parameter name='args' string='false'>{\"pattern\":\"**/memory/*.c\"}</｜｜DSML｜｜ parameter></｜｜DSML｜｜ invoke>"
-        "<｜｜DSML｜｜ invoke name='git'><｜｜DSML｜｜ parameter name='args' string='true'>status</｜｜DSML｜｜ parameter><｜｜DSML｜｜ parameter name='dir' string='true'>D:\\AI\\code\\cognitive-os\\backend</｜｜DSML｜｜ parameter></｜｜DSML｜｜ invoke></｜｜DSML｜｜ calls>";
+        "<｜｜DSML｜｜ invoke name='git'><｜｜DSML｜｜ parameter name='args' string='true'>status</｜｜DSML｜｜ parameter><｜｜DSML｜｜ parameter name='dir' string='true'>D:\\AI\\code\\light-agent\\backend</｜｜DSML｜｜ parameter></｜｜DSML｜｜ invoke></｜｜DSML｜｜ calls>";
     llm provider={.vt=&vt,.impl=(void *)mixed};
     planned_action *actions=NULL; int n=0; char *raw=NULL,*err=NULL;
     CHECK(planner_plan(&provider,"coder continuation",&actions,&n,&raw,&err)==0);
@@ -2641,7 +2641,7 @@ static void test_planner_dsml(void) {
         CHECK_STR(actions[0].tool,"glob"); CHECK_STR(actions[1].tool,"git");
         cJSON *args=cJSON_Parse(actions[1].args_json);
         CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"args")),"status");
-        CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"dir")),"D:\\AI\\code\\cognitive-os\\backend");
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"dir")),"D:\\AI\\code\\light-agent\\backend");
         cJSON_Delete(args);
     }
     planner_actions_free(actions,n); free(raw); free(err);
@@ -2895,7 +2895,7 @@ static void test_git_empty_args_checks_status(void) {
 #else
     long process_id = (long)getpid();
 #endif
-    snprintf(temp_path, sizeof(temp_path), "%s/cognitive-os-git-not-repo-%ld", tmp_root, process_id);
+    snprintf(temp_path, sizeof(temp_path), "%s/light-agent-git-not-repo-%ld", tmp_root, process_id);
     char *absolute_temp_path = fs_absolute_path(temp_path);
     CHECK(absolute_temp_path != NULL);
     if (absolute_temp_path && fs_mkdirs(absolute_temp_path) == 0) {
@@ -4302,10 +4302,10 @@ static void test_edit_search(void) {
     tool_ctx docs_ctx = tctx;
     docs_ctx.workspace = "state-test/docs-glob";
     CHECK(fs_mkdirs("state-test/docs-glob/docs") == 0);
-    CHECK(fs_write_file("state-test/docs-glob/docs/COGNITIVE_OS_ARCHITECTURE_BASELINE_V3.0.md", "fixture", 7) == 0);
+    CHECK(fs_write_file("state-test/docs-glob/docs/LIGHT_AGENT_ARCHITECTURE_BASELINE_V3.0.md", "fixture", 7) == 0);
     r = tool_execute(reg, "glob", "{\"pattern\":\"docs/**/*\"}", &docs_ctx);
     CHECK(r && r->ok && r->output &&
-          strstr(r->output, "docs/COGNITIVE_OS_ARCHITECTURE_BASELINE_V3.0.md"));
+          strstr(r->output, "docs/LIGHT_AGENT_ARCHITECTURE_BASELINE_V3.0.md"));
     tool_result_free(r);
 
     /* --- grep --- */
@@ -4559,13 +4559,13 @@ static void test_agent_loop(void) {
         fs_remove(f);
     }
 
-    /* max_rounds=1 via <state_root>/cognitive-os-agent.json: single-shot — the loop runs
+    /* max_rounds=1 via <state_root>/light-agent.json: single-shot — the loop runs
      * one round (the analyze read) and stops without ever fixing the file */
     {
         const char *f = "state-test/loop-w/b.txt";
         fs_write_file(f, "fixme OLD fixme", 15);
         fs_mkdirs("state-test/loop1");
-        fs_write_file("state-test/loop1/cognitive-os-agent.json",
+        fs_write_file("state-test/loop1/light-agent.json",
                          "{\"reasoning.max_rounds\":1}", 26);
         config cfg;
         memset(&cfg, 0, sizeof(cfg));
@@ -4586,7 +4586,7 @@ static void test_agent_loop(void) {
         free(content);
         runtime_shutdown(&ctx);
         fs_remove(f);
-        fs_remove("state-test/loop1/cognitive-os-agent.json");
+        fs_remove("state-test/loop1/light-agent.json");
     }
 
     /* issue #68: reading files, or a text-only claim, cannot complete a
@@ -7155,7 +7155,7 @@ static void test_context_budget(void) {
         "{\"context.budget_hot\":64,"
         "\"context.budget_warm\":64,"
         "\"context.budget_cold\":80}";
-    fs_write_file("state-test/budget/cognitive-os-agent.json", budget_cfg,
+    fs_write_file("state-test/budget/light-agent.json", budget_cfg,
                      sizeof(budget_cfg) - 1);
     config cfg;
     memset(&cfg, 0, sizeof(cfg));
@@ -7187,7 +7187,7 @@ static void test_context_budget(void) {
     CHECK(ans != NULL);
     free(ans);
     runtime_shutdown(&ctx);
-    fs_remove("state-test/budget/cognitive-os-agent.json");
+    fs_remove("state-test/budget/light-agent.json");
 }
 
 static void test_attention(void) {
@@ -7338,9 +7338,9 @@ static void test_im(void) {
     int64_t g1 = im_create_session_ex(im, "研发群", "group", members, 3);
     CHECK(g1 > 0);
     CHECK(im_send(im, s1, "user", "你好") > 0);
-    CHECK(im_send_ex(im, s1, "assistant", "你好！", "cognitive-os-agent") > 0);
+    CHECK(im_send_ex(im, s1, "assistant", "你好！", "light-agent") > 0);
     CHECK(im_send_ex(im, g1, "user", "群聊消息 hello-group", "alice") > 0);
-    CHECK(im_send_ex(im, g1, "assistant", "收到 hello-group", "cognitive-os-agent") > 0);
+    CHECK(im_send_ex(im, g1, "assistant", "收到 hello-group", "light-agent") > 0);
     CHECK(im_send(im, 9999, "user", "x") < 0);   /* unknown session */
     size_t n = 0;
     im_message *msgs = im_messages(im, s1, &n);
@@ -7350,7 +7350,7 @@ static void test_im(void) {
         CHECK_STR(msgs[0].content, "你好");
         CHECK(msgs[0].sender == NULL);
         CHECK_STR(msgs[1].role, "assistant");
-        CHECK_STR(msgs[1].sender, "cognitive-os-agent");
+        CHECK_STR(msgs[1].sender, "light-agent");
     }
     im_messages_free(msgs, n);
     /* group membership surfaced */
@@ -8380,7 +8380,7 @@ static void test_selected_model_routing(void) {
     fs_mkdirs(root);
     const char *settings="{\"llm.provider\":\"openai\",\"llm.base_url\":\"http://127.0.0.1:18231/v1\","
         "\"llm.model\":\"nvidia/nemotron-3.5-super-vl:free\",\"llm.api_key\":\"fixture-key\",\"llm.routing\":\"fixed\"}";
-    CHECK(fs_write_file("state-test/selected-model/cognitive-os-agent.json",settings,strlen(settings))==0);
+    CHECK(fs_write_file("state-test/selected-model/light-agent.json",settings,strlen(settings))==0);
     config cfg={0}; cfg.state_root=root; cfg.workspace=root; cfg.http_port=18232; cfg.workers=1;
     runtime_ctx ctx;
     if (init(&ctx,&cfg)!=0) { CHECK(0); http_server_stop(provider); thread_join(provider_thread); http_server_free(provider); return; }
@@ -9003,7 +9003,7 @@ static void test_http_api(void) {
     test_remove_tree(root);
     fs_mkdirs(root);
     const char *capacity_config = "{\"scheduler.max.workers\":3,\"scheduler.max.active\":20}";
-    CHECK(fs_write_file("state-http-test/cognitive-os-agent.json", capacity_config,
+    CHECK(fs_write_file("state-http-test/light-agent.json", capacity_config,
                         strlen(capacity_config)) == 0);
     config cfg;
     memset(&cfg, 0, sizeof cfg);
@@ -9486,7 +9486,7 @@ static void test_market_remote(void) {
         char p[600];
         snprintf(p, sizeof p, "%s/skills.json", root); fs_remove(p);
         snprintf(p, sizeof p, "%s/plugins.json", root); fs_remove(p);
-        snprintf(p, sizeof p, "%s/cognitive-os-agent.json", root); fs_remove(p);
+        snprintf(p, sizeof p, "%s/light-agent.json", root); fs_remove(p);
     }
     fs_remove(root);
     http_server *mkt = http_server_new_bind("127.0.0.1", 18216);
@@ -9566,7 +9566,7 @@ static void test_market_remote(void) {
         char p[600];
         snprintf(p, sizeof p, "%s/skills.json", root); fs_remove(p);
         snprintf(p, sizeof p, "%s/plugins.json", root); fs_remove(p);
-        snprintf(p, sizeof p, "%s/cognitive-os-agent.json", root); fs_remove(p);
+        snprintf(p, sizeof p, "%s/light-agent.json", root); fs_remove(p);
     }
     fs_remove(root);
 }
@@ -10034,7 +10034,7 @@ int main(int argc, char **argv) {
         printf("\n%d passed, %d failed\n", g_pass, g_fail);
         return g_fail ? 1 : 0;
     }
-    printf("cognitive-os-agent unit tests\n");
+    printf("light-agent unit tests\n");
     test_logging();
     test_util();
     test_event_bus();

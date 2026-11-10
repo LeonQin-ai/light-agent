@@ -9,8 +9,8 @@ import unittest
 
 
 BACKEND = Path(__file__).resolve().parents[1]
-EXE = BACKEND / "build" / ("cognitive-os-agent-bench-gaia.exe" if os.name == "nt"
-                            else "cognitive-os-agent-bench-gaia")
+EXE = BACKEND / "build" / ("light-agent-bench-gaia.exe" if os.name == "nt"
+                            else "light-agent-bench-gaia")
 
 
 @unittest.skipUnless(importlib.util.find_spec("docx") and importlib.util.find_spec("PIL"),

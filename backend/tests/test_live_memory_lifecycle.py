@@ -16,7 +16,7 @@ p.add_argument('--report',type=Path,default=root/'build/live-memory-report.json'
 a=p.parse_args()
 if not 1<=a.repetitions<=10:p.error('repetitions must be 1..10')
 config=json.loads(a.config.read_text(encoding='utf-8-sig'))
-binary=root/'build'/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+binary=root/'build'/('light-agent.exe' if os.name=='nt' else 'light-agent')
 report={'model':config.get('llm.model'),'cases':[],'scope':'natural-language episode persistence/use; shared-memory on/off, not L0/L1/L2 ablation'}
 proc=None
 with tempfile.TemporaryDirectory(prefix='coa-live-memory-') as directory:
@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix='coa-live-memory-') as directory:
  def start(state):
   global proc,port
   with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
-  state.mkdir(exist_ok=True);(state/'cognitive-os-agent.json').write_text(json.dumps(config),encoding='utf8')
+  state.mkdir(exist_ok=True);(state/'light-agent.json').write_text(json.dumps(config),encoding='utf8')
   proc=subprocess.Popen([str(binary),'--state',str(state),'--workspace',str(work),'serve',str(port)],
    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
   for _ in range(150):

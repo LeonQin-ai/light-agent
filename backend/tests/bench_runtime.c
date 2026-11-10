@@ -1,5 +1,5 @@
 /* Real runtime scheduling/context/Flow/rollback benchmark; no remote LLM. */
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 #include "runtime/flow.h"
 #include "context/mmu.h"
 #include "infra/logging.h"

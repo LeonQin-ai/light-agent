@@ -4,7 +4,7 @@ from pathlib import Path
 root=Path(__file__).resolve().parents[1]
 if os.name!='nt':raise SystemExit('Windows desktop preference test')
 with tempfile.TemporaryDirectory() as folder:
- state=Path(folder);(state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'mock','auth.key':''}))
+ state=Path(folder);(state/'light-agent.json').write_text(json.dumps({'llm.provider':'mock','auth.key':''}))
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  def api(method='GET',body=None,status=200):
   request=urllib.request.Request(f'http://127.0.0.1:{port}/v1/desktop/startup-animation',method=method,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
@@ -13,7 +13,7 @@ with tempfile.TemporaryDirectory() as folder:
   assert response.status==status,(response.status,response.read())
   return json.load(response)
  def start():
-  proc=subprocess.Popen([str(root/os.environ.get('COA_BUILD_DIR','build')/'cognitive-os-agent.exe'),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=root,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env={**os.environ,'LOCALAPPDATA':folder},creationflags=subprocess.CREATE_NO_WINDOW)
+  proc=subprocess.Popen([str(root/os.environ.get('COA_BUILD_DIR','build')/'light-agent.exe'),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=root,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env={**os.environ,'LOCALAPPDATA':folder},creationflags=subprocess.CREATE_NO_WINDOW)
   for _ in range(100):
    try:api();return proc
    except OSError:assert proc.poll() is None;time.sleep(.1)
@@ -26,19 +26,19 @@ with tempfile.TemporaryDirectory() as folder:
   assert api()['enabled'] is False
   media='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///w=='
   api('PUT',{'enabled':True,'media':media})
-  assert (state/'cognitive-os-agent/desktop-startup-media').read_text()==media
+  assert (state/'light-agent/desktop-startup-media').read_text()==media
   api('PUT',{'enabled':True,'media':'data:text/html;base64,PHNjcmlwdD4='},400)
   api('PUT',{'enabled':True,'media':'data:image/gif;base64,\" onerror=alert(1)'},400)
-  assert (state/'cognitive-os-agent/desktop-startup-media').read_text()==media
+  assert (state/'light-agent/desktop-startup-media').read_text()==media
   api('PUT',{'enabled':False})
  finally:proc.terminate();proc.wait(timeout=10)
  proc=start()
  try:
   assert api()['enabled'] is False
-  assert (state/'cognitive-os-agent/desktop-startup-media').read_text()==media
+  assert (state/'light-agent/desktop-startup-media').read_text()==media
   api('PUT',{'enabled':True,'media':''})
-  assert (state/'cognitive-os-agent/desktop-startup-media').read_text()==''
+  assert (state/'light-agent/desktop-startup-media').read_text()==''
   assert api('PUT',{'enabled':True})['enabled'] is True
-  assert (state/'cognitive-os-agent/desktop-startup-animation').read_text()=='1'
+  assert (state/'light-agent/desktop-startup-animation').read_text()=='1'
  finally:proc.terminate();proc.wait(timeout=10)
  print('PASS: default enabled, strict boolean, save, restart persistence, re-enable; isolated user preference.')

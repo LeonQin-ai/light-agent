@@ -4,14 +4,14 @@ from pathlib import Path
 
 parser=argparse.ArgumentParser();parser.add_argument('--config',required=True);args=parser.parse_args()
 root=Path(__file__).resolve().parents[1];build=root/os.environ.get('COA_BUILD_DIR','build')
-binary=build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+binary=build/('light-agent.exe' if os.name=='nt' else 'light-agent')
 configuration=json.loads(Path(args.config).read_text(encoding='utf-8-sig'))
 report={'model':configuration.get('llm.model'),'status':'not_started'}
 with tempfile.TemporaryDirectory(prefix='coa-cli-live-') as tmp:
     workspace=Path(tmp);state=workspace/'state';state.mkdir();proof=secrets.token_hex(12)
     (workspace/'marker.txt').write_text(proof,encoding='utf-8')
     configuration['auth.key']='';configuration['http.bind']='127.0.0.1';configuration['reasoning.max_rounds']=10
-    (state/'cognitive-os-agent.json').write_text(json.dumps(configuration),encoding='utf-8')
+    (state/'light-agent.json').write_text(json.dumps(configuration),encoding='utf-8')
     with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     base=f'http://127.0.0.1:{port}'
     def get(path):

@@ -1,5 +1,5 @@
 #include "api/attachment.h"
-/* api_rest.c — REST API handlers wired to the cognitive-os-agent runtime context. */
+/* api_rest.c — REST API handlers wired to the light-agent runtime context. */
 #include "api/api_rest.h"
 #include "api/http_server.h"
 #include "api/web_ui.h"
@@ -213,11 +213,11 @@ static int h_workspace_browse(const http_request *req,http_response *resp,void *
     static atomic_flag busy=ATOMIC_FLAG_INIT;
     if(atomic_flag_test_and_set(&busy)){resp->status=409;http_resp_json(resp,"{\"error\":\"folder picker already open\"}");return 0;}
 #ifdef _WIN32
-    const char *command="powershell.exe -NoProfile -NonInteractive -STA -Command \"$ProgressPreference='SilentlyContinue';[Console]::OutputEncoding=[Text.Encoding]::UTF8;Add-Type -AssemblyName System.Windows.Forms;$d=New-Object System.Windows.Forms.FolderBrowserDialog;$d.Description='Select Cognitive OS workspace';if($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Write($d.SelectedPath)};$d.Dispose()\"";
+    const char *command="powershell.exe -NoProfile -NonInteractive -STA -Command \"$ProgressPreference='SilentlyContinue';[Console]::OutputEncoding=[Text.Encoding]::UTF8;Add-Type -AssemblyName System.Windows.Forms;$d=New-Object System.Windows.Forms.FolderBrowserDialog;$d.Description='Select light-agent workspace';if($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Write($d.SelectedPath)};$d.Dispose()\"";
 #elif defined(__APPLE__)
-    const char *command="osascript -e 'POSIX path of (choose folder with prompt \"Select Cognitive OS workspace\")'";
+    const char *command="osascript -e 'POSIX path of (choose folder with prompt \"Select light-agent workspace\")'";
 #else
-    const char *command="if [ -n \"$KDE_FULL_SESSION\" ] && command -v kdialog >/dev/null 2>&1; then kdialog --getexistingdirectory; elif command -v zenity >/dev/null 2>&1; then zenity --file-selection --directory --title='Select Cognitive OS workspace'; elif command -v kdialog >/dev/null 2>&1; then kdialog --getexistingdirectory; elif command -v yad >/dev/null 2>&1; then yad --file-selection --directory --title='Select Cognitive OS workspace'; else exit 127; fi";
+    const char *command="if [ -n \"$KDE_FULL_SESSION\" ] && command -v kdialog >/dev/null 2>&1; then kdialog --getexistingdirectory; elif command -v zenity >/dev/null 2>&1; then zenity --file-selection --directory --title='Select light-agent workspace'; elif command -v kdialog >/dev/null 2>&1; then kdialog --getexistingdirectory; elif command -v yad >/dev/null 2>&1; then yad --file-selection --directory --title='Select light-agent workspace'; else exit 127; fi";
 #endif
     proc_result *result=proc_run_native_in(command,120000,NULL);
     atomic_flag_clear(&busy);
@@ -2515,7 +2515,7 @@ static int h_route_policy(const http_request *req, http_response *resp, void *ud
     config_set_str(ctx->config,"llm.routing","auto");
     config_set_str(ctx->config,"llm.route_policy",router_policy(ctx->router));
     char config_path[600];
-    path_join(config_path,sizeof(config_path),ctx->state_root,"cognitive-os-agent.json");
+    path_join(config_path,sizeof(config_path),ctx->state_root,"light-agent.json");
     if (config_save_file(ctx->config,config_path)!=0) log_warn("could not persist routing policy");
     http_resp_appendf(resp, "{\"ok\":true,\"policy\":\"%s\"}", router_policy(ctx->router));
     return 0;
@@ -2812,7 +2812,7 @@ static int h_config_security(const http_request *req, http_response *resp, void 
     config_set_str(ctx->config, "security.mode", secret_mode());
     if (ctx->state_root) {
         char cfgfile[600];
-        path_join(cfgfile, sizeof(cfgfile), ctx->state_root, "cognitive-os-agent.json");
+        path_join(cfgfile, sizeof(cfgfile), ctx->state_root, "light-agent.json");
         config_save_file(ctx->config, cfgfile);
     }
     http_resp_appendf(resp, "{\"ok\":true,\"mode\":\"%s\"}", secret_mode());
@@ -2863,7 +2863,7 @@ static int h_config_snapshot(const http_request *req, http_response *resp, void 
     config_set_int(ctx->config, "snapshot.max_file", v);
     if (ctx->state_root) {
         char cfgfile[600];
-        path_join(cfgfile, sizeof(cfgfile), ctx->state_root, "cognitive-os-agent.json");
+        path_join(cfgfile, sizeof(cfgfile), ctx->state_root, "light-agent.json");
         config_save_file(ctx->config, cfgfile);
     }
 
@@ -3446,7 +3446,7 @@ typedef struct {
     const char *name, *description, *kind, *body;
 } skill_tmpl;
 static const skill_tmpl SKILL_TMPLS[] = {
-    {"hello_world", "打印问候语", "shell", "echo hello from cognitive-os-agent"},
+    {"hello_world", "打印问候语", "shell", "echo hello from light-agent"},
     {"list_dir", "列出当前目录文件", "shell", "ls -la"},
     {"sys_info", "显示内核/系统信息", "shell", "uname -a"},
     {"disk_usage", "显示磁盘占用", "shell", "df -h"},

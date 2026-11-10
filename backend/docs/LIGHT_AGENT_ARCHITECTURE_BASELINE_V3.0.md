@@ -1,4 +1,4 @@
-# Cognitive OS Architecture Baseline v3.0
+# light-agent Architecture Baseline v3.0
 
 > C-native Runtime for Autonomous AI Agents
 >
@@ -14,7 +14,7 @@
 
 ## 1. Executive Summary
 
-Cognitive OS is designed as a systems-oriented runtime for autonomous AI agents. The core idea is to move deterministic control, lifecycle, scheduling, memory management, context management, execution safety, isolation and observability out of the LLM prompt loop and into an explicit runtime.
+light-agent is designed as a systems-oriented runtime for autonomous AI agents. The core idea is to move deterministic control, lifecycle, scheduling, memory management, context management, execution safety, isolation and observability out of the LLM prompt loop and into an explicit runtime.
 
 The architecture is intentionally different from a conventional Agent Framework. A conventional coding agent typically centers on a model-driven loop:
 
@@ -22,7 +22,7 @@ The architecture is intentionally different from a conventional Agent Framework.
 Prompt -> LLM -> Tool -> Observation -> LLM -> Tool -> ...
 ```
 
-Cognitive OS centers on a runtime-driven loop:
+light-agent centers on a runtime-driven loop:
 
 ```text
 Event
@@ -436,7 +436,7 @@ The lifecycle tiers and semantic types are orthogonal.
 The preferred v1 implementation is filesystem-native Markdown storage.
 
 ```text
-~/.cognitive-os/
+~/.light-agent/
 ├── memory/
 │   ├── user/
 │   ├── agent/
@@ -1336,10 +1336,10 @@ Rule:
 # 31. Recommended Repository Structure
 
 ```text
-cognitive-os-agent/
+light-agent/
 ├── backend/
 │   ├── include/
-│   │   └── cognitive-os-agent/
+│   │   └── light-agent/
 │   │       ├── runtime/
 │   │       ├── agent/
 │   │       ├── memory/
@@ -1648,24 +1648,24 @@ Claude Code is a mature agentic coding product centered on terminal-based softwa
 - Mature software-engineering workflows
 - Strong ecosystem and developer adoption
 
-### Limitations relative to Cognitive OS
+### Limitations relative to light-agent
 
 - The core CLI implementation is not an inspectable open-source runtime.
 - It is optimized as a coding product rather than as a vendor-neutral systems substrate.
 - The architecture is not intended to be a general distributed Agent OS with C-native runtime primitives.
 - Deep OS-level experimentation, custom scheduling and custom memory/runtime semantics are outside the product's core value proposition.
 
-### Cognitive OS difference
+### light-agent difference
 
 ```text
 Claude Code
    = mature coding Agent product
 
-Cognitive OS
+light-agent
    = vendor-neutral runtime substrate
 ```
 
-Cognitive OS should not try to beat Claude Code at immediate coding UX. It should expose a lower-level runtime surface that could theoretically host Claude Code-like coding Agents.
+light-agent should not try to beat Claude Code at immediate coding UX. It should expose a lower-level runtime surface that could theoretically host Claude Code-like coding Agents.
 
 ---
 
@@ -1683,25 +1683,25 @@ The project also supports subagents, including in-process and external providers
 - Agent loop, tools, sessions, model adapters and subagents are replaceable
 - Good fit for rapidly evolving Agent behavior
 
-### Limitations relative to Cognitive OS
+### Limitations relative to light-agent
 
 - The central abstraction remains an Agent harness/plugin runtime rather than a C-native OS-like runtime.
 - Its plugin architecture is powerful, but it does not by itself define the same explicit Memory OS + Context MMU + Snapshot/COW execution model proposed here.
 - The project is currently in developer preview and explicitly warns about compatibility-breaking changes.
-- The runtime is primarily TypeScript/Node-oriented, whereas Cognitive OS intentionally explores a lower-level C runtime boundary.
+- The runtime is primarily TypeScript/Node-oriented, whereas light-agent intentionally explores a lower-level C runtime boundary.
 
-### Cognitive OS difference
+### light-agent difference
 
 ```text
 DeepSeek Harness
     = Everything is a Plugin
 
-Cognitive OS
+light-agent
     = Everything important is a managed Runtime Resource
       + Pluginized extension points
 ```
 
-DeepSeek Harness is actually one of the closest reference architectures. Cognitive OS should borrow its plugin composition ideas rather than treat it as a simple competitor.
+DeepSeek Harness is actually one of the closest reference architectures. light-agent should borrow its plugin composition ideas rather than treat it as a simple competitor.
 
 ---
 
@@ -1719,7 +1719,7 @@ OpenAI Codex CLI is an open-source coding Agent that runs locally and is release
 - Good local developer workflow
 - Active ecosystem
 
-### Limitations relative to Cognitive OS
+### Limitations relative to light-agent
 
 - It is fundamentally optimized around coding tasks.
 - Its runtime is not designed as a vendor-neutral C11 Agent OS kernel.
@@ -1727,25 +1727,25 @@ OpenAI Codex CLI is an open-source coding Agent that runs locally and is release
 - It does not aim to provide the same personal/enterprise control-plane split described here.
 - Its execution model is optimized for an Agent product rather than serving as a general substrate for arbitrary Agent workloads.
 
-### Cognitive OS difference
+### light-agent difference
 
 ```text
 Codex
    = highly capable open-source coding Agent
 
-Cognitive OS
+light-agent
    = infrastructure layer on which coding Agents are one workload
 ```
 
-Codex should be treated as an implementation and UX reference, not as something Cognitive OS must clone.
+Codex should be treated as an implementation and UX reference, not as something light-agent must clone.
 
 ---
 
 # 38. Comparative Matrix
 
-| Dimension | Cognitive OS | DeepSeek Harness | OpenAI Codex CLI | Claude Code |
+| Dimension | light-agent | DeepSeek Harness | OpenAI Codex CLI | Claude Code |
 |---|---|---|---|---|
-| Primary positioning | Agent Runtime / Cognitive OS | Agent Harness | Coding Agent | Coding Agent |
+| Primary positioning | Agent Runtime / light-agent | Agent Harness | Coding Agent | Coding Agent |
 | Open-source core | Yes, intended | Yes | Yes | Core CLI not in public repo |
 | C11 runtime core | **Yes** | No | No | No |
 | Runtime-owned state machine | **Core design** | Yes | Yes | Yes |
@@ -1770,7 +1770,7 @@ Codex should be treated as an implementation and UX reference, not as something 
 
 ---
 
-# 39. Where Cognitive OS Is Stronger
+# 39. Where light-agent Is Stronger
 
 ## 39.1 Runtime abstraction
 
@@ -1828,21 +1828,21 @@ is a meaningful long-term differentiator if it can be made safe and evidence-dri
 
 ---
 
-# 40. Where Cognitive OS Is Weaker
+# 40. Where light-agent Is Weaker
 
 The project should be honest about these weaknesses.
 
 ### Compared with Claude Code
 
-Cognitive OS will initially have much weaker coding UX, model integration and polished workflow support.
+light-agent will initially have much weaker coding UX, model integration and polished workflow support.
 
 ### Compared with Codex
 
-Cognitive OS will initially have weaker model-specific optimization, coding performance and product polish.
+light-agent will initially have weaker model-specific optimization, coding performance and product polish.
 
 ### Compared with DeepSeek Harness
 
-DeepSeek Harness already has a mature plugin-composition model and a rapidly evolving developer ecosystem. Cognitive OS must prove that its lower-level runtime model provides measurable benefits rather than architectural novelty alone.
+DeepSeek Harness already has a mature plugin-composition model and a rapidly evolving developer ecosystem. light-agent must prove that its lower-level runtime model provides measurable benefits rather than architectural novelty alone.
 
 ### General weakness
 
@@ -2025,7 +2025,7 @@ The following decisions should be treated as v1 baseline constraints:
 The intended architecture can be summarized as:
 
 ```text
-                         Cognitive OS
+                         light-agent
                               |
                  +------------+------------+
                  |                         |
@@ -2093,7 +2093,7 @@ Personal Single Node
 
 The key architectural thesis is therefore:
 
-> **Cognitive OS is not another LLM wrapper. It is an operating environment for autonomous agents, where cognition, memory, context and execution are explicit runtime resources.**
+> **light-agent is not another LLM wrapper. It is an operating environment for autonomous agents, where cognition, memory, context and execution are explicit runtime resources.**
 
 ---
 

@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BACKEND = Path(__file__).resolve().parents[1]
 BINARY = (BACKEND / os.environ.get('COA_BUILD_DIR', 'build') /
-          ('cognitive-os-agent.exe' if os.name == 'nt' else 'cognitive-os-agent'))
+          ('light-agent.exe' if os.name == 'nt' else 'light-agent'))
 TERMINAL = ('DONE', 'FAILED', 'CANCELLED', 'TIMEOUT')
 SAFETY_ANSWER = (
     '我的操作有安全边界：权限取决于运行账户，执行记录可以核对。'
@@ -84,7 +84,7 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix='coa-information-answers-') as folder:
             state = Path(folder)
-            (state / 'cognitive-os-agent.json').write_text(json.dumps({
+            (state / 'light-agent.json').write_text(json.dumps({
                 'llm.provider': 'openai', 'llm.model': 'information-answer-fixture',
                 'llm.api_key': 'local-test-only', 'reasoning.max_rounds': 6,
                 'llm.base_url': f'http://127.0.0.1:{provider.server_port}',

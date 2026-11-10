@@ -21,7 +21,7 @@
  *   GET  /                       embedded web UI
  */
 #pragma once
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 
 #ifdef __cplusplus
 extern "C" {

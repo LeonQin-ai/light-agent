@@ -2,12 +2,12 @@
 import json,os,socket,subprocess,tempfile,time,urllib.parse,urllib.request
 from pathlib import Path
 if os.name!='posix' or __import__('sys').platform=='darwin':raise SystemExit(0)
-root=Path(__file__).resolve().parents[1];binary=root/os.environ.get('COA_BUILD_DIR','build')/'cognitive-os-agent'
+root=Path(__file__).resolve().parents[1];binary=root/os.environ.get('COA_BUILD_DIR','build')/'light-agent'
 with tempfile.TemporaryDirectory(prefix='coa-linux-picker-') as tmp:
  state=Path(tmp);scripts=state/'bin';scripts.mkdir()
  selected=state/'selected';selected.mkdir()
  dialog=scripts/'kdialog';dialog.write_text('#!/bin/sh\nprintf "%s\\n" "$COA_PICKER_SELECTED"\n',encoding='utf8');dialog.chmod(0o755)
- state.joinpath('cognitive-os-agent.json').write_text('{"llm.provider":"mock"}',encoding='utf8')
+ state.joinpath('light-agent.json').write_text('{"llm.provider":"mock"}',encoding='utf8')
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  with (root/'build'/'linux-folder-picker.log').open('w') as log:
   proc=subprocess.Popen([str(binary),'--state',tmp,'--workspace',tmp,'serve',str(port)],cwd=root,env={**os.environ,'PATH':str(scripts)+':/usr/bin:/bin','DISPLAY':':fixture','KDE_FULL_SESSION':'true','COA_PICKER_SELECTED':str(selected)},stdout=log,stderr=log)

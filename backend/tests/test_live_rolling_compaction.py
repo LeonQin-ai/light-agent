@@ -27,7 +27,7 @@ if args.max_total_tokens <= 0:
     parser.error('max-total-tokens must be positive')
 config = json.loads(args.config.read_text(encoding='utf-8-sig'))
 config.update({'auth.key': '', 'http.bind': '127.0.0.1', 'reasoning.max_rounds': 5, 'llm.timeout_ms': 60000})
-binary = root/'build'/('cognitive-os-agent.exe' if os.name == 'nt' else 'cognitive-os-agent')
+binary = root/'build'/('light-agent.exe' if os.name == 'nt' else 'light-agent')
 report = {'schema': 1, 'model': config.get('llm.model'), 'cases': [], 'passed': False,
           'scope': ('15 synthetic user-only inputs + 10 real native chat tasks' if args.preload_user_inputs else '25 actual native Runtime chat tasks')+' / two rolling compactions; not a 500-turn LLM certification'}
 report['focus_retention']=args.focus_retention
@@ -38,7 +38,7 @@ def save():
 
 with tempfile.TemporaryDirectory(prefix='coa-live-rolling-') as folder:
     state = Path(folder); work = state/'workspace'; work.mkdir()
-    (state/'cognitive-os-agent.json').write_text(json.dumps(config), encoding='utf-8')
+    (state/'light-agent.json').write_text(json.dumps(config), encoding='utf-8')
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]
     def api(method, path, body=None):

@@ -113,7 +113,7 @@ int cli_client_main(int argc,char **argv,const char *workspace){
     void (*previous)(int)=signal(SIGINT,on_interrupt);interrupted=0;
     if(tui&&!prompt)screen_start();
     if(!session&&new_session(base,&headers,&session,workspace)){rc=1;goto done;}
-    fprintf(stderr,"Cognitive OS terminal client · ");text_out(stderr,base);fputs("\n/help for commands; Ctrl+C cancels a running task.\n",stderr);
+    fprintf(stderr,"light-agent terminal client · ");text_out(stderr,base);fputs("\n/help for commands; Ctrl+C cancels a running task.\n",stderr);
     for(;;){
         if(!prompt){screen_context(session,workspace);screen_prompt();}char *line=prompt?NULL:input_line();const char *p=prompt?prompt:line;
         if(line)screen_submit(line);

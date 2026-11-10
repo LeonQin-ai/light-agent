@@ -8,14 +8,14 @@ selected=[r for r in routes if 'openrouter.ai/' in r.get('base_url','')]
 assert selected,'No configured OpenRouter route'
 with tempfile.TemporaryDirectory(prefix='coa-live-metadata-') as tmp:
  state=Path(tmp);(state/'routes.json').write_text(json.dumps(selected),encoding='utf8')
- (state/'cognitive-os-agent.json').write_text('{"llm.provider":"mock"}',encoding='utf8')
+ (state/'light-agent.json').write_text('{"llm.provider":"mock"}',encoding='utf8')
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  def api(path,body=None):
   req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
   with urllib.request.urlopen(req,timeout=10) as response:return json.load(response)
  args.report.parent.mkdir(parents=True,exist_ok=True)
  with args.report.with_suffix('.log').open('w') as log:
-  proc=subprocess.Popen([str(root/'build'/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',tmp,'--workspace',tmp,'serve',str(port)],cwd=root,stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+  proc=subprocess.Popen([str(root/'build'/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',tmp,'--workspace',tmp,'serve',str(port)],cwd=root,stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
   try:
    for _ in range(150):
     try:api('/v1/scheduler');break

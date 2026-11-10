@@ -1,6 +1,6 @@
 """Opt-in completion smoke test using a configured real model, in isolated state.
 
-Usage: python tests/test_live_task_completion.py --config /path/to/cognitive-os-agent.json
+Usage: python tests/test_live_task_completion.py --config /path/to/light-agent.json
 Does not modify/restart the installed application or print its API key.
 """
 import argparse
@@ -29,7 +29,7 @@ config['reasoning.max_rounds'] = -1 if args.literal_search else 8
 config['scheduler.workers'] = 1
 with tempfile.TemporaryDirectory(prefix='coa-live-completion-') as folder:
     state = Path(folder)
-    (state/'cognitive-os-agent.json').write_text(json.dumps(config), encoding='utf-8')
+    (state/'light-agent.json').write_text(json.dumps(config), encoding='utf-8')
     (state/'docs').mkdir()
     cache_marker, disk_marker = uuid.uuid4().hex, uuid.uuid4().hex
     cache_text='CACHE_POLICY: cache stores pages already read. Marker: '+cache_marker
@@ -51,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix='coa-live-completion-') as folder:
             return json.load(reply)
 
     with (state/'server.log').open('w', encoding='utf-8') as log:
-        binary = backend/'build'/('cognitive-os-agent.exe' if __import__('os').name == 'nt' else 'cognitive-os-agent')
+        binary = backend/'build'/('light-agent.exe' if __import__('os').name == 'nt' else 'light-agent')
         process = subprocess.Popen([str(binary), '--state', str(state), '--workspace', str(state), 'serve', str(port)],
             cwd=backend, stdout=log, stderr=log, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         try:

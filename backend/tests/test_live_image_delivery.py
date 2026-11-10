@@ -8,14 +8,14 @@ cfg={k:v for k,v in json.loads(a.config.read_text(encoding='utf-8-sig')).items()
 cfg.update({'http.bind':'127.0.0.1','reasoning.max_rounds':12,'scheduler.workers':1})
 report={'passed':False,'model':cfg.get('llm.model'),'scope':'generated PNG + actual file_read + vision request + session-scoped preview'}
 with tempfile.TemporaryDirectory(prefix='coa-live-image-') as folder:
- state=Path(folder);(state/'cognitive-os-agent.json').write_text(json.dumps(cfg),encoding='utf8')
+ state=Path(folder);(state/'light-agent.json').write_text(json.dumps(cfg),encoding='utf8')
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  def api(method,path,body=None):
   request=urllib.request.Request(f'http://127.0.0.1:{port}'+path,method=method,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
   with urllib.request.urlopen(request,timeout=10) as r:return json.load(r)
  a.report.parent.mkdir(parents=True,exist_ok=True)
  with a.report.with_suffix('.log').open('w',encoding='utf8') as log:
-  proc=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=root,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0));tid=None
+  proc=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=root,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0));tid=None
   try:
    for _ in range(150):
     try:api('GET','/v1/scheduler');break

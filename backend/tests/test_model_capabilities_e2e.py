@@ -17,14 +17,14 @@ threading.Thread(target=provider.serve_forever,daemon=True).start()
 with tempfile.TemporaryDirectory(prefix='coa-capabilities-') as tmp:
  state=Path(tmp)
  (state/'routes.json').write_text(json.dumps([{'name':'legacy','provider':'openai','model':'deepseek-v4.1-flash','base_url':ark,'context_window':262144}]),encoding='utf-8')
- (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'mock'}),encoding='utf-8')
+ (state/'light-agent.json').write_text(json.dumps({'llm.provider':'mock'}),encoding='utf-8')
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  def api(path,body=None):
   req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
   with urllib.request.urlopen(req,timeout=5) as response:return json.load(response)
  def route(name):return next(x for x in api('/v1/routes') if x['name']==name)
  def start(log):
-  p=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',str(state),'--workspace',str(state),'serve',str(port)],cwd=backend,stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+  p=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',str(state),'--workspace',str(state),'serve',str(port)],cwd=backend,stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
   for _ in range(100):
    try:api('/v1/scheduler');return p
    except OSError:assert p.poll() is None;time.sleep(.1)

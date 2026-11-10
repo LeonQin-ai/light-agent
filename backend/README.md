@@ -1,6 +1,6 @@
-# cognitive-os-agent — light-agent Runtime
+# light-agent — light-agent Runtime
 
-A small, self-contained "cognitive OS runtime" written in C11. It wires together a
+A small, self-contained "light-agent runtime" written in C11. It wires together a
 cognitive kernel (event bus, scheduler, state machine, policy engine), a reasoning
 service with memory, an LLM runtime that speaks **both OpenAI-compatible and
 Anthropic** protocols, an action runtime (file / shell / git / MCP tools), a
@@ -20,17 +20,17 @@ interactive modes remain available.
 
 ```bash
 # Terminal 1: start the server, or use the running desktop application.
-./build/cognitive-os-agent --workspace /path/to/project serve 18300
+./build/light-agent --workspace /path/to/project serve 18300
 
 # Terminal 2: interactive client.
-./build/cognitive-os-agent chat
-./build/cognitive-os-agent chat --connect http://127.0.0.1:18300 --session SESSION_ID
+./build/light-agent chat
+./build/light-agent chat --connect http://127.0.0.1:18300 --session SESSION_ID
 
 # Script mode: final answer on stdout; progress and tool details on stderr.
-./build/cognitive-os-agent chat -p "Read README.md and explain the project" > answer.md
+./build/light-agent chat -p "Read README.md and explain the project" > answer.md
 ```
 
-On Windows use `cognitive-os-agent.exe`. For an authenticated Runtime set
+On Windows use `light-agent.exe`. For an authenticated Runtime set
 `COA_CLIENT_TOKEN` to its API bearer token in the environment; this is the Runtime
 token, not the model provider API key. Avoid sending credentials over untrusted
 plain HTTP connections.
@@ -78,7 +78,7 @@ python tests/test_cli_client.py
 python tests/test_workspaces_e2e.py
 python tests/test_native_preview_e2e.py
 # Opt-in: consumes the configured real model API; starts an isolated Runtime.
-python tests/test_live_cli_client.py --config /path/to/cognitive-os-agent.json
+python tests/test_live_cli_client.py --config /path/to/light-agent.json
 ```
 
 The opt-in test verifies an actual read → write → read task and saves usage and
@@ -132,7 +132,7 @@ execution results reset the no-progress streak. Reordered old reads, interleaved
 failed checks, and log folding do not. A detected read/check cycle gets a recovery
 instruction; continued unchanged observations stop it with an explicit incomplete
 result and no extra model-summary call. Regressions:
-`build/cognitive-os-agent-test --progress-loop` (offline fixtures, including an
+`build/light-agent-test --progress-loop` (offline fixtures, including an
 80-page task and a recovery that resumes after the instruction).
 
 The scheduler is **M:N**: M coroutine tasks run cooperatively on a pool of N OS
@@ -154,7 +154,7 @@ Progress and the terminal record identify the model actually used. Provider
 failures retain the HTTP/model diagnostic; persistent model failures do not
 trigger another model request just to summarize the failure.
 
-The CLI reads `state/cognitive-os-agent.json` from the current directory by
+The CLI reads `state/light-agent.json` from the current directory by
 default. To use another file, pass `--config FILE`; its directory becomes the
 state directory unless `--state DIR` is supplied. The `workspace` field in the
 JSON file controls where tools operate; `--workspace DIR` overrides it.
@@ -201,14 +201,14 @@ or MCP page. The pages display the effective state folder paths. A custom
 ```
 
 ```sh
-./build/cognitive-os-agent --config state/cognitive-os-agent.json
+./build/light-agent --config state/light-agent.json
 # At the prompt, enter a task directly. Commands: /help, /config, /tools,
 # /memory, /snapshot list, /exit.
 
-./build/cognitive-os-agent --config state/cognitive-os-agent.json run "分析项目中的 bug"
-./build/cognitive-os-agent --config state/cognitive-os-agent.json "分析项目中的 bug"
-./build/cognitive-os-agent --config state/cognitive-os-agent.json config
-./build/cognitive-os-agent --config state/cognitive-os-agent.json serve 18300
+./build/light-agent --config state/light-agent.json run "分析项目中的 bug"
+./build/light-agent --config state/light-agent.json "分析项目中的 bug"
+./build/light-agent --config state/light-agent.json config
+./build/light-agent --config state/light-agent.json serve 18300
 ```
 
 `config` prints an effective summary and only reports whether an API key is
@@ -216,7 +216,7 @@ configured. `COA_*` environment values override file values. The terminal
 shows each agent stage while a task runs. On Windows, the CLI decodes Unicode
 command-line arguments before running a task, so Chinese text and paths work.
 
-`./build/cognitive-os-agent serve 18300` then `curl` (close the Windows desktop app first if it is running, since it also uses port `18300`):
+`./build/light-agent serve 18300` then `curl` (close the Windows desktop app first if it is running, since it also uses port `18300`):
 
 ```
 curl -X POST http://localhost:18300/v1/tasks -H 'Content-Type: application/json' -d '{"prompt":"创建 a.txt 写入 hi"}'
@@ -284,7 +284,7 @@ GitHub 条目带 `repo` 字段（仓库 URL），Web 控制台渲染为可点击
 配置方式（任选其一）：
 
 ```
-# 配置文件 state/<name>/cognitive-os-agent.json
+# 配置文件 state/<name>/light-agent.json
 { "market.url": "http://market.example.com:9000" }
 
 # 环境变量
@@ -456,7 +456,7 @@ shutdown.
 
 ## LLM providers
 
-Configure via JSON config (`state/<name>/cognitive-os-agent.json`), CLI flags, or env vars with a
+Configure via JSON config (`state/<name>/light-agent.json`), CLI flags, or env vars with a
 `COA_` prefix (e.g. `COA_LLM_PROVIDER=openai`, `COA_LLM_BASE_URL=http://localhost:11434`).
 
 - `mock` — offline fake provider (end-to-end tests, no network)
@@ -526,9 +526,9 @@ Real provider latency and historical failures still require a real API replay.
 
 ```
 ./build/mock-llm-server 9000 &       # start the mock LLM server
-./build/cognitive-os-agent-test                  # unit suite (util/core/coro/M:N/snapshot/llm/…)
+./build/light-agent-test                  # unit suite (util/core/coro/M:N/snapshot/llm/…)
 ./build/test-adapters                # both adapters, chat + SSE stream
-./build/cognitive-os-agent-e2e                   # full pipeline, both providers
+./build/light-agent-e2e                   # full pipeline, both providers
 ```
 
 Latest local check (Windows, 2026-09-29):
@@ -549,14 +549,14 @@ registered HTTP route, tool callback or platform hook.
 
 ## Agent + LLM benchmark
 
-`./build/cognitive-os-agent-bench` measures agent capability against ground-truth tasks
+`./build/light-agent-bench` measures agent capability against ground-truth tasks
 (tool selection, end-to-end success, file side effects, multi-step completion,
 and latency).
 
 ```
-./build/cognitive-os-agent-bench --mock          # offline, deterministic mock planner
+./build/light-agent-bench --mock          # offline, deterministic mock planner
 COA_LLM_PROVIDER=openai COA_LLM_BASE_URL=… COA_LLM_MODEL=… COA_LLM_API_KEY=… \
-  ./build/cognitive-os-agent-bench --real        # real endpoint: accuracy + latency + success
+  ./build/light-agent-bench --real        # real endpoint: accuracy + latency + success
 ```
 
 `--mock` exercises the offline planner (tool-selection accuracy 100%).
@@ -572,7 +572,7 @@ endpoint can be reached through a local TLS-terminating proxy (see
 ```
 node build/llm_proxy.js &             # 127.0.0.1:8000 -> api.deepseek.com/anthropic
 COA_LLM_PROVIDER=anthropic COA_LLM_BASE_URL=http://127.0.0.1:8000 \
-  COA_LLM_MODEL=deepseek-v4-pro COA_LLM_API_KEY=dummy ./build/cognitive-os-agent-bench --real
+  COA_LLM_MODEL=deepseek-v4-pro COA_LLM_API_KEY=dummy ./build/light-agent-bench --real
 ```
 
 Verified against the DeepSeek Anthropic-compatible endpoint (`deepseek-v4-pro`):

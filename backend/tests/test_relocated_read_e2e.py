@@ -20,13 +20,13 @@ try:
    base=Path(folder);work=base/'work';work.mkdir();Model.work=work;state=base/'state';state.mkdir()
    for path in (work/'generated/tree/framework/storage/module.h',work/'generated/unrelated/module.h',base/'outside/framework/storage/module.h'):
     path.parent.mkdir(parents=True,exist_ok=True);path.write_text('struct PersistedState { int version; };')
-   (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{model.server_port}','reasoning.max_rounds':6}))
+   (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{model.server_port}','reasoning.max_rounds':6}))
    with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
    def req(path,body=None):
     r=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
     with urllib.request.urlopen(r,timeout=5) as response:return json.load(response)
    with (build/('relocated-'+mode+'.log')).open('w',encoding='utf8') as log:
-    p=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',str(state),'--workspace',str(work),'serve',str(port)],stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    p=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',str(state),'--workspace',str(work),'serve',str(port)],stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     try:
      for _ in range(100):
       try:req('/v1/scheduler');break

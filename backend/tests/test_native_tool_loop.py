@@ -182,7 +182,7 @@ for provider_name in ('openai','anthropic'):
   decoy=external/'src/other/context.h';decoy.parent.mkdir(parents=True);decoy.write_text('unrelated')
   state=Path(folder);server=ThreadingHTTPServer(('127.0.0.1',0),Provider)
   threading.Thread(target=server.serve_forever,daemon=True).start()
-  (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':provider_name,'llm.model':'native-test','llm.api_key':'local-fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':-1}),encoding='utf-8')
+  (state/'light-agent.json').write_text(json.dumps({'llm.provider':provider_name,'llm.model':'native-test','llm.api_key':'local-fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':-1}),encoding='utf-8')
   (state/'routes.json').write_text(json.dumps([{'name':'fixture-metadata','provider':provider_name,'model':'native-test','base_url':f'http://127.0.0.1:{server.server_port}','api_key':'local-fixture','context_window':1048576,'max_output_tokens':4096,'context_source':'provider_metadata'}]),encoding='utf-8')
   if os.name!='nt':
    (state/'alias').symlink_to(state,target_is_directory=True)
@@ -199,7 +199,7 @@ for provider_name in ('openai','anthropic'):
    req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
    with urllib.request.urlopen(req,timeout=5) as response:return json.load(response)
   with (build/('native-loop-'+provider_name+'.log')).open('w',encoding='utf-8') as log:
-   process=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',str(state),'--workspace',str(state),'serve',str(port)],cwd=backend,stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+   process=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',str(state),'--workspace',str(state),'serve',str(port)],cwd=backend,stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
    try:
     for _ in range(150):
      try:request('/v1/scheduler');break

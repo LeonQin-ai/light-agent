@@ -3,7 +3,7 @@ import json, os, socket, subprocess, tempfile, threading, time, urllib.request
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 root=Path(__file__).resolve().parents[1];build=root/os.environ.get('COA_BUILD_DIR','build')
-binary=build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+binary=build/('light-agent.exe' if os.name=='nt' else 'light-agent')
 sent=threading.Event();release=threading.Event();mode='good';calls=[]
 answer='真实流式中文😀 "引号"\n'+''.join(f'第{i:04d}段：Unicode 测试 {i*i:08d}，证据编号 {i*7919:09d}。\n' for i in range(2500))+'END_OF_STREAM'
 class Provider(BaseHTTPRequestHandler):
@@ -31,7 +31,7 @@ provider=ThreadingHTTPServer(('127.0.0.1',0),Provider);threading.Thread(target=p
 try:
  with tempfile.TemporaryDirectory(prefix='coa-stream-') as tmp:
     state=Path(tmp)/'state';state.mkdir()
-    (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.base_url':f'http://127.0.0.1:{provider.server_port}','llm.api_key':'fixture','reasoning.max_rounds':8}),encoding='utf-8')
+    (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.base_url':f'http://127.0.0.1:{provider.server_port}','llm.api_key':'fixture','reasoning.max_rounds':8}),encoding='utf-8')
     with socket.socket() as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
     base=f'http://127.0.0.1:{port}'
     def request(path,body=None):

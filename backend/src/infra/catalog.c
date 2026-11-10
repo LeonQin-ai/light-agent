@@ -334,11 +334,11 @@ static const catalog_skill SKILLS[] = {
      ""},
     {"py_uuid", "UUID（随机标识）", "生成一个 UUIDv4 随机标识", "python", "import uuid; print(uuid.uuid4())", "", ""},
     {"py_sha256", "SHA256（文本指纹）", "计算 {{text}} 的 SHA-256 摘要", "python",
-     "import hashlib; print(hashlib.sha256('{{text}}'.encode()).hexdigest())", "{\"text\":\"cognitive-os-agent\"}", ""},
+     "import hashlib; print(hashlib.sha256('{{text}}'.encode()).hexdigest())", "{\"text\":\"light-agent\"}", ""},
     /* ---- 可安装运行（prompt：经当前 LLM 后端执行，源自 fabric patterns） ---- */
     {"summarize", "Summarize（内容摘要）", "将给定内容浓缩为一段要点摘要（源自 fabric patterns）", "prompt",
      "Summarize the content below in one clear paragraph, followed by 3 key bullet points.\n\nContent:\n{{content}}",
-     "{\"content\":\"Cognitive OS is a C-native runtime for autonomous AI agents. It treats the LLM as an accelerator "
+     "{\"content\":\"light-agent is a C-native runtime for autonomous AI agents. It treats the LLM as an accelerator "
      "rather than the operating system, providing memory, context management, transactions, policy and multi-agent "
      "orchestration.\"}",
      "https://github.com/danielmiessler/fabric"},
@@ -1026,7 +1026,7 @@ char *catalog_github_search_json(const char *q) {
              GITHUB_SEARCH_MAX);
 
     memset(&hdr, 0, sizeof(hdr));
-    strmap_set(&hdr, "User-Agent", "cognitive-os-agent");
+    strmap_set(&hdr, "User-Agent", "light-agent");
     strmap_set(&hdr, "Accept", "application/vnd.github+json");
     r = http_get(GITHUB_API, path, &hdr, 10000);
     strmap_free(&hdr);

@@ -4,7 +4,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 root = Path(__file__).resolve().parents[1]
-binary = root / os.environ.get('COA_BUILD_DIR', 'build') / ('cognitive-os-agent.exe' if os.name == 'nt' else 'cognitive-os-agent')
+binary = root / os.environ.get('COA_BUILD_DIR', 'build') / ('light-agent.exe' if os.name == 'nt' else 'light-agent')
 answer = '中文完整答复\n' + 'long-answer ' * 10000 + 'END_OF_ANSWER'
 posts, deletes, polls = [], [], []
 fail, running, failed_task, usage = False, False, False, True

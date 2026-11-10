@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
-  <title id="title">Cognitive OS — an inspectable C11 agent runtime</title>
+  <title id="title">light-agent — an inspectable C11 agent runtime</title>
   <desc id="desc">Task scheduling, tool execution, memory, context budgets and recovery. Windows, Linux and macOS. Apache-2.0 licensed.</desc>
   <defs>
     <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#111324"/><stop offset="1" stop-color="#202038"/></linearGradient>
@@ -10,7 +10,7 @@
   <rect x="64" y="54" width="220" height="30" rx="15" fill="#8272ed" fill-opacity=".18" stroke="#a79bff" stroke-opacity=".35"/>
   <g font-family="Segoe UI, Arial, sans-serif">
     <text x="83" y="75" fill="#c6bfff" font-size="13" font-weight="700" letter-spacing="2">C11 AGENT RUNTIME</text>
-    <text x="62" y="186" fill="#fafaff" font-size="76" font-weight="700" letter-spacing="-3">Cognitive OS</text>
+    <text x="62" y="186" fill="#fafaff" font-size="76" font-weight="700" letter-spacing="-3">light-agent</text>
     <text x="66" y="245" fill="#c0bed6" font-size="26">From tool calls to inspectable execution.</text>
     <text x="66" y="292" fill="#9896b1" font-size="20">Scheduling · Memory · Context · Recovery</text>
     <g transform="translate(66 355)">

@@ -21,7 +21,7 @@ try:
  with tempfile.TemporaryDirectory(prefix='coa-workspaces-') as tmp:
     base=Path(tmp).resolve();state=base/'state';state.mkdir();a=base/'项目 A';b=base/'project B';a.mkdir();b.mkdir()
     (a/'marker.txt').write_text('PROOF_A',encoding='utf-8');(b/'marker.txt').write_text('PROOF_B',encoding='utf-8')
-    (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.base_url':f'http://127.0.0.1:{model.server_port}','llm.api_key':'fixture','reasoning.max_rounds':12,'scheduler.workers':2}),encoding='utf-8')
+    (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.base_url':f'http://127.0.0.1:{model.server_port}','llm.api_key':'fixture','reasoning.max_rounds':12,'scheduler.workers':2}),encoding='utf-8')
     def new_port():
         with socket.socket() as s:s.bind(('127.0.0.1',0));return s.getsockname()[1]
     port=new_port()
@@ -30,7 +30,7 @@ try:
         with urllib.request.urlopen(r,timeout=15) as response:return json.load(response)
     with (build/'workspaces-e2e.log').open('w',encoding='utf-8') as log:
         def start():
-            p=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',str(state),'--workspace',str(base),'serve',str(port)],cwd=root,stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            p=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',str(state),'--workspace',str(base),'serve',str(port)],cwd=root,stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
             for _ in range(100):
                 try:req('/v1/scheduler');return p
                 except OSError:assert p.poll() is None;time.sleep(.05)
@@ -79,7 +79,7 @@ try:
             req('/v1/workspaces',{'path':str(a),'name':'renamed'})
             assert req('/v1/workspaces')['workspaces'][0]['created_ms']==original[0]['created_ms'],'rename preserves creation time'
             sessions=req('/v1/chat/sessions');assert Path(next(s for s in sessions if s['id']==sa)['workspace'])==b
-            client=subprocess.run([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),
+            client=subprocess.run([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),
                 'chat','--no-stream','--connect',f'http://127.0.0.1:{port}','--session',sa,'-p','Report the workspace verification result'],
                 capture_output=True,text=True,encoding='utf-8',timeout=20)
             assert client.returncode==0,client.stderr

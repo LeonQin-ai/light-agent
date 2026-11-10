@@ -7,7 +7,7 @@
  *           LLM_MODEL / LLM_API_KEY (accuracy + success + latency + multistep)
  * Prints per-task lines, a summary table, and a one-line JSON summary.
  */
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 #include "llm/llm.h"
 #include "os/os_fs.h"
 #include "os/os_time.h"
@@ -20,7 +20,7 @@
 
 /* planner system prompt — matches reasoning.c so the probe is representative */
 static const char *SYS_PROMPT =
-    "You are the planner of a cognitive OS. Decide what tool actions to take "
+    "You are the planner of a light-agent. Decide what tool actions to take "
     "for the user request. Respond with ONLY a JSON array of actions of the "
     "form [{\"tool\":\"file_write\",\"args\":{\"path\":\"...\",\"content\":\"...\"}}]. "
     "Available tools: file_read, file_write, shell, git, mcp. "
@@ -103,7 +103,7 @@ int main(int argc, char **argv) {
                 cfg.provider ? cfg.provider : "?");
         return 1;
     }
-    printf("cognitive-os-agent agent capability benchmark [%s] provider=%s\n\n",
+    printf("light-agent agent capability benchmark [%s] provider=%s\n\n",
            real ? "REAL" : "MOCK", ctx.provider ? ctx.provider : "?");
 
     /* clean prior side effects for a deterministic run */

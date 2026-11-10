@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 
 typedef struct tasklog tasklog;
 

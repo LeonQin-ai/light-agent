@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BACKEND = Path(__file__).resolve().parents[1]
 BINARY = BACKEND / os.environ.get('COA_BUILD_DIR', 'build') / (
-    'cognitive-os-agent.exe' if os.name == 'nt' else 'cognitive-os-agent')
+    'light-agent.exe' if os.name == 'nt' else 'light-agent')
 
 
 class Provider(BaseHTTPRequestHandler):
@@ -90,7 +90,7 @@ def main():
                 with tempfile.TemporaryDirectory(prefix='coa-repetition-') as folder:
                     state = Path(folder)
                     (state / 'evidence.txt').write_text('verified source evidence', encoding='utf-8')
-                    config = state / 'cognitive-os-agent.json'
+                    config = state / 'light-agent.json'
                     config.write_text(json.dumps({
                         'llm.provider': 'openai', 'llm.model': 'local-fixture',
                         'llm.base_url': f'http://127.0.0.1:{server.server_port}',
@@ -114,7 +114,7 @@ def main():
                 Provider.calls=0;Provider.tool_first=True
                 with tempfile.TemporaryDirectory(prefix='coa-http-repetition-') as folder:
                     state=Path(folder);(state/'evidence.txt').write_text('actual source evidence',encoding='utf8')
-                    (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':8}),encoding='utf8')
+                    (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':8}),encoding='utf8')
                     with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
                     def api(path,body=None):
                         request=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})

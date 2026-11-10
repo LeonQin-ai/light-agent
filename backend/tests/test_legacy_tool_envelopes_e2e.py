@@ -9,7 +9,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from fixture_http_response import respond_json
 ROOT=Path(__file__).resolve().parents[1];BUILD=ROOT/os.environ.get('COA_BUILD_DIR','build')
-BINARY=BUILD/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')
+BINARY=BUILD/('light-agent.exe' if os.name=='nt' else 'light-agent')
 HTML='<html>LEFT_WIRE_PROOF RIGHT_WIRE_PROOF</html>'
 FINAL='comparison.html 已生成并读回；LEFT_WIRE_PROOF 与 RIGHT_WIRE_PROOF 已核对。'
 def function(name,args):return {'type':'function','function':{'name':name,'arguments':json.dumps(args)}}
@@ -90,7 +90,7 @@ def exercise(mode,protocol='legacy'):
      (work/side).mkdir()
      for name in ('README.md','Cargo.toml','CHARTER.md','SPECIFICATION.md'):(work/side/name).write_text(side+' '+name,encoding='utf8')
    if mode=='preexisting':(work/'comparison.html').write_text(HTML,encoding='utf8')
-   (work/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixed-wire','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':16}),encoding='utf8')
+   (work/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'fixed-wire','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':16}),encoding='utf8')
    with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
    def api(path,body=None):
     req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})

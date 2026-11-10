@@ -72,7 +72,7 @@ with socket.socket() as listener:
     result=None
     try:
         phase('client_started')
-        result=subprocess.run([str(backend/'build/cognitive-os-agent-test.exe'),'--ssh-password'],
+        result=subprocess.run([str(backend/'build/light-agent-test.exe'),'--ssh-password'],
                               cwd=backend,env=env,capture_output=True,timeout=30)
         phase('client_exited')
     finally:

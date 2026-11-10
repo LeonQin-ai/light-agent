@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BACKEND = Path(__file__).resolve().parents[1]
 BINARY = BACKEND / os.environ.get('COA_BUILD_DIR', 'build') / (
-    'cognitive-os-agent.exe' if os.name == 'nt' else 'cognitive-os-agent')
+    'light-agent.exe' if os.name == 'nt' else 'light-agent')
 SECRET_THINKING = 'PRIVATE_REASONING_MUST_NOT_BE_DELIVERED_OR_REPLAYED'
 
 
@@ -102,7 +102,7 @@ def exercise(provider, mode):
     try:
         with tempfile.TemporaryDirectory(prefix='coa-finalization-') as folder:
             state = Path(folder)
-            (state / 'cognitive-os-agent.json').write_text(json.dumps({
+            (state / 'light-agent.json').write_text(json.dumps({
                 'llm.provider': provider, 'llm.model': 'local-finalization-fixture',
                 'llm.base_url': f'http://127.0.0.1:{fixture.server_port}',
                 'reasoning.max_rounds': 30}), encoding='utf-8')

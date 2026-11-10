@@ -1,5 +1,5 @@
 /* codegen.h — plugin code generation.
- * Emits a C plugin skeleton implementing the cognitive-os-agent plugin entry contract. */
+ * Emits a C plugin skeleton implementing the light-agent plugin entry contract. */
 #pragma once
 
 #ifdef __cplusplus

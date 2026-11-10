@@ -1,6 +1,6 @@
 /* channel.h — external messaging channel adapters (IM bridge).
  *
- * Bridges cognitive-os-agent IM out to mainstream chat platforms so conversations can
+ * Bridges light-agent IM out to mainstream chat platforms so conversations can
  * reach a phone. Channel types:
  *   feishu   — 飞书自定义机器人 webhook:  {"msg_type":"text","content":{"text":...}}
  *   wecom    — 企业微信群机器人 webhook:   {"msgtype":"text","text":{"content":...}}

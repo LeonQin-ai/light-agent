@@ -42,7 +42,7 @@ static int screen_start(void){
     if(!SetConsoleMode(output,screen_mode|ENABLE_VIRTUAL_TERMINAL_PROCESSING))return 0;
 #endif
     screen_size();screen_active=1;atexit(screen_end);
-    printf("\033[?1049h\033[2J\033[H\033[1;36m Cognitive OS  |  Terminal workspace\033[0m\033[2;%dr\033[2;1H",screen_rows-3);
+    printf("\033[?1049h\033[2J\033[H\033[1;36m light-agent  |  Terminal workspace\033[0m\033[2;%dr\033[2;1H",screen_rows-3);
     fflush(stdout);return 1;
 }
 static void screen_context(const char *session,const char *workspace){

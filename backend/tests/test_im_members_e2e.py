@@ -33,7 +33,7 @@ def main():
         (state / 'im').mkdir()
         (state / 'im/sessions.json').write_text(json.dumps({'next_id': 2, 'sessions': [
             {'id': 1, 'name': 'legacy-empty', 'kind': 'group', 'members': [], 'messages': []}]}))
-        (state / 'cognitive-os-agent.json').write_text(json.dumps({'llm.provider': 'openai',
+        (state / 'light-agent.json').write_text(json.dumps({'llm.provider': 'openai',
             'llm.model': 'local-fixture', 'llm.api_key':'local-test-only',
             'llm.base_url':f'http://127.0.0.1:{provider.server_port}', 'scheduler.workers': 2}))
         with socket.socket() as reservation:
@@ -53,7 +53,7 @@ def main():
                 assert response.code == status, (method, path, response.code, data)
                 return data
 
-        binary = BACKEND / 'build' / ('cognitive-os-agent.exe' if os.name == 'nt' else 'cognitive-os-agent')
+        binary = BACKEND / 'build' / ('light-agent.exe' if os.name == 'nt' else 'light-agent')
         with (state / 'runtime.log').open('w') as log:
             def start():
                 process = subprocess.Popen([str(binary), '--state', str(state), '--workspace', str(state),

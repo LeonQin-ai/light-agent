@@ -5,9 +5,9 @@
  *
  * Requires: ./build/mock-llm-server 9000  (running first)
  * Build:    zig cc -Iinclude -Ithird_party/cJSON $(find src third_party -name '*.c') \
- *               tests/test_e2e.c -o build/cognitive-os-agent-e2e
+ *               tests/test_e2e.c -o build/light-agent-e2e
  */
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 #include "os/os_fs.h"
 
 #include <stdio.h>

@@ -33,12 +33,12 @@ try:
         (state/'memory/facts.json').write_text(json.dumps(facts),encoding='utf8')
         config={'llm.provider':'openai','llm.model':'summary-fixture','llm.api_key':'PRIVATE_API_KEY',
                 'llm.base_url':f'http://127.0.0.1:{server.server_port}','auth.key':'fixture-auth','scheduler.workers':2}
-        (state/'cognitive-os-agent.json').write_text(json.dumps(config),encoding='utf8')
+        (state/'light-agent.json').write_text(json.dumps(config),encoding='utf8')
         (state/'routes.json').write_text(json.dumps([{'name':'summary-fixture','provider':'openai','model':'summary-fixture','api_key':'PRIVATE_API_KEY',
           'base_url':config['llm.base_url'],'context_window':32768,'max_output_tokens':8192,'context_source':'configured'}]),encoding='utf8')
         with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
         log=(build/f'memory-summary-{name}.log').open('w',encoding='utf8')
-        process=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',str(state),'--workspace',str(state),'serve',str(port)],stdout=log,stderr=log,cwd=root,
+        process=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',str(state),'--workspace',str(state),'serve',str(port)],stdout=log,stderr=log,cwd=root,
             env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         for _ in range(150):
             try:api('GET','/v1/scheduler');break

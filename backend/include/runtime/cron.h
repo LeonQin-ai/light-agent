@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 
 typedef struct cron_mgr cron_mgr;
 

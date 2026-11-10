@@ -52,7 +52,7 @@ with tempfile.TemporaryDirectory(prefix='coa-browser-results-') as folder:
     state = Path(folder)
     provider = ThreadingHTTPServer(('127.0.0.1',0), Provider)
     threading.Thread(target=provider.serve_forever,daemon=True).start()
-    (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'skill-test',
+    (state/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'skill-test',
         'llm.base_url':f'http://127.0.0.1:{provider.server_port}','reasoning.max_rounds':10}),encoding='utf-8')
     with socket.socket() as sock:
         sock.bind(('127.0.0.1',0)); port = sock.getsockname()[1]
@@ -62,7 +62,7 @@ with tempfile.TemporaryDirectory(prefix='coa-browser-results-') as folder:
             headers={'Content-Type':'application/json'})
         with urllib.request.urlopen(req,timeout=5) as r: return json.load(r)
     with (backend/'build/browser-results-e2e.log').open('w',encoding='utf-8') as log:
-        process = subprocess.Popen([str(backend/'build/cognitive-os-agent.exe'),'--state',str(state),
+        process = subprocess.Popen([str(backend/'build/light-agent.exe'),'--state',str(state),
             '--workspace',str(state),'serve',str(port)],cwd=backend,stdout=log,stderr=log,
             creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         try:

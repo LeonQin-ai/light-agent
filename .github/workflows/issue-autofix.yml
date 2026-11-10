@@ -73,9 +73,9 @@ jobs:
         working-directory: backend
         run: |
           make -j3
-          ./build/cognitive-os-agent-test
-          ./build/cognitive-os-agent-scenario
-          ./build/cognitive-os-agent-bench --mock
+          ./build/light-agent-test
+          ./build/light-agent-scenario
+          ./build/light-agent-bench --mock
           python3 tests/test_source_read_e2e.py
           python3 tests/test_completion_review_e2e.py
           python3 tests/test_model_finalization_e2e.py

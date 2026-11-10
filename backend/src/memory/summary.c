@@ -1,6 +1,6 @@
 /* A user-visible, read-only summary; separate from lossy session compaction. */
 #include "memory/summary.h"
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 #include "runtime/tasklog.h"
 #include "os/os_fs.h"
 #include "os/os_time.h"

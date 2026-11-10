@@ -57,7 +57,7 @@ def main():
         with tempfile.TemporaryDirectory(prefix='coa-dsml-') as tmp:
             state = Path(tmp)
             (state / 'source.txt').write_text('SOURCE_EVIDENCE_DSML', encoding='utf-8')
-            (state / 'cognitive-os-agent.json').write_text(json.dumps({
+            (state / 'light-agent.json').write_text(json.dumps({
                 'llm.provider': 'openai', 'llm.api_key': 'local-test-only',
                 'llm.model': 'dsml-fixture', 'reasoning.max_rounds': 5,
                 'llm.base_url': f'http://127.0.0.1:{provider.server_port}'}), encoding='utf-8')
@@ -72,7 +72,7 @@ def main():
                 with urllib.request.urlopen(req, timeout=5) as response:
                     return json.load(response)
 
-            binary = BACKEND / 'build' / ('cognitive-os-agent.exe' if __import__('os').name == 'nt' else 'cognitive-os-agent')
+            binary = BACKEND / 'build' / ('light-agent.exe' if __import__('os').name == 'nt' else 'light-agent')
             with (state / 'runtime.log').open('w') as log:
                 process = subprocess.Popen([str(binary), '--state', str(state), '--workspace', str(state),
                     'serve', str(port)], cwd=BACKEND, stdout=log, stderr=log,

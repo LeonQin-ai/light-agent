@@ -45,7 +45,7 @@
 从 **[Releases](https://github.com/LeonQin-ai/light-agent/releases/latest)** 下载 Windows 安装包、Linux 便携包或 macOS 应用包。打开桌面应用；Linux 便携包解压后可运行：
 
 ```bash
-./cognitive-os-agent serve 18300
+./light-agent serve 18300
 ```
 
 希望从源码构建？
@@ -62,7 +62,7 @@ cd light-agent/backend
 | Windows / Git Bash | `bash build.sh cli` | Git Bash；脚本定位或引导安装固定版本 Zig |
 | Windows / PowerShell | `.\build.ps1 -Target cli` | PowerShell；脚本定位或引导安装固定版本 Zig |
 
-在 `backend` 目录执行 `./build/cognitive-os-agent serve 18300`；Windows 执行 `./build/cognitive-os-agent.exe serve 18300`。
+在 `backend` 目录执行 `./build/light-agent serve 18300`；Windows 执行 `./build/light-agent.exe serve 18300`。
 
 ### 2. 连接模型
 
@@ -77,13 +77,13 @@ cd light-agent/backend
 CLI 部署可以显式指定执行目录和状态存储位置：
 
 ```bash
-./build/cognitive-os-agent --workspace /path/to/project --state /path/to/state serve 18300
+./build/light-agent --workspace /path/to/project --state /path/to/state serve 18300
 ```
 
 **工作区支持：** 主干已集成工作区文件夹、会话工作区选择和任务独立执行目录，已合并到 `main`。工作区选择决定执行根目录，不等同于安全沙箱。
 
 ## 看见任务是怎么完成的
-**终端客户端：** 执行 `cognitive-os-agent chat` 连接桌面端或服务端 Runtime，
+**终端客户端：** 执行 `light-agent chat` 连接桌面端或服务端 Runtime，
 继续持久化会话、查看工具执行，用 Ctrl+C 请求取消。脚本调用可用 `chat -p "你的任务"`。
 交互式终端采用全屏布局；OpenAI 兼容原生工具协议的答复支持增量预览，仍需通过完成验证。
 详见[终端客户端指南](backend/README.md#terminal-client)。
@@ -130,7 +130,7 @@ flowchart TD
 | **多 Agent 协作** | 角色注册、Flow 依赖执行和群组讨论。 |
 | **可观测性** | 模型与工具阶段、可获得的 token 统计、持久化任务记录和指标。 |
 
-文件回滚不能撤销任意网络或 shell 副作用；工作区选择不是进程隔离；恢复不保证 exactly-once 执行。分布式调度和企业多租户仍属后续方向。实现状态与缺口见[详细设计](backend/docs/COGNITIVE_OS_DETAILED_DESIGN_V3.1.md)。
+文件回滚不能撤销任意网络或 shell 副作用；工作区选择不是进程隔离；恢复不保证 exactly-once 执行。分布式调度和企业多租户仍属后续方向。实现状态与缺口见[详细设计](backend/docs/LIGHT_AGENT_DETAILED_DESIGN_V3.1.md)。
 
 ## 用证据说明能力
 
@@ -179,7 +179,7 @@ COA_TOOL_PROTOCOL=legacy make test
 COA_TOOL_PROTOCOL=legacy make scenario
 ```
 
-Windows 可用 `bash build.sh test` 构建单元测试，再执行 `./build/cognitive-os-agent-test.exe`。离线 fixture 验证运行时行为，无需付费模型调用；真实模型评测另行执行，需要 API 凭据。浏览器用例还需要 Playwright。完整命令和环境配置见 [CI](.github/workflows/ci.yml) 与[开发指南](backend/README.md)。
+Windows 可用 `bash build.sh test` 构建单元测试，再执行 `./build/light-agent-test.exe`。离线 fixture 验证运行时行为，无需付费模型调用；真实模型评测另行执行，需要 API 凭据。浏览器用例还需要 Playwright。完整命令和环境配置见 [CI](.github/workflows/ci.yml) 与[开发指南](backend/README.md)。
 
 欢迎贡献**可复现的任务失败、模型适配、工具恢复、上下文效率、界面可访问性和文档改进**。提交问题时请附版本或 commit、操作系统、模型与 provider、预期结果，以及脱敏后的执行记录，不要上传 API key 或未获授权的私有源码。
 
@@ -190,10 +190,10 @@ Windows 可用 `bash build.sh test` 构建单元测试，再执行 `./build/cogn
 | 资料 | 内容 |
 |---|---|
 | [开发指南](backend/README.md) | 构建、配置、工具、API 和本地模型 |
-| [架构基线](backend/docs/COGNITIVE_OS_ARCHITECTURE_BASELINE_V3.0.md) | 模块边界与设计方向 |
-| [详细设计](backend/docs/COGNITIVE_OS_DETAILED_DESIGN_V3.1.md) | 实现状态与待完成工作 |
+| [架构基线](backend/docs/LIGHT_AGENT_ARCHITECTURE_BASELINE_V3.0.md) | 模块边界与设计方向 |
+| [详细设计](backend/docs/LIGHT_AGENT_DETAILED_DESIGN_V3.1.md) | 实现状态与待完成工作 |
 | [Runtime 白皮书](backend/docs/runtime-whitepaper.md) | 调度、内存、执行与架构图 |
-| [密钥安全设计](backend/docs/COGNITIVE_OS_SECRET_SECURITY_DDD_V1.0.md) | 安全模型与验收标准 |
+| [密钥安全设计](backend/docs/LIGHT_AGENT_SECRET_SECURITY_DDD_V1.0.md) | 安全模型与验收标准 |
 | [技术博客](https://leonqin-ai.github.io/) | 8 篇关联源码与验证证据的工程文章 |
 | [5 分钟控制台录像](backend/docs/runtime-demo.mp4) | 确定性本地模型驱动的真实运行时与工具执行 |
 

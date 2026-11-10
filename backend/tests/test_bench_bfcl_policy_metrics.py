@@ -10,8 +10,8 @@ import unittest
 
 
 BACKEND = Path(__file__).resolve().parents[1]
-EXE = BACKEND / "build" / ("cognitive-os-agent-bench-bfcl.exe" if os.name == "nt"
-                            else "cognitive-os-agent-bench-bfcl")
+EXE = BACKEND / "build" / ("light-agent-bench-bfcl.exe" if os.name == "nt"
+                            else "light-agent-bench-bfcl")
 
 
 class BfclPolicyMetricsTest(unittest.TestCase):

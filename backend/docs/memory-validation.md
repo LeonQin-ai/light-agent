@@ -89,7 +89,7 @@ after at least 60 compactions, both markers must still reach the final planner
 input. This tests input continuity, not a model's semantic constraint compliance.
 The success-path temporary summary is also freed.
 
-Run the focused C test with `cognitive-os-agent-test --rolling-compaction`.
+Run the focused C test with `light-agent-test --rolling-compaction`.
 It is included in the full suite and memory baseline. The opt-in
 `python tests/test_live_rolling_compaction.py --config <private-config-path>`
 performs 25 real native chat tasks in a private Runtime with episode sharing

@@ -37,7 +37,7 @@ with tempfile.TemporaryDirectory(prefix='coa-session-paging-') as tmp:
   fixture=ThreadingHTTPServer(('127.0.0.1',0),Provider);threading.Thread(target=fixture.serve_forever,daemon=True).start()
   config.update({'llm.provider':'openai','llm.model':'local-native-fixture','llm.api_key':'fixture-only','llm.base_url':f'http://127.0.0.1:{fixture.server_port}'})
  config['llm.routing']='fixed'
- (state/'cognitive-os-agent.json').write_text(json.dumps(config),encoding='utf-8')
+ (state/'light-agent.json').write_text(json.dumps(config),encoding='utf-8')
  with socket.socket() as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
  def req(path,body=None):
   data=json.dumps(body).encode() if body is not None else None
@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix='coa-session-paging-') as tmp:
  report={'state':str(state),'model':config.get('llm.model','mock'),'tasks':[],'completed':False}
  def start():
   log=(state/'paging-server.log').open('a',encoding='utf-8')
-  child=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',str(state),'--workspace',str(state),'serve',str(port)],cwd=backend,stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+  child=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',str(state),'--workspace',str(state),'serve',str(port)],cwd=backend,stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
   for _ in range(300):
    try:req('/v1/scheduler');return child,log
    except OSError:assert child.poll() is None;time.sleep(.1)

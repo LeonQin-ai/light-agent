@@ -123,14 +123,14 @@ with tempfile.TemporaryDirectory(prefix='attachment-e2e-', dir=BACKEND/'build') 
     state = Path(tmp)
     config = {'llm.provider': 'openai', 'llm.model': 'capture-vision', 'llm.api_key': 'local-test-only',
               'llm.base_url': f'http://127.0.0.1:{provider.server_port}', 'scheduler.workers': 2, 'scheduler.history.count': 4}
-    (state/'cognitive-os-agent.json').write_text(json.dumps(config))
+    (state/'light-agent.json').write_text(json.dumps(config))
     (state/'uploads').mkdir()
     (state/'uploads/legacy.txt').write_text('LEGACY_TEXT_PRESERVED')
     log = open(BACKEND/'build/review-e2e-server.log', 'w', encoding='utf-8')
 
     def start():
         global process
-        process = subprocess.Popen([str(BACKEND/'build/cognitive-os-agent.exe'), '--state', str(state),
+        process = subprocess.Popen([str(BACKEND/'build/light-agent.exe'), '--state', str(state),
                                     '--workspace', str(state), 'serve', str(port)],
                                    stdout=log, stderr=log, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         for _ in range(150):
@@ -332,7 +332,7 @@ with tempfile.TemporaryDirectory(prefix='attachment-e2e-', dir=BACKEND/'build') 
             subprocess.run(['node', str(BACKEND/'tests'/script)], env=env, check=True, timeout=60)
             check('browser '+script, True)
         before = {x['id']: (x['status'],x['chunks']) for x in request('GET','/v1/uploads')['files']}
-        stop(); config['llm.provider']='anthropic'; (state/'cognitive-os-agent.json').write_text(json.dumps(config)); start()
+        stop(); config['llm.provider']='anthropic'; (state/'light-agent.json').write_text(json.dumps(config)); start()
         after = {x['id']: (x['status'],x['chunks']) for x in request('GET','/v1/uploads')['files']}
         check('restart preserves attachment statuses and chunks', before==after)
         check('restored video frame files remain usable','base64' in json.dumps(chat([video_ids[-1]])))

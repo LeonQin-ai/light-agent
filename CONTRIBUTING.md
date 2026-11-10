@@ -1,4 +1,4 @@
-# Contributing to Cognitive OS
+# Contributing to light-agent
 
 Start with one reproducible behavior: a task state, tool result, dependency edge, context-budget decision or recovery boundary. A small change with clear evidence is easier to review than a broad rewrite.
 

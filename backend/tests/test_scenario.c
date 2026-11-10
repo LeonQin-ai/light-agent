@@ -19,7 +19,7 @@
  *
  * Build:  ./build.sh scenario   (or: ./build.sh all)
  */
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 #include "plugin_runtime/manager.h"
 #include "os/os_fs.h"
 #include "os/os_proc.h"

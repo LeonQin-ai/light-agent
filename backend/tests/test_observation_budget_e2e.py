@@ -40,13 +40,13 @@ for provider in ('openai','anthropic'):
             (state/f'part-{i}.txt').write_text(text,encoding='utf-8')
         route={'name':'fixture','provider':provider,'model':'window-fixture','api_key':'local-fixture','base_url':f'http://127.0.0.1:{server.server_port}','context_window':window,'max_output_tokens':65536,'context_source':'provider_metadata'}
         (state/'routes.json').write_text(json.dumps([route]),encoding='utf-8')
-        (state/'cognitive-os-agent.json').write_text(json.dumps({'llm.'+k:v for k,v in route.items() if k in ('provider','model','base_url','api_key')}|{'reasoning.max_rounds':-1,'context.observation_budget':budget}),encoding='utf-8')
+        (state/'light-agent.json').write_text(json.dumps({'llm.'+k:v for k,v in route.items() if k in ('provider','model','base_url','api_key')}|{'reasoning.max_rounds':-1,'context.observation_budget':budget}),encoding='utf-8')
         with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
         def request(path,body=None):
             req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
             with urllib.request.urlopen(req,timeout=5) as response:return json.load(response)
         with (build/f'observation-budget-{provider}-{window}-{budget}.log').open('w',encoding='utf-8') as log:
-            process=subprocess.Popen([str(build/('cognitive-os-agent.exe' if os.name=='nt' else 'cognitive-os-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=backend,stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            process=subprocess.Popen([str(build/('light-agent.exe' if os.name=='nt' else 'light-agent')),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=backend,stdout=log,stderr=log,env={**os.environ,'COA_TOOL_PROTOCOL':'native'},creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
             try:
                 for _ in range(100):
                     try:request('/v1/scheduler');break

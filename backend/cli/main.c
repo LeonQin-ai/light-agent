@@ -1,11 +1,11 @@
-/* cli/main.c — cognitive-os-agent command-line interface.
- *   cognitive-os-agent run "<prompt>"       run one prompt through the cognitive pipeline
- *   cognitive-os-agent serve [port]         serve the HTTP API + web console
- *   cognitive-os-agent tools                list available tools
- *   cognitive-os-agent memory               show working + long-term memory
- *   cognitive-os-agent snapshot list|rollback
- *   cognitive-os-agent config               show effective config
- *   cognitive-os-agent                      interactive shell
+/* cli/main.c — light-agent command-line interface.
+ *   light-agent run "<prompt>"       run one prompt through the cognitive pipeline
+ *   light-agent serve [port]         serve the HTTP API + web console
+ *   light-agent tools                list available tools
+ *   light-agent memory               show working + long-term memory
+ *   light-agent snapshot list|rollback
+ *   light-agent config               show effective config
+ *   light-agent                      interactive shell
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,7 +16,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #endif
-#include "cognitive-os-agent.h"
+#include "light-agent.h"
 #include "action/tools.h"
 #include "memory/memory.h"
 #include "snapshot/snapshot.h"
@@ -27,27 +27,27 @@
 #define STATE_ROOT "state"
 
 static void print_usage(void) {
-    printf("cognitive-os-agent %s — Cognitive OS Runtime\n", version());
+    printf("light-agent %s — light-agent Runtime\n", version());
     printf("usage:\n");
-    printf("  cognitive-os-agent [--workspace DIR] chat [--connect URL] [--session ID] [-p PROMPT]\n");
-    printf("  cognitive-os-agent [--config FILE] [--workspace DIR] [--state DIR]\n");
+    printf("  light-agent [--workspace DIR] chat [--connect URL] [--session ID] [-p PROMPT]\n");
+    printf("  light-agent [--config FILE] [--workspace DIR] [--state DIR]\n");
     printf("                                            interactive chat; type a task directly\n");
-    printf("  cognitive-os-agent [options] run <prompt>  run one task\n");
-    printf("  cognitive-os-agent [options] <prompt>      run one task directly\n");
-    printf("  cognitive-os-agent [options] serve [port]  serve HTTP API + web console\n");
+    printf("  light-agent [options] run <prompt>  run one task\n");
+    printf("  light-agent [options] <prompt>      run one task directly\n");
+    printf("  light-agent [options] serve [port]  serve HTTP API + web console\n");
 #ifdef _WIN32
-    printf("  cognitive-os-agent install [dir]           copy self to install dir (default %%ProgramFiles%%\\cognitive-os-agent)\n");
+    printf("  light-agent install [dir]           copy self to install dir (default %%ProgramFiles%%\\light-agent)\n");
 #endif
-    printf("  cognitive-os-agent tools                   list available tools\n");
-    printf("  cognitive-os-agent memory                  show working + long-term memory\n");
-    printf("  cognitive-os-agent snapshot list|rollback  list snapshots / rollback to latest\n");
-    printf("  cognitive-os-agent config                  show effective config\n");
-    printf("Configuration: default state/cognitive-os-agent.json; environment COA_* overrides file values.\n");
+    printf("  light-agent tools                   list available tools\n");
+    printf("  light-agent memory                  show working + long-term memory\n");
+    printf("  light-agent snapshot list|rollback  list snapshots / rollback to latest\n");
+    printf("  light-agent config                  show effective config\n");
+    printf("Configuration: default state/light-agent.json; environment COA_* overrides file values.\n");
     printf("Interactive commands: /help /config /tools /memory /snapshot list /exit\n");
 }
 
 /* Self-install: copy the running exe to <dir> (default %ProgramFiles%\
- * cognitive-os-agent). Used by the setup wrapper; avoids the fragile
+ * light-agent). Used by the setup wrapper; avoids the fragile
  * "launch a .bat from a temp dir" step that breaks on some systems.
  * Windows-only (self-locate + CopyFile); the dispatch site is guarded too. */
 #ifdef _WIN32
@@ -71,8 +71,8 @@ static int cmd_install(const char *dir_arg) {
     if (dir_arg && *dir_arg)
         snprintf(dst_dir, sizeof dst_dir, "%s", dir_arg);
     else
-        snprintf(dst_dir, sizeof dst_dir, "%s\\cognitive-os-agent", pf);
-    snprintf(dst, sizeof dst, "%s\\cognitive-os-agent.exe", dst_dir);
+        snprintf(dst_dir, sizeof dst_dir, "%s\\light-agent", pf);
+    snprintf(dst, sizeof dst, "%s\\light-agent.exe", dst_dir);
 
     /* create the target dir plus any missing parents */
     for (p = dst_dir; *p; p++) {
@@ -92,7 +92,7 @@ static int cmd_install(const char *dir_arg) {
                dst, (unsigned long)GetLastError());
         return 1;
     }
-    printf("cognitive-os-agent %s installed:\n", version());
+    printf("light-agent %s installed:\n", version());
     printf("  %s\n", dst);
     printf("Start the server:\n");
     printf("  \"%s\" serve 8080\n", dst);
@@ -290,7 +290,7 @@ int main(int argc, char **argv) {
             print_usage(); return 0;
         }
         if (strcmp(opt, "--version") == 0 || strcmp(opt, "-v") == 0) {
-            printf("cognitive-os-agent %s\n", version()); return 0;
+            printf("light-agent %s\n", version()); return 0;
         }
         if (opt[0] == '-' && opt[1] == '-') {
             fprintf(stderr, "unknown option: %s\n", opt);
@@ -339,7 +339,7 @@ int main(int argc, char **argv) {
             config *probe = config_new();
             char path[1200];
             if (config_file) snprintf(path, sizeof(path), "%s", config_file);
-            else snprintf(path, sizeof(path), "%s/cognitive-os-agent.json", state_root);
+            else snprintf(path, sizeof(path), "%s/light-agent.json", state_root);
             if (probe) config_load_file(probe, path);
             long port = (long)config_get_int(probe, "http.port", 8080);
             cfg.http_port = (uint16_t)(port > 0 && port <= 65535 ? port : 8080);
@@ -371,7 +371,7 @@ int main(int argc, char **argv) {
     } else {
         cli_progress_state progress = {{0}};
         reasoning_set_observer(ctx.reasoning, cli_progress, &progress);
-        printf("Cognitive OS %s · %s / %s\nType a task directly; /help for commands.\n",
+        printf("light-agent %s · %s / %s\nType a task directly; /help for commands.\n",
                version(), ctx.provider, ctx.llm && ctx.llm->model ? ctx.llm->model : "default");
         if (ctx.provider && strcmp(ctx.provider, "mock") == 0)
             fprintf(stderr, "Offline mock mode. Configure llm.provider, llm.model and llm.api_key for a real model.\n");
