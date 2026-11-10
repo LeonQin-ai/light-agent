@@ -44,6 +44,19 @@ class Provider(BaseHTTPRequestHandler):
         if self.mode == 'chat':
             text = '你好！可以交流技术问题。'
             calls = [finish(text)]
+        elif self.mode in ('preserve_delivery', 'replace_delivery'):
+            if n == 0:
+                calls = [('file_read', {'path': 'process_state.cpp'})]
+            else:
+                note = '证据充分，可以交付结果。'
+                if n == 1:
+                    calls = [finish(ANSWER if self.mode == 'preserve_delivery' else note)]
+                else:
+                    prompt = body['messages'][-1]['content']
+                    assert 'replace_answer=true' in prompt and 'JOURNAL_REPLAY' in prompt
+                    calls = [finish(note if self.mode == 'preserve_delivery' else ANSWER)]
+                    if self.mode == 'replace_delivery':
+                        calls[0][1]['replace_answer'] = True
         elif self.mode.startswith('dir_'):
             target = 'nested/src/context' if self.mode != 'dir_unrelated' else 'other/context'
             if n == 0:
@@ -159,7 +172,8 @@ def exercise(protocol, mode):
                         return
                     expected = {'recover': (4, 2, 'DONE'), 'commentary': (5, 2, 'DONE'),
                         'stuck': (4, 1, 'FAILED'), 'blocked': (3, 1, 'FAILED'),
-                        'budget': (2, 1, 'FAILED'), 'chat': (1, 0, 'DONE')}[mode]
+                        'budget': (2, 1, 'FAILED'), 'chat': (1, 0, 'DONE'),
+                        'preserve_delivery': (3, 1, 'DONE'), 'replace_delivery': (3, 1, 'DONE')}[mode]
                     if mode in ('recover','commentary'):
                         expected=(expected[0]+1,expected[1],expected[2])
                     if protocol=='native' and mode=='budget':
@@ -173,6 +187,8 @@ def exercise(protocol, mode):
                     if mode in ['recover', 'commentary']:
                         assert task['output'] == ANSWER, task
                         assert all(marker in task['steps'][-1]['out'] for marker in ['JOURNAL_REPLAY', 'DISK_FLUSH']), task
+                    if mode.endswith('_delivery'):
+                        assert task['output'] == ANSWER, task
                     if protocol == 'legacy' and mode not in ['chat', 'budget']:
                         # Legacy structured decisions apply to tool requests as
                         # well as final review; every request carries the contract.
@@ -200,3 +216,5 @@ if __name__ == '__main__':
     for protocol in ['legacy', 'native']:
         for mode in ['recover', 'commentary', 'stuck', 'blocked', 'budget', 'chat', 'dir_relocated', 'dir_unrelated', 'dir_existing', 'dir_readonly']:
             exercise(protocol, mode)
+    for mode in ('preserve_delivery', 'replace_delivery'):
+        exercise('native', mode)

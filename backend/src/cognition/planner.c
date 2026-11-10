@@ -743,7 +743,7 @@ static char *native_tool_catalog(const tool_registry *tools, struct policy_engin
         }
         cJSON_AddItemToObject(fn,"parameters",schema);cJSON_AddItemToArray(list,entry);
     }
-    cJSON *finish=cJSON_Parse("{\"type\":\"function\",\"function\":{\"name\":\"complete_task\",\"description\":\"End this task only when no further tool operations are required. Report complete or blocked and the final answer. If tools are needed, call those tools instead.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"status\":{\"type\":\"string\",\"enum\":[\"complete\",\"blocked\"]},\"requires_tools\":{\"type\":\"boolean\"},\"answer\":{\"type\":\"string\"}},\"required\":[\"status\",\"requires_tools\",\"answer\"]}}}");
+    cJSON *finish=cJSON_Parse("{\"type\":\"function\",\"function\":{\"name\":\"complete_task\",\"description\":\"End this task only when no further tool operations are required. Report complete or blocked and the final answer. If tools are needed, call those tools instead.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"status\":{\"type\":\"string\",\"enum\":[\"complete\",\"blocked\"]},\"requires_tools\":{\"type\":\"boolean\"},\"answer\":{\"type\":\"string\",\"description\":\"The actual user-facing deliverable, or the reason work is blocked.\"},\"replace_answer\":{\"type\":\"boolean\",\"description\":\"During completion review only, set true to replace the earlier candidate with a corrected full deliverable.\"}},\"required\":[\"status\",\"requires_tools\",\"answer\"]}}}");
     if(finish){
         cJSON *properties=cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(
             cJSON_GetObjectItemCaseSensitive(finish,"function"),"parameters"),"properties");

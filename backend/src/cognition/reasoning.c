@@ -321,6 +321,7 @@ struct reasoning {
     int visual_request_failed; /* avoid silently repeating expensive image requests */
     int planner_response_truncated;
     int planner_native_end_turn;
+    int planner_review_replace_answer;
     cJSON *file_equalities; /* structured native completion obligations, sticky for this run */
     int file_checks_failed, file_checks_invalid, file_checks_running;
     int file_check_rejections, file_check_at_tools;
@@ -2394,7 +2395,13 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
     trace_end(r->trace, llm_span, rc == 0 && raw ? 1 : -1);
     r->prog_llm_ms += time_now_ms() - t_llm0;
     r->prog_llm_calls++;
-    if(rc==0 && completion_json && r->planner_native_end_turn==1)verify_completion_files(r,completion_json);
+    r->planner_review_replace_answer=0;
+    if(rc==0 && completion_json && r->planner_native_end_turn==1) {
+        verify_completion_files(r,completion_json);
+        cJSON *decision=cJSON_Parse(completion_json);
+        r->planner_review_replace_answer=cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(decision,"replace_answer"));
+        cJSON_Delete(decision);
+    }
     free(completion_json);
     if(rc==0)snprintf(r->public_commentary,sizeof(r->public_commentary),"%s",diagnostic.commentary);
     if (rc == 0 && raw)
@@ -4353,6 +4360,7 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     int search_only_rounds = 0;
     int failure_recovery_nudges = 0, truncated_response_nudges = 0;
     int completion_reviewed = 0;
+    char *delivery_candidate = NULL;
     int completion_grace = 0;
     const char *completion_reserve_note = "[system] Finalization-only reserve: the configured tool-execution budget is exhausted. Assess the ORIGINAL request against existing successful observations. Do not reread or execute extra checks solely for reassurance; no executable tool actions can run in this reserve. If the requested work is already delivered and verified, call complete_task(status=complete, requires_tools=false, answer=full_result). If essential work remains, call complete_task(status=blocked, requires_tools=false, answer=what_is_missing). This is the single reserved finalization request, not additional work budget.";
     int output_truncated_unresolved = 0;
@@ -4381,6 +4389,7 @@ restart_planning:
              * model retries/empty completion arrays must never erase them. */
             cJSON_Delete(r->file_equalities);r->file_equalities=NULL;r->file_checks_failed=r->file_checks_invalid=0;r->file_check_error[0]=0;
             r->file_check_rejections=0;
+            free(delivery_candidate);delivery_candidate=NULL;completion_reviewed=0;
             r->stall_nudged = 0;
             r->invalid_args_n = 0;
             r->search_seen_n = r->versioned_seen_n = 0;
@@ -4621,6 +4630,7 @@ restart_planning:
                     }
                 }
                 completion_reviewed = 1;
+                if (planner_uses_native_tools(r->llm)) delivery_candidate=xstrdup(txt ? txt : "");
                 r->completion_review_required = !planner_uses_native_tools(r->llm);
                 round_log_append(r, txt ? txt : "");
                 round_log_append(r, "[system] Completion review: compare the proposed answer against the ORIGINAL user request and actual tool evidence. "
@@ -4629,8 +4639,12 @@ restart_planning:
                                     "do not merely announce future work. Report genuinely blocked work with status blocked. "
                                     "Review this work stage once. If review resumes operations, the later delivery is a new candidate. "
                                     "Do not reread evidence solely to confirm completion.");
+                if (delivery_candidate)
+                    round_log_append(r, "[system] If the candidate contains the requested deliverable, approve it with complete_task; the runtime keeps the candidate verbatim. If it only describes progress, evidence sufficiency or readiness, or omits requested content, call complete_task(status=complete, requires_tools=false, replace_answer=true, answer=the complete deliverable). Include the requested findings, items and references. Never deliver a review note in place of the result.");
                 continue;
             }
+            if (delivery_candidate && r->planner_native_end_turn==1 && !r->planner_review_replace_answer)
+                txt = delivery_candidate;
             final_text = xstrdup(txt ? txt : "");
             break;
         }
@@ -4643,6 +4657,7 @@ restart_planning:
              * obsolete candidate reviewed before that work. Cached/repeated
              * observations do not reopen review and consume extra calls. */
             completion_reviewed = 0;
+            free(delivery_candidate);delivery_candidate=NULL;
         } else if(no_action_rounds && !planner_uses_native_tools(r->llm)) {
             /* Replaying cached evidence is not recovery progress. A valid
              * plan may clear parser recovery, but it cannot reopen this
@@ -4778,6 +4793,7 @@ restart_planning:
         free(result); result = NULL;
         no_action_rounds = no_action_stalled = 0;
         stalled = consec_fail = fail_aborted = synthesized = unfinished = 0;
+        free(delivery_candidate);delivery_candidate=NULL;completion_reviewed=0;
         goto restart_planning;
     }
     /* Cancellation is a terminal outcome of its own. In particular, do not
@@ -4897,6 +4913,7 @@ restart_planning:
         strbuf_appendf(&out, "\n(连续 %s 轮阶段失败，任务中止 — 请根据执行记录中的真实错误修正后重试)",
                        REASONING_CONSEC_FAIL_ABORT_STR);
 
+    free(delivery_candidate);
     free(final_text);
     free(truncated_prefix);
     free(result);
