@@ -4,6 +4,7 @@
 #include "action/tools.h"
 #include "action/skill.h"
 #include "runtime/policy_engine.h"
+#include "os/os_proc.h"
 #include "infra/util.h"
 #include "infra/logging.h"
 
@@ -179,16 +180,36 @@ static char *build_catalog_prompt(const tool_registry *tools, struct skill_regis
         "after the requested content loads. Follow actual site pagination/scroll loading when needed. "
         "If a tool returns [full tool result saved], read its local file in 4000-byte pages to EOF; "
         "the preview is not the complete result. Do not repeatedly navigate to the same page for missing text.\n");
-#if defined(_WIN32)
-    /* Windows hosts: this build has no bash. Modeling commands on a Unix
-     * shell wastes rounds on heredoc/CLIXML/parsing failures; keep the
-     * environment constraints visible to the planner up front. */
-    strbuf_append(&b, "Shell environment: Windows host, NO bash. shell accepts only auto/cmd/powershell. "
-        "Forbidden in shell commands: heredocs (<<), $(), pipes into sed/awk/grep -v chains, multi-line input. "
-        "For file search use the grep/glob tools, for file content use file_read paging, "
-        "and for text processing write a python file with file_write then run `python script.py` (single-line -c only). "
-        "Redirect output with > file when a tool result needs to become a file artifact.\n");
-#endif
+    /* The runtime may execute through Git-for-Windows bash even on Windows.
+     * Report the interpreter that will actually run, so the model's syntax
+     * matches it instead of writing cmd-only commands into bash (#274). */
+    {
+        char shell_desc[128];
+        proc_shell_describe(shell_desc, sizeof(shell_desc));
+        strbuf_appendf(&b,
+            "Shell environment: %s. Use the matching syntax: POSIX (forward slashes, &&, $VAR, single quotes) "
+            "for bash/sh; cmd-only syntax (cd /d, %%VAR%%, dir /b, set VAR=) only when the backend is cmd.exe. "
+            "Do not mix the two. Avoid heredocs and multi-line input; for file search use grep/glob, for file "
+            "content use file_read paging, and for text processing write a python file with file_write then run "
+            "`python script.py`. Redirect output with > file when a tool result needs to become an artifact.\n",
+            shell_desc);
+    }
+    strbuf_append(&b,
+        "Evidence parity: direct tool results (file_read, grep, glob, git, shell) and results produced by your own "
+        "script are equally valid evidence. Re-checking a dimension already verified in this run is not a new "
+        "obligation; do not run another probe or write another script merely to restate it.\n");
+    strbuf_append(&b,
+        "Batch independent facts: put independent read-only checks into one plan as multiple actions, or chain "
+        "them with && in one read-only shell command. Do not re-run an identical read-only probe while the "
+        "workspace is unchanged; the runtime reuses that observation instead of executing it again.\n");
+    strbuf_append(&b,
+        "Artifacts: declare acceptance.artifacts or shell outputs only for files the user explicitly asked to be "
+        "written. Analysis/verification tasks use requires_observation satisfied by direct tool results; do not "
+        "invent report files or verification scripts as deliverables.\n");
+    strbuf_append(&b,
+        "If a verification script times out twice, do not create another numbered replacement. Switch to atomic "
+        "tools (file_read/grep/git/small shell steps), or state the unfinished dimension and its real cause in the "
+        "conclusion.\n");
     if (skills) skill_registry_refresh(skills);
     if (have_skill_tool && skills && skill_count(skills) > 0) {
         strbuf_append(&b, "Registered skills (capabilities you can RUN via the skill tool):\n");

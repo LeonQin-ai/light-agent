@@ -25,6 +25,13 @@ proc_result *proc_run_in(const char *cmd, int timeout_ms, const char *cwd);
 proc_result *proc_run_native_in(const char *cmd, int timeout_ms, const char *cwd);
 void proc_result_free(proc_result *r);
 
+/* Describe the interpreter that proc_run* actually uses, e.g.
+ * "bash (POSIX syntax)" or "cmd.exe (cmd syntax)". The planner prompt must
+ * match the real backend: on Windows a Git-for-Windows bash can be selected
+ * even though the host is Windows, and telling the model "NO bash" sends it
+ * into cmd-only syntax that cannot run. Result is NUL-terminated, <120 chars. */
+void proc_shell_describe(char *buf, size_t cap);
+
 /* Fire-and-forget: launch `cmd` through the platform shell, detached from the
  * caller (no console window, no inherited stdio, survives after return). The
  * child runs in its own process group so long-running servers (e.g. `ollama

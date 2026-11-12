@@ -4,6 +4,7 @@
 #include "cognition/reasoning.h"
 #include "llm/llm.h"
 #include "os/os_fs.h"
+#include "os/os_proc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -99,6 +100,84 @@ static int recovery_chat(llm *self, const llm_request *req, llm_response *resp) 
     resp->content = copy_text(answer);
     if (fixture->calls >= 5) fixture_final_decision(req, resp);
     return resp->content ? 0 : -1;
+}
+
+typedef struct probe_fixture {
+    int calls;
+    int shell_execs;
+} probe_fixture;
+
+/* Round 2 repeats the round-1 probe with no intervening write, so the runtime
+ * must reuse the observation. Round 3 writes a file, invalidating the cache,
+ * so the round-4 probe has to execute again (#272). */
+static int probe_chat(llm *self, const llm_request *req, llm_response *resp) {
+    (void)req;
+    probe_fixture *fixture = self ? self->impl : NULL;
+    if (!fixture) return -1;
+    fixture->calls++;
+    const char *plan = NULL;
+    switch (fixture->calls) {
+    case 1: plan = "[{\"tool\":\"shell\",\"args\":{\"command\":\"pwd\"}}]"; break;
+    case 2: plan = "[{\"tool\":\"shell\",\"args\":{\"command\":\"pwd\"}}]"; break;
+    case 3: plan = "[{\"tool\":\"file_write\",\"args\":{\"path\":\"probe-invalidate.txt\",\"content\":\"changed\"}}]"; break;
+    case 4: plan = "[{\"tool\":\"shell\",\"args\":{\"command\":\"pwd\"}}]"; break;
+    default: plan = "探针复用验证完成。"; break;
+    }
+    resp->content = copy_text(plan);
+    if (fixture->calls >= 5) fixture_final_decision(req, resp);
+    return resp->content ? 0 : -1;
+}
+
+static tool_result *probe_shell(const tool *self, const tool_ctx *ctx, const char *args) {
+    (void)ctx;
+    (void)args;
+    probe_fixture *fixture = self ? self->ud : NULL;
+    if (fixture) fixture->shell_execs++;
+    return tool_result_new(1, "workspace root");
+}
+
+typedef struct timeout_fixture {
+    int calls;
+    int nudge_seen;
+    int prompt_ok;
+} timeout_fixture;
+
+/* Two distinctly-named verification scripts time out; the runtime must nudge
+ * once instead of letting the planner write endless replacements (#273). It
+ * must also describe the actual shell backend in the system prompt (#274). */
+static int timeout_chat(llm *self, const llm_request *req, llm_response *resp) {
+    timeout_fixture *fixture = self ? self->impl : NULL;
+    if (!fixture) return -1;
+    fixture->calls++;
+    char shell_desc[128];
+    proc_shell_describe(shell_desc, sizeof(shell_desc));
+    for (size_t i = 0; i < req->num_messages; i++) {
+        const char *role = req->messages[i].role;
+        const char *body = req->messages[i].content ? req->messages[i].content : "";
+        if (role && !strcmp(role, "system")) {
+            if (strstr(body, "Evidence parity") && strstr(body, shell_desc))
+                fixture->prompt_ok = 1;
+        }
+        if (strstr(body, "验证脚本已连续超时两次"))
+            fixture->nudge_seen = 1;
+    }
+    const char *answer = NULL;
+    switch (fixture->calls) {
+    case 1: answer = "[{\"tool\":\"shell\",\"args\":{\"command\":\"sleep 61\"}}]"; break;
+    case 2: answer = "[{\"tool\":\"shell\",\"args\":{\"command\":\"sleep 62\"}}]"; break;
+    default: answer = "已改用原子工具分步验证。"; break;
+    }
+    resp->content = copy_text(answer);
+    if (fixture->calls >= 3) fixture_final_decision(req, resp);
+    return resp->content ? 0 : -1;
+}
+
+static tool_result *timeout_shell(const tool *self, const tool_ctx *ctx, const char *args) {
+    (void)ctx;
+    (void)args;
+    timeout_fixture *fixture = self ? self->ud : NULL;
+    (void)fixture;
+    return tool_result_new(0, "[timeout] verification script exceeded the command budget");
 }
 
 static tool_result *fixture_failure(const tool *self, const tool_ctx *ctx, const char *args) {
@@ -255,6 +334,98 @@ int main(void) {
     reasoning_free(recovery_engine);
     tool_registry_free(recovery_registry);
     fs_remove(same_path); fs_remove(new_path); fs_remove(recovery_workspace);
+
+    /* Read-only probe reuse (#272): an identical successful shell probe is
+     * skipped while the workspace is unchanged, and re-executed once a write
+     * invalidates the cache. */
+    const char *probe_workspace = "build/test-plan-probe-reuse";
+    char invalidate_path[256];
+    snprintf(invalidate_path, sizeof(invalidate_path), "%s/probe-invalidate.txt", probe_workspace);
+    fs_mkdirs(probe_workspace);
+    fs_remove(invalidate_path);
+    probe_fixture probe = {0};
+    llm probe_provider = {
+        .vt = &(const llm_vtable){.chat = probe_chat},
+        .provider = "fixture", .model = "fixture", .impl = &probe
+    };
+    tool probe_tool = {
+        .name = "shell", .description = "read-only probe fixture",
+        .execute = probe_shell, .ud = &probe
+    };
+    tool_registry *probe_registry = tool_registry_new();
+    if (!probe_registry || tool_register(probe_registry, &probe_tool) != 0 ||
+        tool_register(probe_registry, tool_file_write()) != 0) {
+        tool_registry_free(probe_registry);
+        fs_remove(invalidate_path); fs_remove(probe_workspace);
+        return 2;
+    }
+    reasoning_config probe_cfg = {0};
+    probe_cfg.llm = &probe_provider;
+    probe_cfg.tools = probe_registry;
+    probe_cfg.workspace = probe_workspace;
+    probe_cfg.max_rounds = -1;
+    reasoning *probe_engine = reasoning_new(&probe_cfg);
+    if (!probe_engine) {
+        tool_registry_free(probe_registry);
+        fs_remove(invalidate_path); fs_remove(probe_workspace);
+        return 2;
+    }
+    char *probe_answer = NULL;
+    int probe_rc = reasoning_run(probe_engine, "检查工作区状态并汇报", &probe_answer);
+    failures += check(probe_rc == 0 && probe_answer && strstr(probe_answer, "探针复用验证完成"),
+                      "probe-reuse run reaches a final answer");
+    char probe_label[128];
+    snprintf(probe_label, sizeof(probe_label),
+             "identical probe is reused until a write invalidates it (execs=%d calls=%d)",
+             probe.shell_execs, probe.calls);
+    failures += check(probe.shell_execs == 2 && probe.calls >= 5, probe_label);
+    free(probe_answer);
+    reasoning_free(probe_engine);
+    tool_registry_free(probe_registry);
+    fs_remove(invalidate_path); fs_remove(probe_workspace);
+
+    /* Two timed-out verification scripts trigger exactly one "stop writing
+     * replacement scripts" nudge (#273), and the planner system prompt names
+     * the backend shell the runtime actually uses (#274). */
+    const char *timeout_workspace = "build/test-plan-timeout";
+    fs_mkdirs(timeout_workspace);
+    timeout_fixture timeout_fx = {0};
+    llm timeout_provider = {
+        .vt = &(const llm_vtable){.chat = timeout_chat},
+        .provider = "fixture", .model = "fixture", .impl = &timeout_fx
+    };
+    tool timeout_tool = {
+        .name = "shell", .description = "timeout fixture",
+        .execute = timeout_shell, .ud = &timeout_fx
+    };
+    tool_registry *timeout_registry = tool_registry_new();
+    if (!timeout_registry || tool_register(timeout_registry, &timeout_tool) != 0) {
+        tool_registry_free(timeout_registry);
+        fs_remove(timeout_workspace);
+        return 2;
+    }
+    reasoning_config timeout_cfg = {0};
+    timeout_cfg.llm = &timeout_provider;
+    timeout_cfg.tools = timeout_registry;
+    timeout_cfg.workspace = timeout_workspace;
+    timeout_cfg.max_rounds = -1;
+    reasoning *timeout_engine = reasoning_new(&timeout_cfg);
+    if (!timeout_engine) {
+        tool_registry_free(timeout_registry);
+        fs_remove(timeout_workspace);
+        return 2;
+    }
+    char *timeout_answer = NULL;
+    int timeout_rc = reasoning_run(timeout_engine, "运行验证脚本并汇报结论", &timeout_answer);
+    failures += check(timeout_fx.nudge_seen == 1,
+                      "two timed-out scripts trigger the one-shot replacement-script nudge");
+    failures += check(timeout_fx.prompt_ok == 1,
+                      "planner system prompt names the runtime shell and evidence parity");
+    (void)timeout_rc;
+    free(timeout_answer);
+    reasoning_free(timeout_engine);
+    tool_registry_free(timeout_registry);
+    fs_remove(timeout_workspace);
     printf("plan cycle regression: %s\n", failures ? "FAIL" : "PASS");
     return failures ? 1 : 0;
 }

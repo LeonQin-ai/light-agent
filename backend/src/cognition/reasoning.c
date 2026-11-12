@@ -267,6 +267,8 @@ struct reasoning {
      * re-shipping the same output every round (#269 case C). */
     struct { uint64_t cmd; uint64_t digest; int round; } probe_seen[32];
     int probe_seen_n;
+    int script_timeouts;       /* shell scripts that hit the command timeout (#273) */
+    int timeout_script_nudged; /* one-shot "stop rewriting scripts" guidance */
     uint64_t versioned_seen[512]; /* file pages and directory contents survive opaque tools */
     int versioned_seen_n;
     int round_search_skips;
@@ -3000,40 +3002,53 @@ static void remember_tool_image(reasoning *r,struct run_step *step) {
     }
     cJSON_Delete(images);cJSON_Delete(o);
 }
-/* Read-only shell/git probes whose output is byte-identical to the previous
- * run of the same command get a short "unchanged since round N" note instead
- * of the full text (#269 case C). Freshness is preserved — the command really
- * ran — but the planner stops re-shipping the same self-proof every round. */
-static char *probe_repeated_note(reasoning *r,int probe_only,const char *tool,
-                                 const char *args_json,uint64_t output_hash) {
-    if(!probe_only || !tool || (strcmp(tool,"shell") && strcmp(tool,"git")))return NULL;
+/* A successful read-only shell/git probe is reusable for the rest of the run
+ * while no mutating action has run (#272). Re-executing the same (repo, args)
+ * query changes nothing but burns a full LLM round; return the round whose
+ * observation can be cited instead. The table is cleared by every non-probe
+ * action, so a write invalidates it. */
+static int probe_reuse_round(reasoning *r,int probe_only,const char *tool,
+                             const char *args_json) {
+    if(!probe_only || !tool || (strcmp(tool,"shell") && strcmp(tool,"git")))return -1;
     cJSON *args=cJSON_Parse(args_json?args_json:"{}");
     const char *cmd=!strcmp(tool,"shell")
         ? cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"command"))
         : cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"args"));
-    char *note=NULL;
+    int round=-1;
+    if(cmd && *cmd) {
+        uint64_t sig=hash64(cmd,strlen(cmd));
+        for(int i=0;i<r->probe_seen_n;i++)
+            if(r->probe_seen[i].cmd==sig && r->probe_seen[i].digest) {
+                round=r->probe_seen[i].round;
+                break;
+            }
+    }
+    cJSON_Delete(args);
+    return round;
+}
+/* Remember that this probe command succeeded; later identical probes reuse
+ * this observation until a mutating action clears the table. */
+static void probe_mark_executed(reasoning *r,int probe_only,const char *tool,
+                                const char *args_json) {
+    if(!probe_only || !tool || (strcmp(tool,"shell") && strcmp(tool,"git")))return;
+    cJSON *args=cJSON_Parse(args_json?args_json:"{}");
+    const char *cmd=!strcmp(tool,"shell")
+        ? cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"command"))
+        : cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"args"));
     if(cmd && *cmd) {
         uint64_t sig=hash64(cmd,strlen(cmd));
         int slot=-1;
         for(int i=0;i<r->probe_seen_n;i++)if(r->probe_seen[i].cmd==sig){slot=i;break;}
         if(slot<0 && r->probe_seen_n<(int)(sizeof(r->probe_seen)/sizeof(r->probe_seen[0]))){
             slot=r->probe_seen_n++;
-            r->probe_seen[slot].cmd=sig;r->probe_seen[slot].digest=0;r->probe_seen[slot].round=r->round_idx;
+            r->probe_seen[slot].cmd=sig;
         }
         if(slot>=0) {
-            if(r->probe_seen[slot].digest==output_hash) {
-                char buf[192];
-                snprintf(buf,sizeof(buf),"[note] result unchanged since round %d (identical output suppressed)",
-                         r->probe_seen[slot].round);
-                note=xstrdup(buf);
-            } else {
-                r->probe_seen[slot].digest=output_hash;
-                r->probe_seen[slot].round=r->round_idx;
-            }
+            r->probe_seen[slot].digest=1;
+            r->probe_seen[slot].round=r->round_idx;
         }
     }
     cJSON_Delete(args);
-    return note;
 }
 static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
     reasoning *r = ud;
@@ -3274,7 +3289,27 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
                 if(cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(sa,"outputs")))probe_only=0;
                 cJSON_Delete(sa);
             }
-            if (!probe_only) { r->search_seen_n = 0; r->grep_path_n = 0; }
+            if (!probe_only) {
+                r->search_seen_n = 0;
+                r->grep_path_n = 0;
+                /* A write/opaque action may change the state a probe reports;
+                 * cached probe observations must not outlive it (#272). */
+                r->probe_seen_n = 0;
+            }
+        }
+        if (probe_only) {
+            int reused = probe_reuse_round(r, probe_only, r->actions[i].tool, r->actions[i].args_json);
+            if (reused > 0) {
+                r->round_repeat_reads++;
+                r->ok_actions++;
+                strbuf_appendf(&b,
+                    "[%s] [note] read-only probe already executed in round %d; no write has occurred since. "
+                    "Reuse that observation instead of running the same query again.\n",
+                    r->actions[i].tool, reused);
+                run_step_add(r, r->actions[i].tool, r->actions[i].args_json,
+                             "read-only probe reused; workspace unchanged", 1, 0);
+                continue;
+            }
         }
         r->prog_tool_calls++;
         long long t_tool0 = time_now_ms();
@@ -3321,14 +3356,10 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
             if (er) {
                 output_hash=hash64(er->output ? er->output : "",er->output ? strlen(er->output) : 0);
                 /* executor output is already UTF-8 sanitized */
-                char *pnote=probe_repeated_note(r,probe_only,r->actions[i].tool,r->actions[i].args_json,output_hash);
-                const char *visible=pnote?pnote:(er->output ? er->output : "");
+                const char *visible=er->output ? er->output : "";
                 strbuf_appendf(&b, "[%s] %s\n", r->actions[i].tool, visible);
                 snprintf(step_out, sizeof(step_out), "%s", visible);
-                /* Observation accounting keeps the real output: a suppressed
-                 * repeat must not look like new evidence or a changed result. */
                 full_step_out = str_head(er->output ? er->output : "",65536);
-                free(pnote);
                 executor_result_free(er);
             }
         } else {
@@ -3386,6 +3417,18 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
                                r->actions[i].tool);
                 r->tool_fail_aborted = 1;
             }
+            /* #273/#274: a timed-out verification script tempts the planner to
+             * write another lighter numbered script. That multiplies files and
+             * rounds without converging; nudge once after the second timeout. */
+            if (!strcmp(r->actions[i].tool, "shell") && strstr(step_out, "[timeout]")) {
+                r->script_timeouts++;
+                if (r->script_timeouts >= 2 && !r->timeout_script_nudged) {
+                    r->timeout_script_nudged = 1;
+                    strbuf_append(&b,
+                        "[system] 验证脚本已连续超时两次：不要再编写新的替代脚本。改用原子工具"
+                        "（file_read/grep/git/小步 shell）分步验证；确实无法完成的维度请在结论中说明真实原因。\n");
+                }
+            }
             if (r->hooks)
                 hook_dispatch(r->hooks, "exec.on_failure", r->actions[i].tool);
         } else {
@@ -3398,6 +3441,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
             r->same_action_failures = 0;
             r->ok_actions++;
             r->run_successful_tools++;
+            probe_mark_executed(r, probe_only, r->actions[i].tool, r->actions[i].args_json);
             int instruction_only = 0;
             if (!strcmp(r->actions[i].tool, "skill") && r->skills) {
                 cJSON *a = cJSON_Parse(r->actions[i].args_json);
@@ -4521,6 +4565,8 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     r->acceptance_declares = 0;
     r->acceptance_frozen = 0;
     r->probe_seen_n = 0;
+    r->script_timeouts = 0;
+    r->timeout_script_nudged = 0;
     pending_reads_clear(r);
 
      /* LLM's plain-text answer (had_plan == 0) */
@@ -4574,6 +4620,8 @@ restart_planning:
             r->acceptance_declares = 0;
             r->acceptance_frozen = 0;
             r->probe_seen_n = 0;
+            r->script_timeouts = 0;
+            r->timeout_script_nudged = 0;
             r->search_seen_n = r->versioned_seen_n = 0;
             r->grep_path_n = 0;
             search_only_rounds = 0;

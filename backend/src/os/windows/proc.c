@@ -42,6 +42,9 @@ typedef enum {
                     * outer quotes, inner quotes pass through */
 } sh_kind;
 
+static wchar_t *utf8_to_wide(const char *s);
+static int shell_candidate_usable(const char *path);
+
 /* Choose the shell invocation format string (single %s = the command).
  * Honors SHELL override (e.g. "C:\\...\\bash.exe -c"), then probes for a
  * POSIX shell so POSIX commands (mkdir -p, cp, ls) work on Windows, and
@@ -90,7 +93,11 @@ static const char *shell_fmt_kind(sh_kind *kind) {
         for (size_t j = 0; j < sizeof(rel) / sizeof(rel[0]); j++) {
             char path[300];
             snprintf(path, sizeof(path), "%s%s", base[i], rel[j]);
-            if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
+            /* File presence is not enough: a half-installed Git can pass the
+             * attribute check but fail every command. Probe `bash -c "exit 0"`
+             * before committing to it (#274). */
+            if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES &&
+                shell_candidate_usable(path)) {
                 /* Non-login `bash -c` does not source /etc/profile, so $PATH
                  * lacks bash's own /usr/bin and even `ls` is "command not
                  * found". Prepend the bash directory (POSIX form) to PATH. */
@@ -160,6 +167,60 @@ static wchar_t *utf8_to_wide(const char *s) {
     }
 
     return w;
+}
+
+/* True when the candidate shell can actually start and exit cleanly. Files
+ * can exist while DLLs or permissions are broken; a 5s `-c "exit 0"` probe
+ * catches that before the first real command fails. */
+static int shell_candidate_usable(const char *path) {
+    char cmd[640];
+    snprintf(cmd, sizeof(cmd), "\"%s\" -c \"exit 0\"", path);
+    wchar_t *w = utf8_to_wide(cmd);
+    if (!w)
+        return 1; /* cannot verify: keep the pre-existing existence behavior */
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    memset(&pi, 0, sizeof(pi));
+    BOOL ok = CreateProcessW(NULL, w, NULL, NULL, FALSE, CREATE_NO_WINDOW,
+                             NULL, NULL, &si, &pi);
+    free(w);
+    if (!ok)
+        return 0;
+    int usable = 0;
+    if (WaitForSingleObject(pi.hProcess, 5000) == WAIT_TIMEOUT)
+        TerminateProcess(pi.hProcess, 1);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    usable = code == 0;
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return usable;
+}
+
+void proc_shell_describe(char *buf, size_t cap) {
+    if (!buf || !cap)
+        return;
+    sh_kind kind = SH_QUOTED;
+    const char *fmt = shell_fmt_kind(&kind);
+    if (kind == SH_CMDLINE) {
+        snprintf(buf, cap, "cmd.exe (cmd syntax)");
+        return;
+    }
+    /* POSIX candidate: report the interpreter name so the prompt can tell the
+     * model to use POSIX syntax. The format starts with "path" -c "...". */
+    char name[100] = "bash";
+    const char *start = strchr(fmt, '"');
+    const char *end = start ? strchr(start + 1, '"') : NULL;
+    if (start && end && end > start + 1) {
+        size_t n = (size_t)(end - start - 1);
+        if (n >= sizeof(name))
+            n = sizeof(name) - 1;
+        memcpy(name, start + 1, n);
+        name[n] = '\0';
+    }
+    snprintf(buf, cap, "%s (POSIX syntax)", name);
 }
 
 static proc_result *proc_run_in_mode(const char *cmd, int timeout_ms, const char *cwd, int native_cmd) {

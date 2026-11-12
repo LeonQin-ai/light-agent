@@ -163,6 +163,12 @@ int proc_spawn_detached(const char *cmd) {
 
 int proc_spawn_detached_native(const char *cmd) { return proc_spawn_detached(cmd); }
 
+void proc_shell_describe(char *buf, size_t cap) {
+    if (!buf || !cap)
+        return;
+    snprintf(buf, cap, "/bin/sh (POSIX syntax)");
+}
+
 /* --- Persistent piped child process (for stdio MCP servers) --- */
 
 #include <poll.h>
