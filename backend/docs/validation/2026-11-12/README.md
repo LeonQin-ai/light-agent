@@ -9,6 +9,6 @@
 | #269 证据规则重复循环/路径幻觉死锁 | 内容去重（`rewrite skipped`）不再计为新观测，重复同一计划在恢复提示后命中停滞断路器；路径幻觉不再形成死锁。 | — |
 | #270 长任务振荡（291 轮） | 验收合同冻结 + 同一计划/同一原始计划指纹断路器 + 轮次上限；循环中止后由合成调用完成收束，回归 `test_plan_cycle` 覆盖循环、重复读、恢复三组场景。 | — |
 | #271 完成后新合同/简易模式/失败报告 | 输入框新增完成校验模式选择器；简易模式跳过验收合同与完成复核，失败在失败台账中作为建议性记录并输出失败报告，不阻塞完成。 | [简易模式](issue269-simple-gate.png) |
-| #272 只读探针重复执行 | 工作区未变更时复用同一只读 shell/git 探针的观测（`read-only probe reused; workspace unchanged`），首个写操作后缓存失效并重新执行。真实服务 + Playwright UI 验证：4 个动作里第 2 个 `pwd` 被复用，`file_write` 后第 2 次 `pwd` 重新执行；回归断言 `shell_execs=2`。 | [动作列表](issue272-probe-reuse.png) [对话](issue272-chat.png) |
+| #272 只读探针重复执行 | 工作区未变更时复用同一只读 shell/git 探针的观测（`read-only probe reused; workspace unchanged`），首个写操作后缓存失效并重新执行。真实服务 + Playwright UI 验证：4 个动作里第 2 个 `pwd` 被复用并显示复用说明，`file_write` 后的 shell 动作正常重新执行；回归另断言写后同一 `pwd` 重新执行（`shell_execs=2`、4 个动作）。 | [动作列表](issue272-probe-reuse.png) [对话](issue272-chat.png) |
 | #273 超时脚本反复改写 | 连续两次 shell `[timeout]` 后注入一次性中文系统提示，要求停止编写替代脚本、改用原子工具（file_read/grep/git/小步 shell）；回归断言 `nudge_seen=1`。 | — |
 | #274 提示词与运行时 shell 不一致 | planner 系统提示改为运行时动态描述真实 shell（POSIX `/bin/sh` 或 Windows bash 绝对路径，仅回退 `cmd.exe (cmd syntax)`），Windows 候选 shell 需通过 `bash -c "exit 0"` 可用性探测；同时加入证据对等、独立事实批处理、产物声明约束。回归断言 `prompt_ok=1`（提示词含运行时 shell 与 Evidence parity）。 | — |
