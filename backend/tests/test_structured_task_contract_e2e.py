@@ -197,9 +197,19 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
                         if mode in ('artifact','artifact_recovery'):assert (work/'report.any').read_text()==CONTENT
                         if mode=='script_output':assert (work/'report.any').read_text()==CONTENT
                         if mode=='image_history':
-                            runs=api('/v1/chat/history?session=contract')['runs']
-                            preview=next(s['image_preview'] for r in runs for event in r['trace']
-                                         for s in event.get('steps',[]) if s.get('target')=='preview.png' and 'image_preview' in s)
+                            # The terminal scheduler status can become visible
+                            # just before the durable journal record lands
+                            # (completion hook runs after the status change),
+                            # so read history with a short bounded retry.
+                            previews=[];history_deadline=time.monotonic()+5
+                            while True:
+                                runs=api('/v1/chat/history?session=contract')['runs']
+                                previews=[s['image_preview'] for r in runs for event in (r.get('trace') or [])
+                                          for s in event.get('steps',[]) if s.get('target')=='preview.png' and 'image_preview' in s]
+                                if previews or time.monotonic()>=history_deadline:break
+                                time.sleep(.02)
+                            assert previews,runs
+                            preview=previews[0]
                             assert set(preview)=={'id','name','session'} and preview['session']=='contract',preview
                             result=api('/v1/uploads/preview?id='+preview['id']+'&session=contract')
                             assert base64.b64decode(result['data_url'].split(',',1)[1])==png

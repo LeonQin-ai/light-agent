@@ -60,15 +60,18 @@ static void task_done(task *t, void *ud) {
         break;
     }
 
-    if (ctx->state)
-        state_store_task_set(ctx->state, t->id, st, t->input);
-
-    /* durable journal: append the terminal transition for checkpoint/resume */
+    /* Durable journal: append the terminal transition for checkpoint/resume.
+     * Written first: callers may observe the terminal scheduler status before
+     * they see the history record, so minimize that window (state-store and
+     * flow-store writes can block on disk I/O). */
     char *trace = task_trace_copy(t);
     char *spans = trace_json_task_limit(ctx->trace, t->id, 128);
     tasklog_record_access(ctx->tasklog, t->id, st, t->tag, t->userdata==(void *)4 ? NULL : t->input, t->output, trace, spans,t->permission_mode);
     free(trace);
     free(spans);
+
+    if (ctx->state)
+        state_store_task_set(ctx->state, t->id, st, t->input);
     /* collaboration tasks: mirror terminal status into the persistent registry */
     if (ctx->flowstore)
         flow_store_mark(ctx->flowstore, t->id, st);

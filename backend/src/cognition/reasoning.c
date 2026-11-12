@@ -2861,6 +2861,11 @@ static int opaque_observation_is_new(reasoning *r,const char *tool,const char *a
 }
 
 static void observe_action_progress(reasoning *r,const planned_action *action,uint64_t output_hash,int is_search,const char *observed) {
+    /* A write that found the exact bytes already on disk changed nothing. Its
+     * "rewrite skipped" receipt is not new evidence; counting it as progress
+     * would keep identical re-write plans from ever tripping the stall
+     * breaker (#269 content dedup). */
+    if(observed && strstr(observed,"rewrite skipped")){r->round_repeat_reads++;return;}
     if(!is_search && strcmp(action->tool,"file_write") && strcmp(action->tool,"file_edit")) {
         int artifact_changed=declared_artifact_progress(r,action->args_json);
         int fresh=opaque_observation_is_new(r,action->tool,action->args_json,observed);
