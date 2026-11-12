@@ -177,7 +177,10 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
             with (BUILD/f'contract-{protocol}-{mode}.log').open('w',encoding='utf8') as log:
                 proc=subprocess.Popen([str(BINARY),'--state',folder,'--workspace',folder,'serve',str(port)],cwd=ROOT,env={**os.environ,'COA_TOOL_PROTOCOL':protocol},stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
                 try:
-                    deadline=time.monotonic()+(120 if mode.startswith('rollover') else 25)
+                    # The rollover fixture performs 288+ single-file writes; under
+                    # AddressSanitizer on a shared runner that can exceed two
+                    # minutes even though the task itself makes steady progress.
+                    deadline=time.monotonic()+(240 if mode.startswith('rollover') else 25)
                     for _ in range(150):
                         try:api('/v1/scheduler');break
                         except OSError:assert proc.poll() is None;time.sleep(.05)
