@@ -185,6 +185,11 @@ static int openai_chat(llm *llm, const llm_request *req, llm_response *resp) {
         strmap_set(hdrs, "Authorization", auth);
     }
 
+    /* observability (#271): one line per request with timing, so a silent
+     * multi-minute stall is visible in the log while it is happening */
+    long long _t0 = time_now_ms();
+    log_info("llm-openai: request sent model=%s bytes=%zu timeout_ms=%d",
+             llm->model ? llm->model : "?", strlen(body), llm_req_timeout_ms(req));
     r = req->preview && req->tools_json ? openai_native_stream(llm,req,base,path,body,hdrs) :
         http_post(base, path, body, "application/json", hdrs, llm_req_timeout_ms(req));
     free(body);
@@ -199,8 +204,12 @@ static int openai_chat(llm *llm, const llm_request *req, llm_response *resp) {
         snprintf(err, sizeof err, "http request failed: %s",
                  *http_last_error() ? http_last_error() : "transport failure");
         set_error(resp, err);
+        log_warn("llm-openai: request failed after %lldms: %s",
+                 time_now_ms() - _t0, *http_last_error() ? http_last_error() : "transport failure");
         return -1;
     }
+    log_info("llm-openai: response http=%d bytes=%zu elapsed_ms=%lld",
+             r->status, r->body ? strlen(r->body) : 0, time_now_ms() - _t0);
 
     resp->http_status = r->status;
     if (r->status != 200) {

@@ -502,6 +502,29 @@ static tool_result *file_write_exec(const tool *self, const tool_ctx *ctx, const
     }
 
     content_len = copied?copied_len:strlen(content);
+    /* Content dedup (#269): rewriting the exact bytes already on disk would
+     * only mint a fresh mtime version, invalidating every receipt and
+     * verified read for the target and re-opening verification loops. Keep
+     * the current bytes and their version stable; this is still a success. */
+    {
+        long long have = fs_file_size(rp);
+        if (have >= 0 && (size_t)have == content_len && !fs_is_dir(rp)) {
+            size_t actual = 0;
+            int more = 0;
+            char *current = fs_read_file_slice(rp, 0, content_len + 1, &actual, &more);
+            if (current && !more && actual == content_len && memcmp(current, content, content_len) == 0) {
+                snprintf(out, sizeof(out),
+                         "content already identical on disk (%zu bytes); rewrite skipped, file version unchanged",
+                         content_len);
+                free(current);
+                free(copied);
+                cJSON_Delete(args);
+                free(rp);
+                return tool_result_new(1, out);
+            }
+            free(current);
+        }
+    }
     w = fs_write_file(rp, content, content_len);
     if(w==0){size_t actual=0;int more=0;char *verify=fs_read_file_slice(rp,0,content_len+1,&actual,&more);
         if(!verify||more||actual!=content_len||memcmp(verify,content,content_len))w=-1;

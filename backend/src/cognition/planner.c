@@ -869,6 +869,20 @@ static int plan_with(llm *llm, char *sys_prompt, const char *prompt, planned_act
         int global=llm_timeout_ms();
         req.timeout_ms=limit<global ? limit:global;
         log_info("planner: visual request model=%s timeout_ms=%ld max_tokens=8192",llm->model ? llm->model:"unknown",req.timeout_ms);
+    } else if (require_completion) {
+        /* Completion-review requests answer from evidence already in the
+         * prompt — a short verdict, not source generation. Bound them
+         * independently (#271) so a stalled provider cannot add a silent
+         * multi-minute gap before the final report. */
+        long limit=120000;
+        const char *setting=getenv("COA_LLM_REVIEW_TIMEOUT_MS");
+        if(setting && *setting) {
+            char *end=NULL; long value=strtol(setting,&end,10);
+            if(end && !*end && value>=1000 && value<=600000) limit=value;
+        }
+        int global=llm_timeout_ms();
+        req.timeout_ms=limit<global ? limit:global;
+        log_info("planner: completion review model=%s timeout_ms=%ld",llm->model ? llm->model:"unknown",req.timeout_ms);
     }
     req.max_tokens = planner_output_tokens(llm, output_tokens); /* tool plans carrying file_write content (whole
                              * scripts) need real headroom; 2048 truncated the

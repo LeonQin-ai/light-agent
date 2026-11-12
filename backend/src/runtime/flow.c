@@ -503,7 +503,7 @@ static reasoning *flow_reasoning_new(runtime_ctx *ctx,const char *workspace) {
     rc.skills = ctx->skills;
     rc.mcp = ctx->mcp;
     rc.state_root = ctx->state_root;
-    rc.max_rounds = ctx->config ? (int)config_get_int(ctx->config, "reasoning.max_rounds", -1) : -1;
+    rc.max_rounds = ctx->config ? (int)config_get_int(ctx->config, "reasoning.max_rounds", AGENT_LOOP_MAX_ROUNDS) : AGENT_LOOP_MAX_ROUNDS;
     rc.usage_acc = ctx->usage; /* per-node token accounting lands on the dashboard */
     return reasoning_new(&rc);
 }

@@ -74,6 +74,11 @@ typedef struct reasoning_config {
     usage *usage_acc;         /* per-model token ledger (may be NULL = no accounting) */
 } reasoning_config;
 
+/* Default agent-loop round cap (#270). An unbounded default let one stuck
+ * task spin for 291 rounds / ~60 minutes; the breaker now defaults to 64.
+ * Config "reasoning.max_rounds" < 0 still restores unlimited. */
+#define AGENT_LOOP_MAX_ROUNDS 64
+
 /* HyDE (Hypothetical Document Embeddings) primitive: ask the LLM for a short
  * hypothetical answer passage to `query`; embed passage-to-passage instead of
  * question-to-passage for better cold-tier recall. Returns a malloc'd passage

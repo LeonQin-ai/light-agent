@@ -359,7 +359,7 @@ int orchestrate_task(runtime_ctx *ctx, const char *task,int64_t task_id, char **
         config.policy=ctx->policy;config.bus=ctx->bus;config.metrics=ctx->metrics;config.trace=ctx->trace;
         config.workspace=parent && parent->workspace?parent->workspace:ctx->workspace;
         config.skills=ctx->skills;config.mcp=ctx->mcp;config.state_root=ctx->state_root;
-        config.max_rounds=ctx->config?(int)config_get_int(ctx->config,"reasoning.max_rounds",-1):-1;config.usage_acc=ctx->usage;
+        config.max_rounds=ctx->config?(int)config_get_int(ctx->config,"reasoning.max_rounds",AGENT_LOOP_MAX_ROUNDS):AGENT_LOOP_MAX_ROUNDS;config.usage_acc=ctx->usage;
         reasoning *r=reasoning_new(&config);if(r){reasoning_set_task(r,parent);rc=reasoning_run(r,task,answer);reasoning_free(r);}else rc=-1;
         if(parent)scheduler_release(ctx->scheduler,parent);return rc;
     }

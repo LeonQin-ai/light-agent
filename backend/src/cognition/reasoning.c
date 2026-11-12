@@ -262,6 +262,11 @@ struct reasoning {
     int run_mutated; /* successful effects retained; independent of UI step cap */
     uint64_t search_seen[512]; /* successful read-only discoveries in this run */
     int search_seen_n;
+    /* Read-only shell/git probes: identical repeated results are replaced by a
+     * "result unchanged since round N" note so self-proof loops stop
+     * re-shipping the same output every round (#269 case C). */
+    struct { uint64_t cmd; uint64_t digest; int round; } probe_seen[32];
+    int probe_seen_n;
     uint64_t versioned_seen[512]; /* file pages and directory contents survive opaque tools */
     int versioned_seen_n;
     int round_search_skips;
@@ -306,6 +311,10 @@ struct reasoning {
     int thinking_mode; /* task-local preference; set by the chat lane */
     int external_history; /* current request already contains canonical transcript */
     int completion_only; /* reserved final review cannot execute more tools */
+    int completion_candidate_seen; /* a complete_task decision already appeared this run (#271) */
+    int acceptance_declares;       /* contract-growing declarations this run (#270) */
+    int acceptance_frozen;         /* oscillation breaker: the contract is final */
+    int gate_mode;                 /* 1 = simple mode: evidence gates and reviews are skipped */
 
     /* live run progress for status display (polled via reasoning_progress):
      * run start time, executed tool-call count, tool currently running.
@@ -356,11 +365,20 @@ static char *render_mmu_context(cJSON *arr, size_t cap) {
         cJSON *text=cJSON_GetObjectItemCaseSensitive(it,"text");
         cJSON *status=cJSON_GetObjectItemCaseSensitive(it,"status");
         cJSON *scope=cJSON_GetObjectItemCaseSensitive(it,"scope");
+        cJSON *level=cJSON_GetObjectItemCaseSensitive(it,"level");
+        cJSON *residency=cJSON_GetObjectItemCaseSensitive(it,"residency");
+        cJSON *score=cJSON_GetObjectItemCaseSensitive(it,"score");
         const char *t=cJSON_GetStringValue(text);
         if (!t || !*t || sb.len>=cap) continue;
-        strbuf_appendf(&sb,"[memory status=%s scope=%s]\n",
+        /* #268: carry the MMU derivation (L0/L1/L2), residency (HOT/WARM)
+         * and §7.7 score into the final prompt — the planner can then weigh
+         * a hot full-fidelity page differently from a warm summary. */
+        strbuf_appendf(&sb,"[memory status=%s scope=%s level=%s residency=%s score=%.3f]\n",
             cJSON_GetStringValue(status)?cJSON_GetStringValue(status):"unknown",
-            cJSON_GetStringValue(scope)?cJSON_GetStringValue(scope):"unknown");
+            cJSON_GetStringValue(scope)?cJSON_GetStringValue(scope):"unknown",
+            cJSON_GetStringValue(level)?cJSON_GetStringValue(level):"unknown",
+            cJSON_GetStringValue(residency)?cJSON_GetStringValue(residency):"unknown",
+            cJSON_IsNumber(score)?score->valuedouble:0.0);
         size_t left=cap>sb.len?cap-sb.len:0,n=strlen(t); if(n>left)n=left;
         while(n>0 && ((unsigned char)t[n]&0xc0)==0x80)n--;
         strbuf_append_n(&sb,t,n);strbuf_append(&sb,"\n");
@@ -527,6 +545,35 @@ static void note_failed_tool(reasoning *r, const char *tool_name, const char *ar
              sizeof(r->unresolved_failed_tools[0]), "%s", tool_name);
 }
 
+/* Typo-class failures — hallucinated paths whose error says "does not exist"
+ * on targets that still do not exist — are advisory once this run actually
+ * delivered work with a committed mutation (#265/#269 case B): they stay
+ * visible in the final report but do not single-handedly force FAILED.
+ * Successful reads alone are NOT delivery: reading a same-basename unrelated
+ * file must never launder a still-missing required source. Real failures
+ * (permission denial, content mismatch, existing unread files) keep blocking.
+ * Simple mode treats every unresolved failure as a note. */
+static int failed_entry_is_advisory(reasoning *r, int i) {
+    if (r->gate_mode) return 1;
+    const char *err = r->unresolved_failure_errors[i];
+    if (!strstr(err, "does not exist")) return 0;
+    const char *scope = r->unresolved_failed_scopes[i];
+    if (*scope && fs_exists(scope)) return 0;
+    return r->run_mutated;
+}
+static int blocking_failed_tools(reasoning *r) {
+    int n = 0;
+    for (int i = 0; i < r->unresolved_failed_tool_count; ++i)
+        if (!failed_entry_is_advisory(r, i)) n++;
+    return n;
+}
+static int advisory_failed_tools(reasoning *r) {
+    int n = 0;
+    for (int i = 0; i < r->unresolved_failed_tool_count; ++i)
+        if (failed_entry_is_advisory(r, i)) n++;
+    return n;
+}
+
 /* A successful read of include/<suffix>.h verifies a mistaken src/<suffix>.h
  * probe in the same repository. A basename-only match is never evidence. */
 static int same_repository_header(const char *failed, const char *actual) {
@@ -617,7 +664,26 @@ static void resolve_failed_tool(reasoning *r, const char *tool_name, const char 
             !fs_exists(failed_scope);
         int already_edited = !strcmp(tool_name,"file_read") && !strcmp(r->unresolved_failed_tools[i],"file_edit") &&
             !strcmp(failed_scope,scope) && verified_edit_replacement(r,i,scope);
-        if (retry || replacement || relocated_read || header_relocated || directory_relocated || absent_directory_verified || already_edited) {
+        /* Cross-tool canonical zeroing (#265/#269 case B): a not-exist
+         * file_edit failure is superseded by the creating file_write the tool
+         * itself recommends. Failed READS are not zeroed merely because the
+         * same path was written — the original content was still never read,
+         * and a later "optional/unavailable" claim on a path this run created
+         * is false evidence. A read failure becomes moot only once the target
+         * exists AND a verified write/read covers it (missing_target_created).
+         * old_string-class edit failures keep the stricter
+         * verified_edit_replacement path. */
+        int same_target_any_tool = n > 0 && !strcmp(failed_scope,scope) &&
+            !strcmp(r->unresolved_failed_tools[i],"file_edit") &&
+            strstr(r->unresolved_failure_errors[i],"does not exist") &&
+            !strcmp(tool_name,"file_write");
+        /* A "file does not exist" probe is moot once the target exists and a
+         * verified write/read of this run covers it. */
+        int missing_target_created = !same_target_any_tool &&
+            strstr(r->unresolved_failure_errors[i],"does not exist") && *failed_scope &&
+            fs_exists(failed_scope) && run_has_verified_artifact(r,failed_scope);
+        if (retry || replacement || relocated_read || header_relocated || directory_relocated || absent_directory_verified || already_edited ||
+            same_target_any_tool || missing_target_created) {
             --r->unresolved_failed_tool_count;
             if (i < r->unresolved_failed_tool_count) {
                 memmove(r->unresolved_failed_tools[i], r->unresolved_failed_tools[i + 1],
@@ -675,36 +741,58 @@ int reasoning_acceptance_validate(const char *json) {
     }
     cJSON_Delete(o);return valid?0:-1;
 }
-static void merge_acceptance(reasoning *r,const cJSON *input) {
-    if(!input)return;
+static uint64_t observation_json_hash(const cJSON *item);
+/* Pure merge of `input` obligations into `base`: returns the merged contract
+ * (caller frees) or NULL when the declaration is invalid. */
+static cJSON *acceptance_merge_result(reasoning *r,const cJSON *base,const cJSON *input) {
     char *text=cJSON_PrintUnformatted(input);
-    if(!text||reasoning_acceptance_validate(text)){free(text);r->acceptance_invalid=1;return;}
-    free(text);cJSON *next=r->acceptance?cJSON_Duplicate(r->acceptance,1):cJSON_CreateObject();
-    if(!next){r->acceptance_invalid=1;return;}
+    if(!text||reasoning_acceptance_validate(text)){free(text);return NULL;}
+    free(text);cJSON *next=base?cJSON_Duplicate(base,1):cJSON_CreateObject();
+    if(!next)return NULL;
     cJSON *field;cJSON_ArrayForEach(field,input) {
         if(cJSON_IsBool(field)) {
             if(cJSON_IsTrue(field)) {
                 cJSON_DeleteItemFromObjectCaseSensitive(next,field->string);
-                if(!cJSON_AddBoolToObject(next,field->string,1)){cJSON_Delete(next);r->acceptance_invalid=1;return;}
+                if(!cJSON_AddBoolToObject(next,field->string,1)){cJSON_Delete(next);return NULL;}
             }
         } else {
             cJSON *paths=cJSON_GetObjectItemCaseSensitive(next,field->string);
-            if(!paths){paths=cJSON_AddArrayToObject(next,field->string);if(!paths){cJSON_Delete(next);r->acceptance_invalid=1;return;}}
+            if(!paths){paths=cJSON_AddArrayToObject(next,field->string);if(!paths){cJSON_Delete(next);return NULL;}}
             cJSON *path;cJSON_ArrayForEach(path,field) {
                 char full[2048];normalized_evidence_path(r,path->valuestring,full,sizeof(full));
-                if(strlen(full)>=sizeof(full)-1){cJSON_Delete(next);r->acceptance_invalid=1;return;}
+                if(strlen(full)>=sizeof(full)-1){cJSON_Delete(next);return NULL;}
                 int found=0;cJSON *old;cJSON_ArrayForEach(old,paths) {
                     char previous[2048];normalized_evidence_path(r,old->valuestring,previous,sizeof(previous));
                     if(!strcmp(previous,full)){found=1;break;}
                 }
                 if(!found) {
                     cJSON *entry=cJSON_CreateString(full);
-                    if(cJSON_GetArraySize(paths)>=64||!entry||!cJSON_AddItemToArray(paths,entry)){cJSON_Delete(entry);cJSON_Delete(next);r->acceptance_invalid=1;return;}
+                    if(cJSON_GetArraySize(paths)>=64||!entry||!cJSON_AddItemToArray(paths,entry)){cJSON_Delete(entry);cJSON_Delete(next);return NULL;}
                 }
             }
         }
     }
+    return next;
+}
+static void merge_acceptance(reasoning *r,const cJSON *input) {
+    if(!input)return;
+    cJSON *next=acceptance_merge_result(r,r->acceptance,input);
+    if(!next){r->acceptance_invalid=1;return;}
     cJSON_Delete(r->acceptance);r->acceptance=next;r->acceptance_invalid=0;
+}
+/* Would merging this declaration add any obligation the current contract
+ * does not already carry? Pure check; nothing is mutated (#270/#271). */
+static int acceptance_decl_grows(reasoning *r,const cJSON *input) {
+    if(!input)return 0;
+    cJSON *merged=acceptance_merge_result(r,r->acceptance,input);
+    int grows=1;
+    if(merged) {
+        uint64_t after=observation_json_hash(merged);
+        uint64_t before=r->acceptance?observation_json_hash(r->acceptance):0;
+        grows=after!=before;
+    }
+    cJSON_Delete(merged);
+    return grows;
 }
 static void verify_completion_files(reasoning *r,const char *completion_json){
     cJSON *decision=cJSON_Parse(completion_json?completion_json:"{}");
@@ -1599,12 +1687,9 @@ static void clear_actions(reasoning *r) {
 #define HIST_TURN_CAP 4000       /* per-turn chars kept in history (chat UI
                                   * serves this store verbatim — 500 made
                                   * reloaded answers visibly truncated) */
-#define HIST_BUDGET 8192         /* total chars of history injected per run */
 #define LEARN_RESULT_CAP 300     /* chars of a result kept as a memory episode */
 #define COMPACT_SUMMARY_CAP 2000 /* rolling compaction summary cap */
-#define AGENT_LOOP_MAX_ROUNDS                                                                                          \
-    -1                      /* default rounds when config does not set it;                                             \
-                               config "reasoning.max_rounds" < 0 = unlimited */
+/* AGENT_LOOP_MAX_ROUNDS comes from cognition/reasoning.h (#270). */
 #define REASONING_CONSEC_FAIL_ABORT 5 /* consecutive stage failures before aborting the run */
 #define REASONING_CONSEC_FAIL_ABORT_STR "5"
 
@@ -1964,6 +2049,15 @@ static char *build_context(reasoning *r, const char *prompt) {
     if (r->observation_budget_cap && r->observation_budget_bytes > r->observation_budget_cap)
         r->observation_budget_bytes = r->observation_budget_cap;
     if (!r->observation_budget_bytes) r->observation_budget_bytes = 1;
+    /* MMU tier budgets (#267/#268): without explicit config, scale HOT/WARM/
+     * COLD with the model's input window so bigger contexts keep and recall
+     * proportionally more, instead of fixed caps that starve large windows. */
+    size_t hot_eff  = r->budget_hot  > 0 ? (size_t)r->budget_hot  : input_budget / 8;
+    size_t warm_eff = r->budget_warm > 0 ? (size_t)r->budget_warm : input_budget / 24;
+    size_t cold_eff = r->budget_cold > 0 ? (size_t)r->budget_cold : input_budget / 12;
+    if (hot_eff  < 1024) hot_eff  = 1024;
+    if (warm_eff < 512)  warm_eff = 512;
+    if (cold_eff < 512)  cold_eff = 512;
     size_t warm_used = 0;
     size_t hot_mark;
     size_t cold_mark;
@@ -1987,7 +2081,7 @@ static char *build_context(reasoning *r, const char *prompt) {
 
     if (r->cur->sn_task[0] || r->cur->sn_state[0] || r->cur->sn_files[0] || r->cur->sn_errors[0] ||
         r->cur->sn_worklog[0]) {
-        size_t budget_left = (warm_used < (size_t)r->budget_warm) ? (size_t)r->budget_warm - warm_used : 0;
+        size_t budget_left = (warm_used < warm_eff) ? warm_eff - warm_used : 0;
         for (int lv = 0; lv < 3; lv++) { /* 0=full 1=no worklog 2=minimal */
             strbuf nb;
             strbuf_init(&nb);
@@ -2026,10 +2120,11 @@ static char *build_context(reasoning *r, const char *prompt) {
         size_t total = 0;
         int over = 0;
         for (size_t i = r->cur->hist_n; i-- > start;) {
-            size_t cost = (r->cur->hist_q[i] ? strlen(r->cur->hist_q[i]) : 0) +
-                          (r->cur->hist_a[i] ? strlen(r->cur->hist_a[i]) : 0) + 24;
+            /* #268: user turns are never billed against the hot budget — the
+             * user's requirements must not be the content shed on degrade. */
+            size_t cost = (r->cur->hist_a[i] ? strlen(r->cur->hist_a[i]) : 0) + 24;
             total += cost;
-            if (total > (size_t)r->budget_hot) {
+            if (total > hot_eff) {
                 keep_from = i + 1;
                 over = 1;
                 break;
@@ -2037,9 +2132,10 @@ static char *build_context(reasoning *r, const char *prompt) {
         }
         for (size_t i = start; i < r->cur->hist_n; i++) {
             if (over && i < keep_from) {
-                char *qh = str_head(r->cur->hist_q[i], 120);
-                strbuf_appendf(&b, "User: %s → Assistant: [earlier turn omitted]\n", qh ? qh : "");
-                free(qh);
+                /* degraded turn: keep the user's words verbatim and drop the
+                 * bulkier assistant reply, so requirements survive (#268) */
+                strbuf_appendf(&b, "User: %s\nAssistant: [earlier turn omitted]\n",
+                               r->cur->hist_q[i] ? r->cur->hist_q[i] : "");
                 continue;
             }
             if (r->cur->hist_q[i])
@@ -2072,7 +2168,7 @@ static char *build_context(reasoning *r, const char *prompt) {
         char scope[MEM_SCOPE_MAX];
         snprintf(scope, sizeof(scope), "session/%.127s", r->cur && r->cur->id ? r->cur->id : "default");
         char *ctx_json = r->memory_mmu_enabled && r->memrt
-            ? memory_runtime_recall_ex(r->memrt, scope, retrieval_query, r->budget_cold,atomic_load(&r->ss->shared_memory_global))
+            ? memory_runtime_recall_ex(r->memrt, scope, retrieval_query, (int)cold_eff,atomic_load(&r->ss->shared_memory_global))
             : (r->mem && atomic_load(&r->ss->shared_memory_global)
                 ? context_build(r->mem, retrieval_query, 12) : xstrdup("[]"));
         if (ctx_json) {
@@ -2092,7 +2188,7 @@ static char *build_context(reasoning *r, const char *prompt) {
                     cands[i].boost = 0.0;
                 }
                 attention_result ress[6];
-                int kmax = r->budget_cold >= 2400 ? 6 : (r->budget_cold >= 1000 ? 3 : 1);
+                int kmax = cold_eff >= 2400 ? 6 : (cold_eff >= 1000 ? 3 : 1);
                 int k = attention_select(r->attention, prompt, cands, (size_t)n, ress, kmax);
                 char *rendered = NULL;
                 if (k > 0) {
@@ -2103,7 +2199,7 @@ static char *build_context(reasoning *r, const char *prompt) {
                             cJSON_AddItemToArray(sel, cJSON_Duplicate(it, 1));
                     }
                     if (r->memory_mmu_enabled && r->memrt)
-                        rendered = render_mmu_context(sel, (size_t)r->budget_cold);
+                        rendered = render_mmu_context(sel, cold_eff);
                     else {
                         char *sel_json = cJSON_PrintUnformatted(sel);
                         rendered = context_render_text(sel_json);
@@ -2116,8 +2212,8 @@ static char *build_context(reasoning *r, const char *prompt) {
                 free(cands);
                 if (rendered) {
                     strbuf_append(&b, "## Retrieved context\n");
-                    if (strlen(rendered) > (size_t)r->budget_cold) {
-                        char *cut = str_head(rendered, (size_t)r->budget_cold);
+                    if (strlen(rendered) > cold_eff) {
+                        char *cut = str_head(rendered, cold_eff);
                         strbuf_append(&b, cut ? cut : "");
                         free(cut);
                         strbuf_append(&b, "\n(超出 cold 预算，已截断)\n\n");
@@ -2349,7 +2445,23 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
     free(images);
     if(rc==0 && r->planner_native_end_turn==3) {
         cJSON *control=cJSON_Parse(completion_json?completion_json:"{}");
-        merge_acceptance(r,cJSON_GetObjectItemCaseSensitive(control,"acceptance"));cJSON_Delete(control);
+        cJSON *acc=cJSON_GetObjectItemCaseSensitive(control,"acceptance");
+        if(r->gate_mode) {
+            /* Simple mode: the user request alone defines the task. Model
+             * contracts are ignored — no evidence gates run in this mode. */
+        } else if(r->acceptance_frozen) {
+            round_log_append(r,"[system] 验收合同已锁定（本任务中合同已反复变更）；本轮声明未合并。请按当前合同交付，或用 blocked 说明真实受阻项。");
+        } else if(r->completion_candidate_seen && acceptance_decl_grows(r,acc)) {
+            round_log_append(r,"[system] 任务已进入完成阶段：不再接受模型新增的验收项，用户未要求的工作不得自行扩大合同。请按当前合同交付，或用 blocked 说明真实受阻项。");
+        } else {
+            int grew=acceptance_decl_grows(r,acc);
+            merge_acceptance(r,acc);
+            if(grew && ++r->acceptance_declares>=3 && !r->acceptance_frozen){
+                r->acceptance_frozen=1;
+                round_log_append(r,"[system] 验收合同在本任务中已多次变更，已锁定为当前版本；后续声明不再合并。请完成当前合同，或用 blocked 说明真实受阻项。");
+            }
+        }
+        cJSON_Delete(control);
         if(r->acceptance_invalid){rc=-1;free(plan_err);plan_err=xstrdup("Invalid acceptance declaration; no tools executed.");}
     }
     /* A successful HTTP/planner span is not task completion. Preserve the
@@ -2397,7 +2509,8 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
     r->prog_llm_calls++;
     r->planner_review_replace_answer=0;
     if(rc==0 && completion_json && r->planner_native_end_turn==1) {
-        verify_completion_files(r,completion_json);
+        r->completion_candidate_seen=1;
+        if(!r->gate_mode)verify_completion_files(r,completion_json);
         cJSON *decision=cJSON_Parse(completion_json);
         r->planner_review_replace_answer=cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(decision,"replace_answer"));
         cJSON_Delete(decision);
@@ -2882,6 +2995,41 @@ static void remember_tool_image(reasoning *r,struct run_step *step) {
     }
     cJSON_Delete(images);cJSON_Delete(o);
 }
+/* Read-only shell/git probes whose output is byte-identical to the previous
+ * run of the same command get a short "unchanged since round N" note instead
+ * of the full text (#269 case C). Freshness is preserved — the command really
+ * ran — but the planner stops re-shipping the same self-proof every round. */
+static char *probe_repeated_note(reasoning *r,int probe_only,const char *tool,
+                                 const char *args_json,uint64_t output_hash) {
+    if(!probe_only || !tool || (strcmp(tool,"shell") && strcmp(tool,"git")))return NULL;
+    cJSON *args=cJSON_Parse(args_json?args_json:"{}");
+    const char *cmd=!strcmp(tool,"shell")
+        ? cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"command"))
+        : cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"args"));
+    char *note=NULL;
+    if(cmd && *cmd) {
+        uint64_t sig=hash64(cmd,strlen(cmd));
+        int slot=-1;
+        for(int i=0;i<r->probe_seen_n;i++)if(r->probe_seen[i].cmd==sig){slot=i;break;}
+        if(slot<0 && r->probe_seen_n<(int)(sizeof(r->probe_seen)/sizeof(r->probe_seen[0]))){
+            slot=r->probe_seen_n++;
+            r->probe_seen[slot].cmd=sig;r->probe_seen[slot].digest=0;r->probe_seen[slot].round=r->round_idx;
+        }
+        if(slot>=0) {
+            if(r->probe_seen[slot].digest==output_hash) {
+                char buf[192];
+                snprintf(buf,sizeof(buf),"[note] result unchanged since round %d (identical output suppressed)",
+                         r->probe_seen[slot].round);
+                note=xstrdup(buf);
+            } else {
+                r->probe_seen[slot].digest=output_hash;
+                r->probe_seen[slot].round=r->round_idx;
+            }
+        }
+    }
+    cJSON_Delete(args);
+    return note;
+}
 static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
     reasoning *r = ud;
     strbuf b;
@@ -3046,6 +3194,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
             free(hp);
         }
         int rc;
+        int probe_only = 0; /* read-only shell/git command: cannot change searched files */
         uint64_t action_sig = semantic_action_signature(r->actions[i].tool, r->actions[i].args_json);
         /* Schema failures are deterministic for unchanged arguments. Remember
          * them across unrelated successful actions; return the schema so the
@@ -3108,7 +3257,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
             /* A write or opaque tool could change the files being searched.
              * Read-only probes (git status/log/diff, ls, cat...) cannot, so
              * they keep prior read/search discoveries valid. */
-            int probe_only = 0;
+            probe_only = 0;
             if (!strcmp(r->actions[i].tool, "shell")) {
                 cJSON *sa = cJSON_Parse(r->actions[i].args_json);
                 probe_only = shell_command_read_only(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(sa,"command")));
@@ -3167,9 +3316,14 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
             if (er) {
                 output_hash=hash64(er->output ? er->output : "",er->output ? strlen(er->output) : 0);
                 /* executor output is already UTF-8 sanitized */
-                strbuf_appendf(&b, "[%s] %s\n", r->actions[i].tool, er->output ? er->output : "");
-                snprintf(step_out, sizeof(step_out), "%s", er->output ? er->output : "");
+                char *pnote=probe_repeated_note(r,probe_only,r->actions[i].tool,r->actions[i].args_json,output_hash);
+                const char *visible=pnote?pnote:(er->output ? er->output : "");
+                strbuf_appendf(&b, "[%s] %s\n", r->actions[i].tool, visible);
+                snprintf(step_out, sizeof(step_out), "%s", visible);
+                /* Observation accounting keeps the real output: a suppressed
+                 * repeat must not look like new evidence or a changed result. */
                 full_step_out = str_head(er->output ? er->output : "",65536);
+                free(pnote);
                 executor_result_free(er);
             }
         } else {
@@ -3486,9 +3640,11 @@ reasoning *reasoning_new(const reasoning_config *cfg) {
     r->workspace = cfg->workspace ? xstrdup(cfg->workspace) : NULL;
     r->default_workspace = xstrdup(cfg->workspace ? cfg->workspace : ".");
     r->use_transaction = cfg->use_transaction;
-    r->budget_hot = cfg->budget_hot > 0 ? cfg->budget_hot : HIST_BUDGET;
-    r->budget_warm = cfg->budget_warm > 0 ? cfg->budget_warm : 3072;
-    r->budget_cold = cfg->budget_cold > 0 ? cfg->budget_cold : 4096;
+    /* 0 = derive per-run from the model window in build_context (#267/#268):
+     * tier budgets and recall volume scale with context capacity. */
+    r->budget_hot = cfg->budget_hot > 0 ? cfg->budget_hot : 0;
+    r->budget_warm = cfg->budget_warm > 0 ? cfg->budget_warm : 0;
+    r->budget_cold = cfg->budget_cold > 0 ? cfg->budget_cold : 0;
     r->observation_budget_cap = cfg->observation_budget > 0
         ? (size_t)cfg->observation_budget : 98304;
     r->hyde = cfg->hyde ? 1 : 0;
@@ -4233,6 +4389,14 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     prompt = safe_prompt;
 
     cJSON *o = r->run_task && r->run_task->llm_config ? cJSON_Parse(r->run_task->llm_config) : NULL;
+    /* Gate mode (#271): "gate":"simple" runs a Claude-Code-like flow — no
+     * acceptance-contract governance, no artifact verification, no completion
+     * review, failures become notes instead of blocking DONE. Default is the
+     * full structured-acceptance mode ("full", or absent). */
+    {
+        const char *gate = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o, "gate"));
+        r->gate_mode = (gate && strcmp(gate, "simple") == 0) ? 1 : 0;
+    }
     cJSON *temperature = cJSON_GetObjectItemCaseSensitive(o, "temperature");
     r->planner_temperature = cJSON_IsNumber(temperature) ? temperature->valuedouble : -1;
     const char *effort = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"reasoning_effort"));
@@ -4257,7 +4421,7 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     }
 
     cJSON_Delete(o);
-    r->completion_review_required=!planner_uses_native_tools(r->llm);
+    r->completion_review_required = r->gate_mode ? 0 : !planner_uses_native_tools(r->llm);
     const char *contracts[]={r->default_acceptance_json,r->run_task?r->run_task->acceptance_json:NULL};
     for(int i=0;i<2;i++)if(contracts[i]){cJSON *contract=cJSON_Parse(contracts[i]);merge_acceptance(r,contract);cJSON_Delete(contract);}
     void *caller_cancel_context=NULL;
@@ -4345,6 +4509,13 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     r->opaque_seen_n = 0;r->artifact_seen_n=0;r->artifact_versions_seen_n=0;r->file_receipts_n=0;
     r->round_new_observations = r->round_repeat_reads = 0;
     r->progress_cycle_warning_active = 0;
+    /* Oscillation governance (#270/#271) and probe suppression (#269) are
+     * per-run state: a new run starts with a fresh contract lifecycle.
+     * gate_mode is NOT reset here — it was just parsed from llm_config. */
+    r->completion_candidate_seen = 0;
+    r->acceptance_declares = 0;
+    r->acceptance_frozen = 0;
+    r->probe_seen_n = 0;
     pending_reads_clear(r);
 
      /* LLM's plain-text answer (had_plan == 0) */
@@ -4392,6 +4563,12 @@ restart_planning:
             free(delivery_candidate);delivery_candidate=NULL;completion_reviewed=0;
             r->stall_nudged = 0;
             r->invalid_args_n = 0;
+            /* A steering message genuinely revises the task, so contract
+             * governance restarts from a clean slate for the revised goal. */
+            r->completion_candidate_seen = 0;
+            r->acceptance_declares = 0;
+            r->acceptance_frozen = 0;
+            r->probe_seen_n = 0;
             r->search_seen_n = r->versioned_seen_n = 0;
             r->grep_path_n = 0;
             search_only_rounds = 0;
@@ -4428,14 +4605,17 @@ restart_planning:
         }
         /* Count evidence, not rounds or API spend. Successful reads of new
          * pages/changed content reset this streak, regardless of task length.
-         * Interleaved failures, cache evictions and reordered plans do not. */
-        if (r->had_plan && r->n_actions>0) {
+         * Interleaved failures, cache evictions and reordered plans do not.
+         * Acceptance-declaration rounds (end_turn==3) execute no tools, so
+         * they must count as progress-free rounds — otherwise a planner can
+         * re-declare contracts forever while the breaker never fires (#270). */
+        if (r->had_plan && (r->n_actions>0 || r->planner_native_end_turn==3)) {
             if (r->round_new_observations>0) {
                 no_progress_rounds=cycle_reads=cycle_nudged=0;
                 r->progress_cycle_warning_active=0;
             } else {
                 no_progress_rounds++;
-                cycle_reads += r->round_repeat_reads;
+                cycle_reads += r->n_actions>0 ? r->round_repeat_reads : 1;
                 if (no_progress_rounds>=4 && cycle_reads>=2 && !cycle_nudged) {
                     cycle_nudged=1;
                     r->progress_cycle_warning_active=1;
@@ -4574,12 +4754,13 @@ restart_planning:
                 if(r->file_check_rejections>=3||r->round_idx>=r->max_rounds){unfinished=1;final_text=xstrdup(txt?txt:"");break;}
                 continue;
             }
-            if ((r->unresolved_failed_tool_count > 0 || r->unresolved_failed_tools_overflow) &&
+            if ((blocking_failed_tools(r) > 0 || (r->unresolved_failed_tools_overflow && !r->gate_mode)) &&
                 failure_recovery_nudges < 1 && r->round_idx < r->max_rounds) {
                 failure_recovery_nudges++;
                 round_log_append(r, txt ? txt : "");
                 round_log_append(r, "[system] 任务尚未完成：前面有工具调用失败且没有成功核实。不要输出最终总结或停止；先根据失败工具的真实错误调整参数、路径或方法，重试该工具或用可验证的替代方式完成受影响步骤，再继续原任务。修复后的内容必须经过成功工具结果验证。失败工具：");
                 for (int i=0;i<r->unresolved_failed_tool_count;i++) {
+                    if (failed_entry_is_advisory(r,i)) continue;
                     strbuf failure; strbuf_init(&failure);
                     strbuf_appendf(&failure,"%s: %s",r->unresolved_failed_tools[i],r->unresolved_failed_scopes[i]);
                     if (!strcmp(r->unresolved_failed_tools[i],"file_read"))
@@ -4618,7 +4799,7 @@ restart_planning:
              * the review itself; ordinary zero-tool conversation needs no extra call. */
             if (r->planner_native_end_turn == 1 &&
                 r->run_successful_tools > 0 &&
-                !completion_reviewed) {
+                !completion_reviewed && !r->gate_mode) {
                 if (r->round_idx >= r->max_rounds) {
                     if(r->planner_native_end_turn==1 && !completion_grace && r->round_idx==r->max_rounds){
                         completion_grace=1;round_log_append(r,completion_reserve_note);
@@ -4667,7 +4848,7 @@ restart_planning:
         if(planner_uses_native_tools(r->llm) && r->round_idx==r->max_rounds &&
            (r->round_new_observations>0 || (completion_reviewed && r->run_successful_tools>0 &&
              !r->file_checks_failed && !required_pending_reads(r))) &&
-           r->all_actions_ok && !r->unresolved_failed_tool_count &&
+           r->all_actions_ok && !blocking_failed_tools(r) &&
            !r->unresolved_failed_tools_overflow && !completion_grace){
             completion_grace=1;completion_reviewed=1;
             round_log_append(r,completion_reserve_note);
@@ -4722,7 +4903,7 @@ restart_planning:
      * calling tools; only a validated completion may make the run DONE. */
     if (cycle_aborted && planner_uses_native_tools(r->llm) &&
         r->run_successful_tools > 0 && !run_aborted(r) && !task_has_messages(r->run_task) &&
-        !r->unresolved_failed_tool_count && !r->unresolved_failed_tools_overflow) {
+        !blocking_failed_tools(r) && !(r->unresolved_failed_tools_overflow && !r->gate_mode)) {
         completion_grace = 1; /* suppress a second, unstructured request */
         r->completion_only = 1;
         round_log_append(r, "[system] Cycle completion review: repeated checks were stopped. "
@@ -4803,10 +4984,11 @@ restart_planning:
     int cancelled = (r->run_task && r->run_task->cancel_flag) ||
                     (r->abort_parent && r->abort_parent->cancel_flag);
     int timed_out = !cancelled && run_aborted(r);
-    if(!cancelled&&!timed_out&&(r->file_equalities||r->acceptance||r->acceptance_invalid))verify_completion_files(r,NULL);
+    if(!cancelled&&!timed_out&&!r->gate_mode&&(r->file_equalities||r->acceptance||r->acceptance_invalid))verify_completion_files(r,NULL);
     if(stalled || synthesized || fail_aborted || r->tool_fail_aborted ||
-       r->file_checks_failed || r->acceptance_invalid || required_pending_reads(r) ||
-       r->unresolved_failed_tool_count>0 || r->unresolved_failed_tools_overflow)unfinished=1;
+       r->file_checks_failed || r->acceptance_invalid ||
+       (!r->gate_mode && required_pending_reads(r)) ||
+       blocking_failed_tools(r)>0 || (r->unresolved_failed_tools_overflow && !r->gate_mode))unfinished=1;
     /* Cover plain answers, native complete_task, continued/truncated output
      * and fallback summaries with the same final delivery gate. Do not feed
      * degraded output back to the model or initiate unbounded paid retries. */
@@ -4848,11 +5030,13 @@ restart_planning:
             explained=1;
         }
         if (r->tool_fail_aborted) { strbuf_append(&out,"\n原因：相同工具连续失败3次；请查看最后一次失败的工具结果，修正参数或环境后恢复任务。"); explained=1; }
-        if (r->unresolved_failed_tool_count > 0 || r->unresolved_failed_tools_overflow) {
+        if (blocking_failed_tools(r) > 0 || (r->unresolved_failed_tools_overflow && !r->gate_mode)) {
             strbuf_append(&out, "\n原因：以下失败工具之后没有成功重试核实，不能将任务标记为完成：");
-            for (int i = 0; i < r->unresolved_failed_tool_count; ++i)
+            for (int i = 0; i < r->unresolved_failed_tool_count; ++i) {
+                if (failed_entry_is_advisory(r, i)) continue;
                 strbuf_appendf(&out, "\n- %s：%s；%s", r->unresolved_failed_tools[i],
                     r->unresolved_failed_scopes[i],r->unresolved_failure_errors[i]);
+            }
             if (r->unresolved_failed_tools_overflow)
                 strbuf_append(&out, "（失败工具记录过多，已按未完成处理）");
             strbuf_append(&out, "。请查看详细执行记录并恢复验证。");
@@ -4871,13 +5055,22 @@ restart_planning:
             strbuf_append(&out, "\n\n");
             if(r->file_checks_failed)
                 strbuf_appendf(&out,"模型阶段性总结（交付验证未通过，不代表任务完成）：\n%s",final_text);
-            else if (r->unresolved_failed_tool_count > 0 || r->unresolved_failed_tools_overflow)
+            else if (blocking_failed_tools(r) > 0 || (r->unresolved_failed_tools_overflow && !r->gate_mode))
                 strbuf_appendf(&out, "模型阶段性总结（失败调用尚未核实，不代表任务完成）：\n%s", final_text);
             else
                 strbuf_append(&out, final_text);
         }
     } else if (final_text && *final_text) {
         strbuf_append(&out, final_text);
+        /* #271: failures that do not affect the delivered conclusion must not
+         * block DONE, but they remain visible in the report as notes. */
+        if (advisory_failed_tools(r) > 0) {
+            strbuf_append(&out, "\n\n注：以下调用未成功，但不影响上述交付结论：");
+            for (int i = 0; i < r->unresolved_failed_tool_count; ++i)
+                if (failed_entry_is_advisory(r, i))
+                    strbuf_appendf(&out, "\n- %s：%s；%s", r->unresolved_failed_tools[i],
+                        r->unresolved_failed_scopes[i], r->unresolved_failure_errors[i]);
+        }
     } else if (r->obs_log_len > 0) {
         /* no final answer produced — fall back to the executed-action log.
          * issue #8: cap with head+tail elision (recent actions matter most),

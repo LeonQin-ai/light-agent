@@ -329,6 +329,75 @@ int cron_rename(cron_mgr *c, long long id, const char *name) {
     mutex_unlock(&c->mtx);return rc;
 }
 
+int cron_update(cron_mgr *c, long long id, const char *prompt, const char *session,
+                int every_sec, const char *at) {
+    cron_job *j = NULL;
+    char new_at[CRON_AT_MAX];
+    int sched_provided, new_every, schedule_changed;
+    long long now;
+    size_t i;
+
+    if (!c)
+        return -1;
+    /* Validate any supplied schedule up front so a rejected edit never
+     * touches the stored job. Sentinel: every_sec < 0 and no "at" means the
+     * caller wants the existing schedule left in place. */
+    sched_provided = (every_sec >= 0) || (at && *at);
+    if (sched_provided) {
+        if (every_sec > 0) {
+            /* interval kind: nothing else to validate */
+        } else if (at && *at) {
+            int hh = 0, mm = 0;
+            if (sscanf(at, "%d:%d", &hh, &mm) != 2 || hh < 0 || hh > 23 || mm < 0 || mm > 59)
+                return -2;
+        } else {
+            return -2; /* every_sec == 0 (or negative) without a valid "HH:MM" */
+        }
+    }
+    mutex_lock(&c->mtx);
+    for (i = 0; i < c->n; i++) {
+        if (c->jobs[i].id == id) {
+            j = &c->jobs[i];
+            break;
+        }
+    }
+    if (!j) {
+        mutex_unlock(&c->mtx);
+        return -1;
+    }
+    /* Merge onto the existing values so partial edits validate as a whole. */
+    new_every = j->every_sec;
+    snprintf(new_at, sizeof(new_at), "%s", j->at);
+    if (sched_provided) {
+        if (every_sec > 0) {
+            new_every = every_sec;
+            new_at[0] = '\0';
+        } else {
+            new_every = 0;
+            snprintf(new_at, sizeof(new_at), "%s", at);
+        }
+    }
+    /* A job must always keep exactly one schedule kind. */
+    if (new_every <= 0 && !new_at[0]) {
+        mutex_unlock(&c->mtx);
+        return -2;
+    }
+    schedule_changed = (new_every != j->every_sec) || strcmp(new_at, j->at) != 0;
+    if (prompt && *prompt)
+        snprintf(j->prompt, sizeof(j->prompt), "%.*s", CRON_PROMPT_MAX - 1, prompt);
+    if (session && *session)
+        snprintf(j->session, sizeof(j->session), "%.*s", CRON_SESSION_MAX - 1, session);
+    j->every_sec = new_every;
+    snprintf(j->at, sizeof(j->at), "%s", new_at);
+    if (schedule_changed) {
+        now = time_now_ms();
+        job_schedule_next(j, now);
+    }
+    cron_save_locked(c);
+    mutex_unlock(&c->mtx);
+    return 0;
+}
+
 int cron_set_enabled(cron_mgr *c, long long id, int enabled) {
     int rc = -1;
 

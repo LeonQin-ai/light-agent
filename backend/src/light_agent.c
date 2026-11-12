@@ -799,7 +799,7 @@ int init(runtime_ctx *ctx, const config *cfg) {
     ctx->config = config_new();
     config_apply_json(ctx->config, "{\"llm.provider\":\"mock\",\"llm.model\":\"mock\",\"llm.base_url\":\"\","
                                        "\"scheduler.workers\":8,\"tx.use_transaction\":true,\"http.port\":0,"
-                                       "\"workspace\":\".\",\"market.url\":\"\",\"reasoning.max_rounds\":-1}");
+                                       "\"workspace\":\".\",\"market.url\":\"\",\"reasoning.max_rounds\":64}");
     if (cfg && cfg->config_file && *cfg->config_file)
         have_cfg_file = config_load_file(ctx->config,cfg->config_file) == 0;
     else
@@ -1160,7 +1160,7 @@ int init(runtime_ctx *ctx, const config *cfg) {
             rc.index = ctx->index;
             rc.plugin_registry = ctx->registry;
             rc.state_root = ctx->state_root;
-            rc.max_rounds = config_get_int(ctx->config, "reasoning.max_rounds", -1);
+            rc.max_rounds = config_get_int(ctx->config, "reasoning.max_rounds", AGENT_LOOP_MAX_ROUNDS);
             rc.hooks = ctx->hooks;
             /* Context MMU budgets (hot/warm/cold, chars per section) */
             rc.budget_hot = config_get_int(ctx->config, "context.budget_hot", 0);

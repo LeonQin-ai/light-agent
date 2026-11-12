@@ -1444,6 +1444,7 @@ panels.chat = `
       <button class="pill-ic" onclick="$('chat-file').click()" title="上传文件（RAG）">＋</button>
       <textarea id="chat-input" placeholder="和 light-agent 一起工作" aria-label="消息" rows="1"></textarea>
       <select class="composer-policy" id="chat-permission" aria-label="执行权限" title="本轮任务权限；现有全局策略仍然生效" onchange="chatPermissionChange(this.value)"><option value="ask">逐次批准</option><option value="auto" selected>自动批准低风险</option><option value="full">完全访问</option></select>
+      <select class="composer-policy" id="chat-gate" aria-label="完成校验模式" title="简易模式跳过验收合同与完成复核，速度更快；完整模式保留结构化验收" onchange="chatGateChange(this.value)"><option value="full" selected>完整校验</option><option value="simple">简易模式</option></select>
       <select id="chat-model" onchange="chatModelSwitch()" title="对话模型（点击切换）" aria-label="对话模型"></select>
       <details class="composer-effort" id="chat-effort-menu">
         <summary aria-label="推理强度">推理 <span id="chat-effort-summary">默认</span></summary>
@@ -1618,7 +1619,9 @@ async function loadCron(){
     del.onclick = async () => { if(!confirm('删除定时任务 ' + (j.name || j.id) + '?')) return; await call('DELETE', '/v1/cron/' + j.id); loadCron(); };
     const rename=document.createElement('button'); rename.className='sec sm'; rename.textContent='修改主题';
     rename.onclick=async()=>{const name=prompt('定时任务主题',j.name||'');if(name===null)return;const value=name.trim();if(!value){alert('主题不能为空');return;}const r=await call('PUT','/v1/cron/'+j.id,{name:value});if(r.status!==200){alert(r.obj?.error||'修改失败');return;}loadCron();};
-    row.appendChild(rename); row.appendChild(tgl); row.appendChild(del);
+    const edit=document.createElement('button'); edit.className='sec sm'; edit.textContent='编辑';
+    edit.onclick=()=>cronEdit(j);
+    row.appendChild(edit); row.appendChild(rename); row.appendChild(tgl); row.appendChild(del);
     box.appendChild(row);
   });
 }
@@ -1647,6 +1650,74 @@ async function cronAdd(){
     if(st) st.textContent = '已创建';
     loadCron();
   } else if(st) st.textContent = 'error: ' + ((r.obj && r.obj.error) || ('HTTP ' + r.status));
+}
+
+/* issue #266: 编辑定时任务的提示词/会话/计划（时间），名称仍走「修改主题」。 */
+function cronEdit(j){
+  document.getElementById('cron-edit-dialog')?.remove();
+  const d = document.createElement('dialog');
+  d.id = 'cron-edit-dialog';
+  d.style.cssText = 'width:min(540px,92vw);padding:22px;border:1px solid var(--border);border-radius:18px;background:var(--card);color:var(--fg);box-shadow:var(--shadow)';
+  d.innerHTML =
+    '<style>#cron-edit-dialog::backdrop{background:rgba(5,10,20,.55)}</style>' +
+    '<form>' +
+    '<h3 style="margin:0 0 12px">编辑定时任务 #' + j.id + ' — ' + esc(j.name || '') + '</h3>' +
+    '<label style="display:block;margin-bottom:10px">提示词' +
+    '<input id="cron-edit-prompt" type="text" required style="width:100%;margin-top:6px"></label>' +
+    '<label style="display:block;margin-bottom:10px">会话（留空保持 ' + esc(j.session || 'cron') + '）' +
+    '<input id="cron-edit-session" type="text" style="width:100%;margin-top:6px" placeholder="默认 ' + esc(j.session || 'cron') + '"></label>' +
+    '<div class="row" style="margin-top:4px">' +
+    '<select id="cron-edit-kind" style="flex:0 0 130px">' +
+    '<option value="every">间隔秒数</option><option value="at">每日定时</option></select>' +
+    '<input id="cron-edit-every" type="number" min="30" title="间隔秒数" style="flex:1;min-width:110px">' +
+    '<input id="cron-edit-at" type="time" title="每日 HH:MM" style="flex:1;min-width:110px;display:none">' +
+    '</div>' +
+    '<p class="hint" style="margin:10px 0 0">计划会整体替换；停用/启用、删除和改名仍在任务列表行内操作。</p>' +
+    '<p id="cron-edit-err" role="alert" style="color:var(--danger,#f87171);min-height:1.2em;margin:8px 0 0"></p>' +
+    '<div class="row" style="justify-content:flex-end;margin-top:12px">' +
+    '<button type="button" class="sec" id="cron-edit-cancel">取消</button>' +
+    '<button type="submit">保存</button></div></form>';
+  document.body.append(d);
+  const promptEl = $('cron-edit-prompt'), sessionEl = $('cron-edit-session'),
+        kindEl = $('cron-edit-kind'), everyEl = $('cron-edit-every'),
+        atEl = $('cron-edit-at'), errEl = $('cron-edit-err');
+  promptEl.value = j.prompt || '';
+  sessionEl.value = j.session && j.session !== 'cron' ? j.session : '';
+  const isEvery = j.every_sec > 0;
+  kindEl.value = isEvery ? 'every' : 'at';
+  everyEl.value = isEvery ? String(j.every_sec) : '3600';
+  atEl.value = (!isEvery && j.at) ? j.at : '09:00';
+  const syncKind = () => {
+    atEl.style.display = kindEl.value === 'at' ? '' : 'none';
+    everyEl.style.display = kindEl.value === 'every' ? '' : 'none';
+  };
+  kindEl.onchange = syncKind;
+  syncKind();
+  $('cron-edit-cancel').onclick = () => d.close();
+  d.querySelector('form').onsubmit = async e => {
+    e.preventDefault();
+    errEl.textContent = '';
+    const body = { prompt: promptEl.value.trim() };
+    if(!body.prompt){ errEl.textContent = '提示词不能为空'; return; }
+    const sess = sessionEl.value.trim();
+    if(sess) body.session = sess;
+    if(kindEl.value === 'every'){
+      const secs = parseInt(everyEl.value, 10);
+      if(!secs || secs < 30){ errEl.textContent = '间隔至少 30 秒'; return; }
+      body.every_sec = secs;
+    } else {
+      const at = atEl.value;
+      if(!at){ errEl.textContent = 'need HH:MM'; return; }
+      body.at = at;
+    }
+    const r = await call('POST', '/v1/cron/' + j.id + '/update', body);
+    if(r.status !== 200){ errEl.textContent = (r.obj && r.obj.error) || ('HTTP ' + r.status); return; }
+    d.close();
+    loadCron();
+  };
+  d.onclose = () => d.remove();
+  d.showModal();
+  promptEl.focus();
 }
 
 panels.policy = `
@@ -3886,6 +3957,7 @@ function chatApproval(t,session){let box=$('chat-approval');if(!box){box=documen
 function chatOptions(session=CHAT_SESSION){try{return JSON.parse(localStorage.getItem('coa.session-options:'+session)||'{}');}catch{return {};}}
 function chatOptionSet(name,value,session=CHAT_SESSION){const o=chatOptions(session);o[name]=value;localStorage.setItem('coa.session-options:'+session,JSON.stringify(o));}
 function chatPermissionChange(value){chatOptionSet('permission',value);}
+function chatGateChange(value){chatOptionSet('gate',value==='simple'?'simple':null);}
 const chatEfforts=[['','默认'],['low','轻度'],['medium','中等'],['high','高度'],['xhigh','极高']];
 function syncChatEffort(value){
   const slider=$('chat-effort');
@@ -3901,6 +3973,8 @@ function syncChatPermission(){
   const settings=chatOptions();
   const permission=$('chat-permission');
   if(permission)permission.value=settings.permission || 'auto';
+  const gate=$('chat-gate');
+  if(gate)gate.value=settings.gate==='simple'?'simple':'full';
   syncChatEffort(settings.reasoning_effort);
 }
 function chatEffortChange(){
@@ -6473,6 +6547,7 @@ async function chatSubmit(resume = false){
   const permission=$('chat-permission')?.value || settings.permission || 'auto';
   const route=settings.route || undefined;
   const reasoning_effort=settings.reasoning_effort || undefined;
+  const gate=settings.gate==='simple'?'simple':undefined;
   const destination=CHAT_MSGS;
   const attachments = resume ? [] : CHAT_ATTACH.slice();
   CHAT_SUBMITTING.add(session); chatBusyUI(true);
@@ -6497,7 +6572,7 @@ async function chatSubmit(resume = false){
   entry.pending = true; entry.progress = {stage:'submitting'};
   CHAT_CACHE[session] = CHAT_SESSION===session?CHAT_MSGS:destination; renderChatEntry(entry);
   const r = await call('POST',resume ? '/v1/chat/sessions/' + encodeURIComponent(session) + '/resume' : '/v1/chat',
-    resume ? {route,reasoning_effort,permission_mode:permission} : {message:full,session,route,reasoning_effort,workspace:executionWorkspace || undefined,permission_mode:permission,attachments:attachments.map(a=>a.id)});
+    resume ? {route,reasoning_effort,permission_mode:permission,gate} : {message:full,session,route,reasoning_effort,workspace:executionWorkspace || undefined,permission_mode:permission,gate,attachments:attachments.map(a=>a.id)});
   CHAT_SUBMITTING.delete(session);
   if(!Number.isInteger(r.obj?.id)){
     entry.pending = false; entry.progress.stage = 'failed';

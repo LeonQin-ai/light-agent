@@ -676,11 +676,20 @@ static char *chat_route_snapshot(runtime_ctx *ctx,cJSON *body,int *invalid){
         *invalid = 1;
         return NULL;
     }
+    /* Completion-gate mode (#271): "simple" runs a Claude-Code-like flow
+     * without the structured-acceptance gates; absent/"full" is the default. */
+    cJSON *gate_item = cJSON_GetObjectItemCaseSensitive(body, "gate");
+    const char *gate = cJSON_GetStringValue(gate_item);
+    if (gate_item && (!gate || (strcmp(gate,"full") && strcmp(gate,"simple")))) {
+        *invalid = 1;
+        return NULL;
+    }
     if (!choice) {
-        if (!temperature && !effort) return NULL;
+        if (!temperature && !effort && !gate_item) return NULL;
         cJSON *settings = cJSON_CreateObject();
         if (temperature) cJSON_AddNumberToObject(settings, "temperature", temperature->valuedouble);
         if (effort) cJSON_AddStringToObject(settings, "reasoning_effort", effort);
+        if (gate) cJSON_AddStringToObject(settings, "gate", gate);
         char *snapshot = cJSON_PrintUnformatted(settings);
         cJSON_Delete(settings);
         if (!snapshot) *invalid = 1;
@@ -694,6 +703,7 @@ static char *chat_route_snapshot(runtime_ctx *ctx,cJSON *body,int *invalid){
         cJSON_AddNumberToObject(o,"context_window",(double)r->context_window_tokens);cJSON_AddNumberToObject(o,"max_output_tokens",(double)r->max_output_tokens);
         if (temperature) cJSON_AddNumberToObject(o, "temperature", temperature->valuedouble);
         if (effort) cJSON_AddStringToObject(o, "reasoning_effort", effort);
+        if (gate) cJSON_AddStringToObject(o, "gate", gate);
         char *json=cJSON_PrintUnformatted(o);cJSON_Delete(o);if(!json)*invalid=1;return json;
     }
     *invalid=1;return NULL;
@@ -2464,16 +2474,102 @@ static int h_cron_rename(const http_request *req,http_response *resp,void *ud) {
     http_resp_json(resp,rc==0?"{\"ok\":true}":"{\"error\":\"invalid name or unknown job\"}");return 0;
 }
 
-/* POST /v1/cron/<id>/toggle {"enabled":bool} — enable/disable a job */
+/* POST /v1/cron/<id>/update {"prompt"?,"session"?,"every_sec"?|"at"?}
+ * Edit a job's content and/or schedule (issue #266). Fields absent from the
+ * body are left unchanged; the schedule is replaced only when every_sec/at
+ * is present. */
+static int h_cron_update(const http_request *req, http_response *resp, void *ud) {
+    runtime_ctx *ctx = (runtime_ctx *)ud;
+    char *b;
+    cJSON *root, *es;
+    const char *p, *slash, *pp, *sp, *ap;
+    char prompt[1024], session[64], at[16];
+    long long id;
+    char *end;
+    int every_sec, rc;
+
+    if (!authz_ok(ctx, req, resp))
+        return 0;
+    if (!ctx->cron) {
+        resp->status = 503;
+        http_resp_json(resp, "{\"error\":\"cron not initialized\"}");
+        return 0;
+    }
+    /* path is "/v1/cron/<id>/update" — id sits between the two slashes */
+    p = req->path + strlen("/v1/cron/");
+    slash = strchr(p, '/');
+    if (!slash || strcmp(slash, "/update") != 0) {
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"invalid update path\"}");
+        return 0;
+    }
+    id = strtoll(p, &end, 10);
+    if (end == p || end != slash || id < 0) {
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"invalid job id\"}");
+        return 0;
+    }
+    b = body_str(req);
+    root = b ? cJSON_Parse(b) : NULL;
+    free(b);
+    if (!root || !cJSON_IsObject(root)) {
+        if (root)
+            cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"body must be a JSON object\"}");
+        return 0;
+    }
+    pp = json_str(root, "prompt");
+    sp = json_str(root, "session");
+    ap = json_str(root, "at");
+    es = cJSON_GetObjectItemCaseSensitive(root, "every_sec");
+    every_sec = (es && cJSON_IsNumber(es)) ? (int)es->valuedouble : -1;
+    /* Copy borrowed cJSON strings into stack buffers before Delete: using the
+     * valuestring pointers after cJSON_Delete would be a use-after-free. */
+    prompt[0] = '\0';
+    session[0] = '\0';
+    at[0] = '\0';
+    if (pp)
+        snprintf(prompt, sizeof(prompt), "%.*s", (int)sizeof(prompt) - 1, pp);
+    if (sp)
+        snprintf(session, sizeof(session), "%.*s", (int)sizeof(session) - 1, sp);
+    if (ap)
+        snprintf(at, sizeof(at), "%.*s", (int)sizeof(at) - 1, ap);
+    cJSON_Delete(root);
+    rc = cron_update(ctx->cron, id, prompt[0] ? prompt : NULL, session[0] ? session : NULL,
+                     every_sec, at[0] ? at : NULL);
+    if (rc == -2) {
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"invalid schedule (need every_sec > 0 or valid HH:MM)\"}");
+        return 0;
+    }
+    if (rc != 0) {
+        resp->status = 404;
+        http_resp_json(resp, "{\"error\":\"job not found\"}");
+        return 0;
+    }
+    http_resp_json(resp, "{\"ok\":true}");
+    return 0;
+}
+
+/* POST /v1/cron/<id>/toggle {"enabled":bool} — enable/disable a job.
+ * The dispatcher keeps the first route on method+prefix ties, so a second
+ * POST /v1/cron/ route can never win; the /update action is dispatched here
+ * by path suffix instead. */
 static int h_cron_toggle(const http_request *req, http_response *resp, void *ud) {
     runtime_ctx *ctx = (runtime_ctx *)ud;
     char *b;
     cJSON *root, *en;
+    const char *p, *slash;
     long long id;
     int rc;
 
     if (!authz_ok(ctx, req, resp))
         return 0;
+    p = req->path + strlen("/v1/cron/");
+    slash = strchr(p, '/');
+    if (slash && strcmp(slash, "/update") == 0)
+        return h_cron_update(req, resp, ud);
     b = body_str(req);
     root = b ? cJSON_Parse(b) : NULL;
     free(b);
@@ -2482,7 +2578,6 @@ static int h_cron_toggle(const http_request *req, http_response *resp, void *ud)
     if (root)
         cJSON_Delete(root);
     /* path is "/v1/cron/<id>/toggle" — id sits between the two slashes */
-    const char *p = req->path + strlen("/v1/cron/");
     id = atoll(p);
     rc = ctx->cron ? cron_set_enabled(ctx->cron, id, enabled) : -1;
     if (rc != 0) {

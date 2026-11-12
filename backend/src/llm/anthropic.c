@@ -2,6 +2,7 @@
 #include "llm/llm.h"
 #include "llm/sse.h"
 #include "os/http.h"
+#include "os/os_time.h"
 #include "infra/util.h"
 #include "infra/logging.h"
 
@@ -167,6 +168,11 @@ static int anthropic_chat(llm *llm, const llm_request *req, llm_response *resp) 
 
     hdrs = anthropic_headers(llm);
 
+    /* observability (#271): one line per request with timing, so a silent
+     * multi-minute stall is visible in the log while it is happening */
+    long long _t0 = time_now_ms();
+    log_info("llm-anthropic: request sent model=%s bytes=%zu timeout_ms=%d",
+             llm->model ? llm->model : "?", strlen(body), llm_req_timeout_ms(req));
     r =
         http_post(impl_of(llm)->base_url, ANTHROPIC_PATH, body, "application/json", hdrs, llm_req_timeout_ms(req));
     free(body);
@@ -180,8 +186,12 @@ static int anthropic_chat(llm *llm, const llm_request *req, llm_response *resp) 
         snprintf(err, sizeof err, "http request failed: %s",
                  *http_last_error() ? http_last_error() : "transport failure");
         set_error(resp, err);
+        log_warn("llm-anthropic: request failed after %lldms: %s",
+                 time_now_ms() - _t0, *http_last_error() ? http_last_error() : "transport failure");
         return -1;
     }
+    log_info("llm-anthropic: response http=%d bytes=%zu elapsed_ms=%lld",
+             r->status, r->body ? strlen(r->body) : 0, time_now_ms() - _t0);
 
     resp->http_status = r->status;
     if (r->status != 200) {

@@ -38,6 +38,21 @@ int cron_remove(cron_mgr *c, long long id);
 int cron_set_enabled(cron_mgr *c, long long id, int enabled);
 int cron_rename(cron_mgr *c, long long id, const char *name);
 
+/* Update an existing job's content and/or schedule (issue #266). Sentinel
+ * values leave a field unchanged, so prompt-only and schedule-only edits are
+ * both supported:
+ *   prompt  NULL or ""                      -> keep the current prompt
+ *   session NULL or ""                      -> keep the current session
+ *   every_sec < 0 and at NULL/""            -> keep the current schedule
+ * When a schedule is supplied it must be valid exactly as for cron_add:
+ * every_sec > 0 selects an interval (clearing any "HH:MM"), or a non-empty
+ * valid "HH:MM" at selects daily (clearing every_sec); anything else is
+ * rejected and the job is left untouched. A changed schedule recomputes
+ * next_run_ms. Returns 0 on success, -1 on unknown id / bad manager,
+ * -2 on invalid arguments (no partial update is applied on failure). */
+int cron_update(cron_mgr *c, long long id, const char *prompt,
+                const char *session, int every_sec, const char *at);
+
 /* JSON array of jobs (caller frees): [{id,name,prompt,session,every_sec,at,
  * enabled,next_run_ms,last_run_ms}...] */
 char *cron_json(const cron_mgr *c);

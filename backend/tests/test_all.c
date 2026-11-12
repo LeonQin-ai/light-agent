@@ -383,6 +383,131 @@ static void test_scheduler_limits(void) {
     scheduler_free(s);
 }
 
+/* issue #266: cron_update edits prompt/session and swaps schedule kind,
+ * rejects invalid input without partial updates, and persists across
+ * manager restarts. */
+static void test_cron_update(void) {
+    cron_mgr *cron, *again;
+    long long id;
+    char *jobs;
+    cJSON *arr, *job;
+    int rc;
+
+    section("cron update (issue #266)");
+    fs_mkdirs("state-test/cron-update");
+    fs_remove("state-test/cron-update/cron.json");
+    cron = cron_new(NULL, "state-test/cron-update");
+    CHECK(cron != NULL);
+    if (!cron)
+        return;
+
+    id = cron_add(cron, "edit-me", "original prompt", "cron", 3600, NULL);
+    CHECK(id >= 0);
+
+    /* prompt-only edit: the interval schedule must be preserved. */
+    rc = cron_update(cron, id, "changed prompt", NULL, -1, NULL);
+    CHECK(rc == 0);
+    jobs = cron_json(cron);
+    arr = jobs ? cJSON_Parse(jobs) : NULL;
+    free(jobs);
+    CHECK(arr != NULL && cJSON_GetArraySize(arr) == 1);
+    job = arr ? cJSON_GetArrayItem(arr, 0) : NULL;
+    CHECK(job != NULL);
+    if (job) {
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(job, "prompt")), "changed prompt");
+        CHECK(cJSON_GetObjectItemCaseSensitive(job, "every_sec")->valuedouble == 3600);
+        CHECK(cJSON_GetObjectItemCaseSensitive(job, "at") == NULL);
+    }
+    cJSON_Delete(arr);
+
+    /* session-only edit: prompt and schedule untouched. */
+    rc = cron_update(cron, id, NULL, "ops", -1, NULL);
+    CHECK(rc == 0);
+    jobs = cron_json(cron);
+    arr = jobs ? cJSON_Parse(jobs) : NULL;
+    free(jobs);
+    job = arr ? cJSON_GetArrayItem(arr, 0) : NULL;
+    CHECK(job != NULL);
+    if (job) {
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(job, "session")), "ops");
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(job, "prompt")), "changed prompt");
+        CHECK(cJSON_GetObjectItemCaseSensitive(job, "every_sec")->valuedouble == 3600);
+    }
+    cJSON_Delete(arr);
+
+    /* interval -> daily: every_sec clears, at stored, next_run recomputed. */
+    rc = cron_update(cron, id, NULL, NULL, -1, "09:30");
+    CHECK(rc == 0);
+    jobs = cron_json(cron);
+    arr = jobs ? cJSON_Parse(jobs) : NULL;
+    free(jobs);
+    job = arr ? cJSON_GetArrayItem(arr, 0) : NULL;
+    CHECK(job != NULL);
+    if (job) {
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(job, "at")), "09:30");
+        CHECK(cJSON_GetObjectItemCaseSensitive(job, "every_sec")->valuedouble == 0);
+        CHECK(cJSON_GetObjectItemCaseSensitive(job, "next_run_ms")->valuedouble > 0);
+    }
+    cJSON_Delete(arr);
+
+    /* invalid "HH:MM" rejected (-2) and leaves the job untouched. */
+    rc = cron_update(cron, id, NULL, NULL, -1, "25:99");
+    CHECK(rc == -2);
+    rc = cron_update(cron, id, NULL, NULL, 0, "");
+    CHECK(rc == -2);
+    jobs = cron_json(cron);
+    arr = jobs ? cJSON_Parse(jobs) : NULL;
+    free(jobs);
+    job = arr ? cJSON_GetArrayItem(arr, 0) : NULL;
+    CHECK(job != NULL);
+    if (job)
+        CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(job, "at")), "09:30");
+    cJSON_Delete(arr);
+
+    /* daily -> interval: at clears, every_sec takes over. */
+    rc = cron_update(cron, id, NULL, NULL, 600, NULL);
+    CHECK(rc == 0);
+    jobs = cron_json(cron);
+    arr = jobs ? cJSON_Parse(jobs) : NULL;
+    free(jobs);
+    job = arr ? cJSON_GetArrayItem(arr, 0) : NULL;
+    CHECK(job != NULL);
+    if (job) {
+        CHECK(cJSON_GetObjectItemCaseSensitive(job, "every_sec")->valuedouble == 600);
+        CHECK(cJSON_GetObjectItemCaseSensitive(job, "at") == NULL);
+    }
+    cJSON_Delete(arr);
+
+    /* combined content + schedule edit in one call. */
+    rc = cron_update(cron, id, "daily brief", "brief", -1, "07:15");
+    CHECK(rc == 0);
+
+    /* unknown id -> -1; bad manager -> -1. */
+    CHECK(cron_update(cron, id + 100, "nope", NULL, -1, NULL) == -1);
+    CHECK(cron_update(NULL, id, "nope", NULL, -1, NULL) == -1);
+
+    /* persistence: a fresh manager on the same state dir sees the edit. */
+    cron_free(cron);
+    again = cron_new(NULL, "state-test/cron-update");
+    CHECK(again != NULL);
+    if (again) {
+        jobs = cron_json(again);
+        arr = jobs ? cJSON_Parse(jobs) : NULL;
+        free(jobs);
+        CHECK(arr != NULL && cJSON_GetArraySize(arr) == 1);
+        job = arr ? cJSON_GetArrayItem(arr, 0) : NULL;
+        CHECK(job != NULL);
+        if (job) {
+            CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(job, "prompt")), "daily brief");
+            CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(job, "session")), "brief");
+            CHECK_STR(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(job, "at")), "07:15");
+            CHECK(cJSON_GetObjectItemCaseSensitive(job, "every_sec")->valuedouble == 0);
+        }
+        cJSON_Delete(arr);
+        cron_free(again);
+    }
+}
+
 static void run_virtual_noop(task *t, scheduler *s, void *ud) {
     (void)s; (void)ud;
     t->status = TS_DONE;
@@ -3257,6 +3382,9 @@ static void test_cross_round_progress(void) {
                 if(mode!=41 && mode!=43) CHECK(!f.saw_fold);
             } else if (mode >= 32) {
                 if (mode == 32 || mode == 33) CHECK(rc == 0 && f.calls == (mode==32?5:4) && answer && strstr(answer,"嵌套源码分析完成"));
+                /* #265/#269: same-basename unrelated reads and read-only
+                 * discovery without delivery never zero the missing-source
+                 * failure; no committed mutation means no advisory waiver. */
                 else CHECK(rc != 0 && f.calls == (mode == 34 ? 6 : 5) && answer && strstr(answer,"file_read"));
             } else if (mode >= 24) {
                 if (mode == 25 || mode == 26 || mode == 27 || mode == 28)
@@ -8979,6 +9107,82 @@ static void test_http_capacity(void) {
     config_free(ctx.config);
 }
 
+/* issue #266: cron content/schedule editing through the REST dispatcher.
+ * POST /v1/cron/ shares one route with /toggle, so /update is dispatched by
+ * path suffix; this test guards both actions plus the error status codes. */
+static void test_http_cron_update(void) {
+    runtime_ctx ctx;
+    raw_http r;
+    thread_t *server;
+    cJSON *json;
+    long long id;
+    char path[128];
+
+    section("http cron update (issue #266)");
+    fs_mkdirs("state-test/cron-http");
+    fs_remove("state-test/cron-http/cron.json");
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.http_port = 18241;
+    ctx.http_bind = "127.0.0.1";
+    ctx.cron = cron_new(NULL, "state-test/cron-http");
+    CHECK(ctx.cron != NULL);
+    if (!ctx.cron)
+        return;
+    CHECK(api_attach(&ctx) == 0);
+    server = ctx.http ? thread_create(th_serve_http, ctx.http) : NULL;
+    CHECK(server != NULL);
+    if (server) {
+        CHECK(raw_http_request(18241, "POST", "/v1/cron",
+              "{\"name\":\"http\",\"prompt\":\"hello\",\"every_sec\":3600}", &r) == 0 && r.status == 200);
+        json = cJSON_Parse(r.body);
+        CHECK(json != NULL && cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(json, "id")));
+        id = json ? (long long)cJSON_GetObjectItemCaseSensitive(json, "id")->valuedouble : -1;
+        cJSON_Delete(json);
+        CHECK(id >= 0);
+
+        /* prompt-only edit, then a schedule switch interval -> daily. */
+        snprintf(path, sizeof(path), "/v1/cron/%lld/update", id);
+        CHECK(raw_http_request(18241, "POST", path, "{\"prompt\":\"updated\"}", &r) == 0 && r.status == 200);
+        CHECK(strstr(r.body, "\"ok\":true") != NULL);
+        CHECK(raw_http_request(18241, "POST", path, "{\"at\":\"07:15\"}", &r) == 0 && r.status == 200);
+
+        CHECK(raw_http_request(18241, "GET", "/v1/cron", NULL, &r) == 0 && r.status == 200);
+        CHECK(strstr(r.body, "\"prompt\":\"updated\"") != NULL);
+        CHECK(strstr(r.body, "\"at\":\"07:15\"") != NULL);
+        CHECK(strstr(r.body, "\"every_sec\":0") != NULL);
+
+        /* invalid schedule: 400 and the stored job stays on 07:15. */
+        CHECK(raw_http_request(18241, "POST", path, "{\"at\":\"99:99\"}", &r) == 0 && r.status == 400);
+        CHECK(raw_http_request(18241, "GET", "/v1/cron", NULL, &r) == 0);
+        CHECK(strstr(r.body, "\"at\":\"07:15\"") != NULL);
+
+        /* daily -> interval, plus session edit in one call. */
+        CHECK(raw_http_request(18241, "POST", path,
+              "{\"every_sec\":600,\"session\":\"ops\"}", &r) == 0 && r.status == 200);
+        CHECK(raw_http_request(18241, "GET", "/v1/cron", NULL, &r) == 0);
+        CHECK(strstr(r.body, "\"every_sec\":600") != NULL);
+        CHECK(strstr(r.body, "\"session\":\"ops\"") != NULL);
+        CHECK(strstr(r.body, "\"at\"") == NULL);
+
+        /* unknown id -> 404; malformed body -> 400. */
+        CHECK(raw_http_request(18241, "POST", "/v1/cron/99999/update",
+              "{\"prompt\":\"x\"}", &r) == 0 && r.status == 404);
+        CHECK(raw_http_request(18241, "POST", path, "not-json", &r) == 0 && r.status == 400);
+
+        /* the sibling toggle action must still win through the same route. */
+        snprintf(path, sizeof(path), "/v1/cron/%lld/toggle", id);
+        CHECK(raw_http_request(18241, "POST", path, "{\"enabled\":false}", &r) == 0 && r.status == 200);
+        CHECK(raw_http_request(18241, "GET", "/v1/cron", NULL, &r) == 0);
+        CHECK(strstr(r.body, "\"enabled\":false") != NULL);
+
+        http_server_stop(ctx.http);
+        thread_join(server);
+    }
+    if (ctx.http)
+        http_server_free(ctx.http);
+    cron_free(ctx.cron);
+}
+
 static void test_remove_tree(const char *path) {
     dir_list entries = {0};
     if (fs_list_dir(path, &entries) == 0) {
@@ -9976,7 +10180,7 @@ int main(int argc, char **argv) {
         printf("\n%d passed, %d failed\n",g_pass,g_fail); return g_fail ? 1:0;
     }
     if (argc==2 && !strcmp(argv[1],"--audit")) {
-        test_config(); test_issue121_regressions(); test_mmu_rejected_cache(); test_crash_journal(); test_scheduler(); test_scheduler_limits(); test_coro();
+        test_config(); test_issue121_regressions(); test_mmu_rejected_cache(); test_crash_journal(); test_scheduler(); test_scheduler_limits(); test_cron_update(); test_coro();
         printf("\n%d passed, %d failed\n",g_pass,g_fail); return g_fail ? 1:0;
     }
     if (argc==2 && !strcmp(argv[1],"--usage")) {
@@ -10044,6 +10248,7 @@ int main(int argc, char **argv) {
     test_scheduler();
     test_scheduler_elastic();
     test_scheduler_limits();
+    test_cron_update();
     test_scheduler_virtual_scale();
     test_coro();
     test_scheduler_mn();
@@ -10151,6 +10356,7 @@ int main(int argc, char **argv) {
     test_selected_model_routing();
     test_model_probe_lifecycle();
     test_http_capacity();
+    test_http_cron_update();
     test_http_install_auth();
     test_http_skill_install_async();
     test_http_api();
