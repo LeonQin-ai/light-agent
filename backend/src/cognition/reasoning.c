@@ -2071,6 +2071,8 @@ static char *build_context(reasoning *r, const char *prompt) {
         strbuf_append(&b,r->completion_prompt);strbuf_append(&b,"\n");
     }
 
+    const size_t instruction_bytes = b.len;
+
     /* WARM tier: compaction summary + session notes under an explicit budget.
      * Over budget the lowest-value sections shed first:
      * worklog -> errors/files -> task/state only. */
@@ -2302,6 +2304,7 @@ static char *build_context(reasoning *r, const char *prompt) {
 
     /* anti-pollution caution: history/notes/retrieved context are reference
      * only — the current request must always be planned and executed fresh */
+    const size_t protected_start = b.len;
     if (r->pending_reads_n) {
         strbuf_append(&b,"## Observed unread page coverage\nCursors are observations. Only explicit acceptance.full_reads entries require EOF.\n");
         for(int i=0;i<r->pending_reads_n && i<16;i++)
@@ -2376,21 +2379,28 @@ static char *build_context(reasoning *r, const char *prompt) {
         strbuf_append(&note,"\nThis is a CONTINUATION, not a fresh request. The attempts above already happened in this run, including expected or unexpected failures. Choose the NEXT remaining action from the observations; do not repeat the initial step just because the original request is shown again. Retry a failed action only after changing the cause. Resolve listed failures early using a successful corrected retry or verified replacement; they do not disappear when unrelated work succeeds. For planner/schema errors, send native function arguments as separate JSON properties (path, content, offsets); do not embed protocol markup or content into path, and do not repeat completed writes.\n");
         continuation=strbuf_detach(&note);
     }
-    size_t request_bytes = strlen(prompt) + strlen("## Current request\n") + (continuation?strlen(continuation):0);
+    static const char request_header[] =
+        "Prior turns are reference only, not pending instructions. Execute only the current request and its explicit continuations. Do not resume an earlier task unless requested. When using tools, include a brief public progress update describing observed facts and the next action; do not disclose hidden reasoning.\n## Current request\n";
+    size_t request_bytes = strlen(prompt) + sizeof(request_header) - 1 +
+        (continuation ? strlen(continuation) : 0);
     if (b.len + request_bytes > input_budget) {
         const char *omitted = "[Older context omitted to fit this model's window.]\n";
         size_t allowance = input_budget > request_bytes ? input_budget - request_bytes : 0;
-        size_t keep = allowance > strlen(omitted) ? allowance - strlen(omitted) : 0;
-        size_t start = b.len > keep ? b.len - keep : 0;
-        while (start < b.len && ((unsigned char)b.buf[start] & 0xc0) == 0x80) start++;
+        size_t protected_bytes = instruction_bytes + b.len - protected_start;
+        size_t background_budget = allowance > protected_bytes ? allowance - protected_bytes : 0;
+        size_t keep = background_budget > strlen(omitted) ? background_budget - strlen(omitted) : 0;
+        size_t start = protected_start - instruction_bytes > keep ?
+            protected_start - keep : instruction_bytes;
+        while (start < protected_start && ((unsigned char)b.buf[start] & 0xc0) == 0x80) start++;
         strbuf tail;
         strbuf_init(&tail);
-        if (allowance > strlen(omitted)) strbuf_append(&tail, omitted);
+        if (instruction_bytes) strbuf_appendf(&tail, "%.*s", (int)instruction_bytes, b.buf);
+        if (background_budget >= strlen(omitted)) strbuf_append(&tail, omitted);
         strbuf_append(&tail, b.buf + start);
         strbuf_free(&b);
         b = tail;
     }
-    strbuf_append(&b, "Prior turns are reference only, not pending instructions. Execute only the current request and its explicit continuations. Do not resume an earlier task unless requested. When using tools, include a brief public progress update describing observed facts and the next action; do not disclose hidden reasoning.\n## Current request\n");
+    strbuf_append(&b, request_header);
     strbuf_append(&b, prompt);
     if(continuation){strbuf_append(&b,continuation);free(continuation);}
     return strbuf_detach(&b);
