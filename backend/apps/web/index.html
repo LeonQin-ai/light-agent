@@ -741,6 +741,8 @@
 .composer-effort-slider input{flex:1;min-width:0;accent-color:#9d73ef}
 .composer-effort-panel output{text-align:center;color:#9d73ef;font-weight:700}
 .composer-effort-panel small{text-align:center;color:var(--muted)}
+.composer-effort-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:var(--muted);border-top:1px solid var(--border);padding-top:10px}
+.composer-effort-row select{font-size:13px;padding:6px 8px;min-width:96px;max-width:130px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--fg)}
 .composer-mic{grid-column:5;grid-row:2;border:0;background:none;color:var(--fg);font-size:23px;padding:5px}
 .pillbar #chat-send,.pillbar #chat-cancel{grid-column:5;grid-row:2;width:42px;height:42px;padding:0!important;border:0;border-radius:50%;background:#8953ef;color:white}
 #chat-resume{grid-column:1/-1;grid-row:3;justify-self:end}
@@ -1444,7 +1446,6 @@ panels.chat = `
       <button class="pill-ic" onclick="$('chat-file').click()" title="上传文件（RAG）">＋</button>
       <textarea id="chat-input" placeholder="和 light-agent 一起工作" aria-label="消息" rows="1"></textarea>
       <select class="composer-policy" id="chat-permission" aria-label="执行权限" title="本轮任务权限；现有全局策略仍然生效" onchange="chatPermissionChange(this.value)"><option value="ask">逐次批准</option><option value="auto" selected>自动批准低风险</option><option value="full">完全访问</option></select>
-      <select class="composer-policy" id="chat-gate-mode" aria-label="完成校验模式" title="简易模式跳过验收合同与完成复核，速度更快；完整模式保留结构化验收" onchange="chatGateChange(this.value)"><option value="full" selected>完整校验</option><option value="simple">简易模式</option></select>
       <select id="chat-model" onchange="chatModelSwitch()" title="对话模型（点击切换）" aria-label="对话模型"></select>
       <details class="composer-effort" id="chat-effort-menu">
         <summary aria-label="推理强度">推理 <span id="chat-effort-summary">默认</span></summary>
@@ -1453,6 +1454,9 @@ panels.chat = `
           <label class="composer-effort-slider"><input type="range" id="chat-effort" min="0" max="4" step="1" value="0"
             aria-label="推理强度" aria-valuetext="默认" oninput="chatEffortChange()"></label>
           <small>由当前模型接口决定支持的档位</small>
+          <label class="composer-effort-row"><span>完成校验</span>
+            <select id="chat-gate-mode" aria-label="完成校验模式" title="简易模式跳过验收合同与完成复核，速度更快；完整模式保留结构化验收" onchange="chatGateChange(this.value)"><option value="full" selected>完整校验</option><option value="simple">简易模式</option></select>
+          </label>
         </div>
       </details>
       <button class="sec" id="chat-cancel" onclick="chatCancel()" style="display:none;padding:6px 10px" aria-label="停止执行" title="停止当前任务">■</button>
