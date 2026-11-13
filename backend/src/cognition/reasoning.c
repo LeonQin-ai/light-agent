@@ -2057,6 +2057,11 @@ static char *build_context(reasoning *r, const char *prompt) {
     size_t hot_eff  = r->budget_hot  > 0 ? (size_t)r->budget_hot  : input_budget / 8;
     size_t warm_eff = r->budget_warm > 0 ? (size_t)r->budget_warm : input_budget / 24;
     size_t cold_eff = r->budget_cold > 0 ? (size_t)r->budget_cold : input_budget / 12;
+    /* Large model windows leave room for new evidence without resending an
+     * entire previous report or an oversized memory selection every round. */
+    if (!r->budget_hot && hot_eff > 32768) hot_eff = 32768;
+    if (!r->budget_warm && warm_eff > 8192) warm_eff = 8192;
+    if (!r->budget_cold && cold_eff > 16384) cold_eff = 16384;
     if (hot_eff  < 1024) hot_eff  = 1024;
     if (warm_eff < 512)  warm_eff = 512;
     if (cold_eff < 512)  cold_eff = 512;
@@ -2264,7 +2269,10 @@ static char *build_context(reasoning *r, const char *prompt) {
      * recent observation window. Scope is the active session only. */
     size_t recent_start = r->round_log_len > input_budget / 2 ? r->round_log_len - input_budget / 2 : 0;
     const char *recent = r->round_log ? r->round_log + recent_start : "";
-    char *cached_pages = tool_file_cache_context_excluding(r->cur->id, prompt, input_budget / 3, recent);
+    size_t cache_budget = input_budget / 6;
+    if (cache_budget > r->observation_budget_bytes / 2)
+        cache_budget = r->observation_budget_bytes / 2;
+    char *cached_pages = tool_file_cache_context_excluding(r->cur->id, prompt, cache_budget, recent);
     if (cached_pages) {
         strbuf_append(&b, "## Cached file excerpts (session/version validated)\n");
         strbuf_append(&b, cached_pages);
