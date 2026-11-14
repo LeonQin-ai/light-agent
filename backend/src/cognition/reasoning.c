@@ -375,16 +375,21 @@ static char *render_mmu_context(cJSON *arr, size_t cap) {
         /* #268: carry the MMU derivation (L0/L1/L2), residency (HOT/WARM)
          * and §7.7 score into the final prompt — the planner can then weigh
          * a hot full-fidelity page differently from a warm summary. */
-        strbuf_appendf(&sb,"[memory status=%s scope=%s level=%s residency=%s score=%.3f]\n",
+        strbuf header;
+        strbuf_init(&header);
+        strbuf_appendf(&header,"[memory status=%s scope=%s level=%s residency=%s score=%.3f]\n",
             cJSON_GetStringValue(status)?cJSON_GetStringValue(status):"unknown",
             cJSON_GetStringValue(scope)?cJSON_GetStringValue(scope):"unknown",
             cJSON_GetStringValue(level)?cJSON_GetStringValue(level):"unknown",
             cJSON_GetStringValue(residency)?cJSON_GetStringValue(residency):"unknown",
             cJSON_IsNumber(score)?score->valuedouble:0.0);
-        size_t left=cap>sb.len?cap-sb.len:0,n=strlen(t); if(n>left)n=left;
-        while(n>0 && ((unsigned char)t[n]&0xc0)==0x80)n--;
-        strbuf_append_n(&sb,t,n);strbuf_append(&sb,"\n");
-        if(n<strlen(t)){strbuf_append(&sb,"…[memory item truncated]\n");break;}
+        size_t remaining = cap - sb.len;
+        if (header.len < remaining && strlen(t) < remaining - header.len) {
+            strbuf_append(&sb, header.buf);
+            strbuf_append(&sb, t);
+            strbuf_append(&sb, "\n");
+        }
+        strbuf_free(&header);
     }
     return strbuf_detach(&sb);
 }
@@ -2168,6 +2173,7 @@ static char *build_context(reasoning *r, const char *prompt) {
 
     mutex_unlock(&r->cur->mtx);
 
+    const size_t recall_start = b.len;
     /* COLD tier: retrieved long-term knowledge + code index, under budget.
      * Degradation: fewer attention-selected items, then hard char cut.
      * HyDE (optional): one LLM call rewrites the request as a hypothetical
@@ -2250,6 +2256,7 @@ static char *build_context(reasoning *r, const char *prompt) {
         }
     }
 
+    const size_t recall_end = b.len;
     /* code index: where the request's terms live in workspace files */
     if (r->index) {
         char *hits = index_search(r->index, prompt, 5);
@@ -2411,6 +2418,7 @@ static char *build_context(reasoning *r, const char *prompt) {
         size_t keep = background_budget > strlen(omitted) ? background_budget - strlen(omitted) : 0;
         size_t start = protected_start - instruction_bytes > keep ?
             protected_start - keep : instruction_bytes;
+        if (start > recall_start && start < recall_end) start = recall_end;
         if (start > instruction_bytes && start < observations_start &&
             protected_start - observations_start <= keep)
             start = observations_start;
