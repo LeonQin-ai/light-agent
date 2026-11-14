@@ -11,9 +11,12 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
    if(u.pathname==='/')return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(__dirname,'../apps/web/index.html'),'utf8')});
    if(u.pathname==='/v1/workspaces'){
     if(r.method()==='POST'){const b=r.postDataJSON();if(b.path==='missing'){status=400;obj={error:'directory unavailable'};}else workspaces.push({path:b.path,name:b.name,created_ms:300});}
+    if(r.method()==='DELETE'){const b=r.postDataJSON();
+     if(b.path==='D:/default'){status=400;obj={error:'the default workspace cannot be removed'};}
+     else{const i=workspaces.findIndex(w=>w.path===b.path);if(i<0){status=404;obj={error:'workspace is not registered'};}else workspaces.splice(i,1);}}
     if(status===200)obj={default_workspace:'D:/default',workspaces};
    }else if(u.pathname==='/v1/chat/sessions'){
-    if(r.method()==='POST'){const b=r.postDataJSON();obj={id:'session-'+(sessions.length+1),workspace:b.workspace||'D:/default',turns:0};sessions.push(obj);created.push(b);}else obj=sessions;
+    if(r.method()==='POST'){const b=r.postDataJSON();obj={id:'session-'+(sessions.length+1),workspace:b.workspace||'D:/default',turns:0,created_ms:Date.now(),last_active_ms:Date.now()};sessions.push(obj);created.push(b);}else obj=sessions;
    }else if(u.pathname.endsWith('/title')){const b=r.postDataJSON();sessions.find(s=>s.id===u.pathname.split('/')[4]).title=b.title;obj={ok:true};
    }else if(u.pathname.endsWith('/workspace')){
     const b=r.postDataJSON();sessions.find(s=>s.id===u.pathname.split('/')[4]).workspace=b.workspace;obj={ok:true};
@@ -58,7 +61,27 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('#chat-cancel').isVisible(),true);assert.equal(await page.locator('#chat-send').isVisible(),false);
   await page.evaluate(()=>{CHAT_TASK_ID=null;chatBusyUI(false);});
   assert.equal(await page.locator('#chat-send').isVisible(),true);
+  /* Delete button: present on registered workspaces, absent on the default. */
+  assert.equal(await page.locator('.workspace-group[data-path="D:/default"] .workspace-delete').count(),0,'default workspace is protected');
+  assert.equal(await page.locator('.workspace-group[data-path="D:/project B"] .workspace-delete').count(),1);
+  page.on('dialog',d=>d.accept());
+  const beforeDelete=created.length;
+  await page.locator('.workspace-group[data-path="D:/project B"] .workspace-delete').click();
+  await page.waitForFunction(()=>!WORKSPACES.some(w=>w.path==='D:/project B'));
+  assert.equal(await page.locator('.workspace-group[data-path="D:/project B"]').count(),0,'deleted workspace leaves the sidebar');
+  assert.equal(created.length,beforeDelete,'deleting a workspace must not create a chat');
+  /* Clicking the workspace name opens it: reuse its newest conversation. */
+  await page.locator('.workspace-group[data-path="D:/项目 A"] .workspace-group-label').click();
+  await page.waitForFunction(()=>CHAT_WORKSPACE==='D:/项目 A'&&CHAT_SESSION==='session-2');
+  assert.equal(created.length,beforeDelete,'opening a workspace with history reuses its newest chat');
+  assert.equal(await page.locator('#chat-workspace').inputValue(),'D:/项目 A');
+  /* A workspace without conversations opens a fresh chat there. */
+  await page.evaluate(async()=>{const r=await call('POST','/v1/workspaces',{path:'D:/empty',name:'empty'});WORKSPACES=r.obj.workspaces;sideRecent(CHAT_TABS_CACHE);});
+  await page.locator('.workspace-group[data-path="D:/empty"] .workspace-group-label').click();
+  await page.waitForFunction(()=>CHAT_WORKSPACE==='D:/empty'&&CHAT_NEW_SESSION_REQUEST===null);
+  assert.equal(created.length,beforeDelete+1,'empty workspace opens exactly one new chat');
+  assert.equal(created.at(-1).workspace,'D:/empty');
   assert.deepEqual(errors,[]);
-  console.log('PASS: workspace selection, New Chat inheritance, grouped sidebar, invalid directory, registration, escaped labels and stop/send controls');
+  console.log('PASS: workspace selection, New Chat inheritance, grouped sidebar, invalid directory, registration, escaped labels, stop/send controls, delete with default protection and click-to-open');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

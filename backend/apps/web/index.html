@@ -657,7 +657,7 @@
 </style>
 <style>
 /* Quiet, spacious conversation surfaces, shared with the native macOS shell. */
-.chat-wrap{max-width:1200px;box-sizing:border-box;padding:30px 28px 22px;min-height:0}
+.chat-wrap{max-width:1200px;box-sizing:border-box;padding:30px 28px 6px;min-height:0}
 #chat-hero{flex:0 0 auto;gap:18px;min-height:176px!important;padding:28px 0 22px}
 #chat-hero .hero-title{font-size:clamp(26px,3vw,36px);font-weight:550;letter-spacing:-1px;line-height:1.35}
 #chat-hero::before{content:'LIGHT-AGENT';font-size:11px;letter-spacing:3px;color:var(--muted)}
@@ -687,6 +687,8 @@
 .run-plan>summary::before{content:'▸ ';color:var(--muted)}
 .run-plan[open]>summary::before{content:'▾ '}
 .run-plan>summary:hover{color:var(--fg)}
+.run-thought-meta{position:sticky;top:0;z-index:1;background:var(--card);color:var(--muted);font-size:12px;padding:6px 10px;border:1px solid var(--border);border-radius:8px 8px 0 0;font-variant-numeric:tabular-nums}
+.run-thought-body{max-height:280px;overflow-y:auto;border:1px solid var(--border);border-top:0;border-radius:0 0 8px 8px;padding:10px 12px;scroll-behavior:smooth}
 .run-outline{list-style:none;padding:0;margin:0;display:grid;gap:0}
 .run-outline>li{position:relative;padding:0 0 15px 23px;min-width:0}
 .run-outline>li:last-child{padding-bottom:0}
@@ -748,6 +750,8 @@
 .workspace-group{margin:8px 0}.workspace-group>summary{display:flex;align-items:center;gap:7px;cursor:pointer;padding:8px;color:var(--muted);font-size:13px;list-style:none}
 .workspace-group>summary span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}#side-recent .workspace-group>summary button{flex:0 0 auto;width:auto;margin:0;background:none;border:0;color:inherit;padding:2px 5px}
 .workspace-group .side-recent-row{margin-left:12px}.workspace-group[open]>summary{color:var(--fg)}
+.workspace-group-label{cursor:pointer}.workspace-group-label:hover{color:var(--fg);text-decoration:underline}
+.workspace-group>summary button.workspace-delete:hover{color:var(--danger)}
 #workspace-dialog{max-width:min(540px,92vw);width:100%;padding:24px;border:1px solid var(--border);border-radius:18px;background:var(--card);color:var(--fg)}
 #workspace-dialog input{width:100%;margin:7px 0 15px}#workspace-dialog::backdrop{background:#0006}
 @media(max-width:640px){.pillbar{grid-template-columns:auto minmax(0,1fr) auto auto!important;gap:4px;padding:12px!important}.composer-policy{display:block;grid-column:1/-1;grid-row:3;max-width:100%;justify-self:start}.pillbar #chat-model{grid-column:2}.composer-effort{grid-column:3}.composer-effort-panel{width:210px}
@@ -772,6 +776,7 @@
 #chat-composer-toggle{position:absolute;right:12px;top:0;padding:0 6px;font-size:11px;line-height:18px;z-index:3}
 .run-card.run-collapsed>:not(.run-header){display:none}
 .chat-execution-layout{display:flex;flex:1;min-height:0;gap:14px}
+.chat-wrap:has(#chat-history-loading) #chat-hero{display:none!important}
 .chat-execution-layout>#chat-box{min-width:0}
 .chat-execution-sidebar{flex:0 0 min(340px,35%);min-width:0;display:flex;flex-direction:column;overflow:hidden}
 .chat-execution-sidebar[hidden]{display:none}
@@ -797,7 +802,7 @@
 @media(prefers-reduced-motion:reduce){.flow-spinner{animation:none}}
 @keyframes run-breathe{50%{opacity:.35;box-shadow:0 0 0 4px var(--accent-soft)}}
 @media(prefers-reduced-motion:reduce){.run-dot.active,.run-outline>li[data-state=running]::before,.run-steps li[data-state=running]::before{animation:none}*{scroll-behavior:auto!important}}
-  @media(max-width:640px){.chat-wrap{padding:16px 12px}#chat-hero{min-height:140px!important;padding:18px 0}.run-card>summary{padding:9px 0}.run-steps li{flex-wrap:wrap;gap:3px}.chat-message.user{max-width:92%}}
+  @media(max-width:640px){.chat-wrap{padding:16px 12px 6px}#chat-hero{min-height:140px!important;padding:18px 0}.run-card>summary{padding:9px 0}.run-steps li{flex-wrap:wrap;gap:3px}.chat-message.user{max-width:92%}}
   @media(max-width:640px){.chat-toolbar{align-items:flex-start;flex-direction:column;gap:9px}.chat-toolbar-actions{width:100%}.chat-toolbar #chat-model{flex:1;width:auto}.chat-toolbar .sec{flex-shrink:0}}
 
 /* Appearance dialog is available in the browser and desktop shell. */
@@ -1463,7 +1468,7 @@ panels.chat = `
       <div id="chat-composer-resize" class="chat-resize" role="separator" aria-label="调整输入框高度" aria-orientation="horizontal" aria-controls="chat-input" tabindex="0"></div>
       <button id="chat-composer-toggle" type="button" aria-controls="chat-input" aria-expanded="true">收起输入框</button>
       <button class="pill-ic" onclick="$('chat-file').click()" title="上传文件（RAG）">＋</button>
-      <textarea id="chat-input" placeholder="和 light-agent 一起工作" aria-label="消息" rows="1"></textarea>
+      <textarea id="chat-input" disabled placeholder="和 light-agent 一起工作" aria-label="消息" rows="1"></textarea>
       <select class="composer-policy" id="chat-permission" aria-label="执行权限" title="本轮任务权限；现有全局策略仍然生效" onchange="chatPermissionChange(this.value)"><option value="ask">逐次批准</option><option value="auto" selected>自动批准低风险</option><option value="full">完全访问</option></select>
       <select id="chat-model" onchange="chatModelSwitch()" title="对话模型（点击切换）" aria-label="对话模型"></select>
       <details class="composer-effort" id="chat-effort-menu">
@@ -3889,7 +3894,37 @@ let CHAT_MSGS = [];             // 当前会话气泡的本地镜像 [{role,text
 // CHAT_MSGS 恢复，进行中的回复以 pending 标记，切回面板后继续显示。
 // CHAT_CACHE: 每会话消息缓存（sessionId → msgs），切会话/切页时先回放缓存
 // 再等服务端历史，避免闪烁与清空。
-const CHAT_CACHE = {};
+const CHAT_CACHE = Object.create(null);
+const CHAT_HISTORY_READY = new Set();
+const CHAT_HISTORY_REQUESTS = new Map();
+function chatFetchHistory(session){
+  if(CHAT_HISTORY_REQUESTS.has(session))return CHAT_HISTORY_REQUESTS.get(session);
+  const request=call('GET','/v1/chat/history?session='+encodeURIComponent(session))
+    .catch(()=>({status:0})).finally(()=>CHAT_HISTORY_REQUESTS.delete(session));
+  CHAT_HISTORY_REQUESTS.set(session,request);
+  return request;
+}
+async function chatPreloadHistory(firstPage){
+  /* Warm only the newest page, two sessions at a time, yielding between
+   * batches. Chasing every cursor page with 4-way concurrency flooded the
+   * server and starved panel switches (agents) and the active chat's own
+   * history request; older sessions load lazily when opened. */
+  const sessions=chatSessionList(firstPage).slice(0,12);
+  for(let i=0;i<sessions.length;i+=2){
+    await Promise.all(sessions.slice(i,i+2).map(async ({id})=>{
+      if(!id || id===CHAT_SESSION || CHAT_HISTORY_READY.has(id) || chatIsBusy(id))return;
+      const previous=CHAT_CACHE[id];
+      const response=await chatFetchHistory(id);
+      if(response.status!==200 || !Array.isArray(response.obj?.turns) ||
+         id===CHAT_SESSION || chatIsBusy(id) || CHAT_CACHE[id]!==previous)return;
+      CHAT_CACHE[id]=chatMergeHistory(response.obj,previous || []);
+      CHAT_HISTORY_READY.add(id);
+    }));
+    sideRecent(CHAT_TABS_CACHE);
+    await new Promise(resolve=>setTimeout(resolve,50));
+  }
+}
+let chatHistoryPreloaded=false;
 const CHAT_RECENT_RECONCILED = new Set();
 function chatCacheStore(){ CHAT_CACHE[CHAT_SESSION] = CHAT_MSGS; }
 
@@ -3958,6 +3993,29 @@ async function workspaceAdd(){
   const added=WORKSPACES.find(w=>w.path.replaceAll('\\','/').toLowerCase()===path.replaceAll('\\','/').toLowerCase());
   $('workspace-dialog').close();const previous=CHAT_WORKSPACE;CHAT_WORKSPACE=added?.path || path;sideRecent(CHAT_TABS_CACHE);if(await chatNewSession()===false)CHAT_WORKSPACE=previous;
 }
+/* Clicking a workspace name opens it: reuse its most recent conversation,
+   or start a fresh chat there when it has none. */
+async function workspaceOpen(path){
+  CHAT_WORKSPACE=path;localStorage.setItem('coa.workspace',path);
+  const activity=s=>Number(s.last_active_ms)||Number(s.created_ms)||0;
+  const existing=CHAT_TABS_CACHE.filter(s=>(s.workspace||WORKSPACE_DEFAULT)===path).sort((a,b)=>activity(b)-activity(a))[0];
+  if(existing)await chatSwitchSession(existing.id);
+  else await chatNewSession();
+  if(current!=='chat')switchPanel('chat');
+}
+async function workspaceDelete(path){
+  if(path===WORKSPACE_DEFAULT){toast('默认工作区不能删除');return;}
+  const label=workspaceLabel(path);
+  if(!confirm('删除工作区「'+label+'」？\n只移除列表登记，不会删除磁盘文件；绑定到它的会话将回到默认工作区。'))return;
+  const r=await call('DELETE','/v1/workspaces',{path});
+  if(r.status!==200){toast('删除工作区失败：'+(r.obj?.error||r.status));return;}
+  WORKSPACES=r.obj.workspaces;WORKSPACE_DEFAULT=r.obj.default_workspace||WORKSPACE_DEFAULT;
+  if(CHAT_WORKSPACE===path){CHAT_WORKSPACE=WORKSPACE_DEFAULT;localStorage.setItem('coa.workspace',CHAT_WORKSPACE);}
+  CHAT_TABS_CACHE.forEach(s=>{if(s.workspace===path)s.workspace=WORKSPACE_DEFAULT;});
+  if(CHAT_SELECTED_INFO?.workspace===path)CHAT_SELECTED_INFO.workspace=WORKSPACE_DEFAULT;
+  flowWorkspaceRender();workspaceRender(CHAT_TABS_CACHE);sideRecent(CHAT_TABS_CACHE);
+  toast('已删除工作区「'+label+'」');
+}
 async function workspaceBrowse(){const b=$('workspace-browse');if(b)b.disabled=true;try{const r=await call('POST','/v1/workspaces/browse',{},125000);if(r.obj?.path)$('workspace-path').value=r.obj.path;else if(r.obj?.cancelled)return;else await workspaceBrowseServer($('workspace-path').value.trim());}finally{if(b)b.disabled=false;}}
 async function workspaceBrowseServer(path=''){
   const picker=$('workspace-directory-picker');if(!picker)return;
@@ -4006,12 +4064,27 @@ async function loadChat(){
   initTaskPet();
   syncChatPermission();
   const box = $('chat-box'); if(!box) return;
-  if(CHAT_SESSION === 'default' && !CHAT_NEW_SESSION) await chatNewSession({ensure:true});
+  if(CHAT_SESSION === 'default' && !CHAT_NEW_SESSION){
+    /* Startup must continue the newest conversation instead of registering a
+       fresh empty session on every launch — those shells flooded Recent and
+       pushed real conversations out of the visible window. */
+    const r0=await call('GET','/v1/chat/sessions?limit=12');
+    const list0=chatSessionList(r0);
+    const activity=s=>Number(s.last_active_ms)||Number(s.created_ms)||0;
+    const usable=list0.filter(s=>Number(s.turns)>0||s.title?.trim()||s.last_run);
+    const byActivity=(a,b)=>activity(b)-activity(a);
+    const pick=(CHAT_WORKSPACE?usable.filter(s=>(s.workspace||'')===CHAT_WORKSPACE).sort(byActivity)[0]:null)
+      || usable.sort(byActivity)[0];
+    if(pick){
+      CHAT_TABS_CACHE=list0;CHAT_SESSION=pick.id;CHAT_SELECTED_INFO=pick;
+      if(pick.workspace){CHAT_WORKSPACE=pick.workspace;localStorage.setItem('coa.workspace',pick.workspace);}
+    } else await chatNewSession({ensure:true});
+  }
   renderChatTabs(CHAT_TABS_CACHE);
   if(CHAT_CACHE[CHAT_SESSION]?.length){ CHAT_MSGS = CHAT_CACHE[CHAT_SESSION]; chatRedraw(true); }
   void workspaceLoad();
-  void loadChatSessions();
-  void chatLoadHistory();
+  const history=chatLoadHistory(false,true);
+  void history.finally(()=>loadChatSessions());
   loadUploads();
   fillChatModelSelect();
   chatInitDrop(); /* 粘贴图片 / 拖拽文件支持 */
@@ -4080,6 +4153,7 @@ async function loadChatSessions(cursor=''){
   CHAT_TABS_CACHE=list;
   renderChatTabs(list);
   void chatReconcileRecentFailures(list);
+  if(!cursor && !chatHistoryPreloaded){chatHistoryPreloaded=true;void chatPreloadHistory(r);}
 }
 
 /* sessionStorage can outlive an app update. If an older UI cached a false
@@ -4137,6 +4211,7 @@ function renderChatTabs(list){
   if(bar) bar.innerHTML = '';
   if(list.length) CHAT_TABS_CACHE = list;
   else if(CHAT_TABS_CACHE.length) list = CHAT_TABS_CACHE;
+  list = list.filter(s => !chatIsEmptyShell(s));
   /* Hidden legacy tabs must not allocate a DOM node per stored session. */
   const byId = new Map(list.map(s => [s.id || 'default',s]));
   const ids = [...byId.keys()].slice(-12);
@@ -4150,7 +4225,7 @@ function renderChatTabs(list){
     tab.className = 'chat-tab' + (id === CHAT_SESSION ? ' on' : '');
     const name = document.createElement('span');
     name.className = 'name';
-    const label = (info && info.title) ? info.title : (id === 'default' ? '默认会话' : id);
+    const label = chatSessionTitle(info,id);
     name.textContent = label.length > 18 ? label.slice(0, 18) + '…' : label;
     name.title = chatSessionTip(info, id);
     tab.appendChild(name);
@@ -4173,7 +4248,7 @@ function renderChatTabs(list){
     rm.onclick = async (e) => { e.stopPropagation(); await chatDeleteSession(id); };
     tab.appendChild(rm);
     tab.onclick = () => chatSwitchSession(id);
-    b.oncontextmenu=e=>{e.preventDefault();chatSessionMenu(e,id,label);};
+    tab.oncontextmenu=e=>{e.preventDefault();chatSessionMenu(e,id,label);};
     bar.appendChild(tab);
   });
   if(bar){
@@ -4191,7 +4266,7 @@ function renderChatTabs(list){
 function chatSessionTip(info, id){
   if(!info) return id;
   const bits = [];
-  bits.push((info.title || id) + '（' + (info.turns || 0) + ' 轮）');
+  bits.push(chatSessionTitle(info,id) + '（' + (info.turns || 0) + ' 轮）');
   if(info.created_ms) bits.push('创建 ' + new Date(info.created_ms).toLocaleString());
   if(info.total_ms) bits.push('累计执行 ' + fmtDur(info.total_ms));
   bits.push(info.shared_memory === true ? '记忆：共享' : '记忆：私有');
@@ -4199,8 +4274,24 @@ function chatSessionTip(info, id){
 }
 
 /* 侧边栏「最近」会话列表（ChatGPT 风格）：新建的会话自动归档到这里 */
+function chatSessionTitle(info,id){
+  const title=info?.title?.trim();
+  if(title && title!==id)return title;
+  const first=CHAT_CACHE[id]?.find(message=>message.role==='user' && message.text?.trim());
+  return first ? first.text.trim().split(/\r?\n/,1)[0].slice(0,80) : id==='default'?'默认会话':'新会话';
+}
+
+/* Abandoned empty shells (registered but never used) must not crowd real
+   conversations out of the Recent window. The active/busy session and any
+   session with turns, a title or a durable run stay visible. */
+function chatIsEmptyShell(s){
+  const id=s?.id||'default';
+  return id!==CHAT_SESSION && !chatIsBusy(id) && !(Number(s?.turns)>0) && !s?.title?.trim() && !s?.last_run;
+}
+
 function sideRecent(list){
   const box = $('side-recent'); if(!box) return;
+  list = list.filter(s => !chatIsEmptyShell(s));
   const nav = $('nav'), scrollTop = nav?.scrollTop || 0;
   box.querySelectorAll('.workspace-group').forEach(d=>WORKSPACE_FOLDS.set(d.dataset.path,d.open));
   box.innerHTML = '';
@@ -4212,10 +4303,18 @@ function sideRecent(list){
     const details=document.createElement('details');details.className='workspace-group';details.dataset.path=path;
     details.open=WORKSPACE_FOLDS.has(path)?WORKSPACE_FOLDS.get(path):true;
     const summary=document.createElement('summary');summary.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v2M3 8h18l-3 12H2z"/></svg>';
-    const label=document.createElement('span');label.textContent=workspaceLabel(path);summary.title=path;summary.append(label);
+    const label=document.createElement('span');label.className='workspace-group-label';label.textContent=workspaceLabel(path);summary.title=path;summary.append(label);
+    label.title='打开工作区：'+path;
+    label.onclick=e=>{e.preventDefault();e.stopPropagation();workspaceOpen(path);};
     const create=document.createElement('button');create.textContent='＋';create.title='在此工作区新建聊天';create.setAttribute('aria-label','在 '+label.textContent+' 新建聊天');
     create.onclick=async e=>{e.preventDefault();e.stopPropagation();CHAT_WORKSPACE=path;await chatNewSession();if(current!=='chat')switchPanel('chat');};
-    summary.append(create);details.append(summary);box.append(details);groups.set(path,details);return details;
+    summary.append(create);
+    if(path && path!==WORKSPACE_DEFAULT){
+      const del=document.createElement('button');del.className='workspace-delete';del.textContent='🗑';del.title='删除该工作区（仅移除登记，不删除磁盘文件）';del.setAttribute('aria-label',del.title);
+      del.onclick=e=>{e.preventDefault();e.stopPropagation();workspaceDelete(path);};
+      summary.append(del);
+    }
+    details.append(summary);box.append(details);groups.set(path,details);return details;
   }
   orderedWorkspaces().forEach(w=>group(w.path));
   /* The API list preserves session creation order. Recent must reflect
@@ -4241,7 +4340,7 @@ function sideRecent(list){
     row.className = 'side-recent-row';
     const b = document.createElement('button');
     b.className = id === CHAT_SESSION ? 'on' : '';
-    const label = (info && info.title) ? info.title : (id === 'default' ? '默认会话' : id);
+    const label = chatSessionTitle(info,id);
     const title = document.createElement('span'); title.className = 'recent-session-title';
     title.textContent = label;
     const messages = CHAT_CACHE[id] || [];
@@ -4431,8 +4530,15 @@ async function chatSharedToggle(shared){
 
 /* ===== 模型配置门禁：未配置模型不能使用新聊天 ===== */
 
+let chatModelReady=false;
+function chatSyncInputAccess(){
+  const ready=chatModelReady && CHAT_HISTORY_READY.has(CHAT_SESSION);
+  const input=$('chat-input'), send=$('chat-send');
+  if(input)input.disabled=!ready;
+  if(send)send.disabled=!ready || CHAT_SUBMITTING.has(CHAT_SESSION);
+}
 async function chatGateCheck(){
-  const gate = $('chat-gate'), send = $('chat-send'), input = $('chat-input');
+  const gate = $('chat-gate');
   let ok = false, prov = '', keySet = false;
   try {
     const r = await call('GET', '/v1/config/llm');
@@ -4442,13 +4548,29 @@ async function chatGateCheck(){
     ok = !!(prov && prov !== 'mock' && keySet);
   } catch(e) {}
   if(gate) gate.style.display = ok ? 'none' : '';
-  if(send) send.disabled = !ok;
-  if(input) input.disabled = !ok;
+  chatModelReady=ok;
+  chatSyncInputAccess();
   return ok;
 }
 
-async function chatLoadHistory(){
+function chatMergeHistory(history,old){
+  const messages = chatHistoryEntries(history.turns, history.runs);
+  const cachedPreviews=new Map(old.filter(m=>m.role==='bot' && m.taskId!=null && m.images?.length).map(m=>[m.taskId,m.images]));
+  // Preserve attachment identities for repeated questions in their original order.
+  const imageMessages = old.filter(m=>m.role==='user' && m.images?.length);
+  for(const m of messages){
+    if(m.role==='bot' && cachedPreviews.has(m.taskId))m.images=cachedPreviews.get(m.taskId);
+    if(m.role !== 'user') continue;
+    const i=imageMessages.findIndex(x=>x.text===m.text);
+    if(i>=0) m.images=imageMessages.splice(i,1)[0].images;
+  }
+  return messages;
+}
+
+async function chatLoadHistory(force=false,allowCache=false){
   const box = $('chat-box'); if(!box) return;
+  if(force)CHAT_HISTORY_READY.delete(CHAT_SESSION);
+  chatSyncInputAccess();
   if(!chatLoadHistory._seq) chatLoadHistory._seq = 0;
   const seq = ++chatLoadHistory._seq;
   // 先回放本地缓存（切页/切会话不闪空），再让服务端历史兜底刷新
@@ -4457,9 +4579,18 @@ async function chatLoadHistory(){
   // 有进行中的回复时不要用服务端历史覆盖本地视图（本轮 q/a 还没入库）
   if(CHAT_MSGS.some(m => m.pending)){ return; }
   const session = CHAT_SESSION;
+  /* Panel re-entry (allowCache) may reuse the loaded view, but an explicit
+     chatLoadHistory() must refresh from the journal: an INTERRUPTED/FAILED run
+     appended after the last load has to restore the Resume button. */
+  if(!force && allowCache && CHAT_HISTORY_READY.has(session)){
+    const last=CHAT_MSGS.findLast(message=>message.role==='bot');
+    CHAT_RESUME_OK=['interrupted','failed','cancelled','timed_out'].includes(last?.progress?.stage);
+    chatBusyUI(chatIsBusy(session));
+    return;
+  }
   $('chat-history-loading')?.remove();
   const loading=document.createElement('div');loading.id='chat-history-loading';loading.className='hint';loading.setAttribute('role','status');loading.textContent='正在完整加载会话记录…';box.before(loading);
-  const r = await call('GET', '/v1/chat/history?session=' + encodeURIComponent(session)).catch(()=>({status:0}));
+  const r = await chatFetchHistory(session);
   if(session !== CHAT_SESSION || chatIsBusy(session) || seq !== chatLoadHistory._seq){loading.remove();return;}
   if(r.status !== 200 || !r.obj || !Array.isArray(r.obj.turns)){
     loading.textContent='历史记录加载失败，已有内容已保留。';
@@ -4469,17 +4600,11 @@ async function chatLoadHistory(){
      Keep a monotonically increasing per-load token so only the newest fetch
      * for this session can replace its local view. */
   if(session !== CHAT_SESSION || seq !== chatLoadHistory._seq) return;
-  const old = CHAT_MSGS;
-  CHAT_MSGS = chatHistoryEntries(r.obj.turns, r.obj.runs);
-  const cachedPreviews=new Map(old.filter(m=>m.role==='bot' && m.taskId!=null && m.images?.length).map(m=>[m.taskId,m.images]));
-  // Preserve attachment identities for repeated questions in their original order.
-  const imageMessages = old.filter(m=>m.role==='user' && m.images?.length);
-  for(const m of CHAT_MSGS){
-    if(m.role==='bot' && cachedPreviews.has(m.taskId))m.images=cachedPreviews.get(m.taskId);
-    if(m.role !== 'user') continue;
-    const i=imageMessages.findIndex(x=>x.text===m.text);
-    if(i>=0) m.images=imageMessages.splice(i,1)[0].images;
-  }
+  CHAT_MSGS=chatMergeHistory(r.obj,CHAT_MSGS);
+  CHAT_CACHE[session]=CHAT_MSGS;
+  CHAT_HISTORY_READY.add(session);
+  sideRecent(CHAT_TABS_CACHE);
+  chatSyncInputAccess();
   chatRedraw();
   const lastReply = CHAT_MSGS.findLast(message => message.role === 'bot');
   CHAT_RESUME_OK = ['interrupted','failed','cancelled','timed_out'].includes(lastReply?.progress?.stage);
@@ -4556,6 +4681,7 @@ async function chatSwitchSession(id){
   chatAttachActivate(id);
   if($('ssh-session-details')?.open) void sshSessionLoad();
   CHAT_NEW_SESSION = false;
+  chatExecutionAuto = true;
   CHAT_MSGS = CHAT_CACHE[id] || [];
   if(current !== 'chat') switchPanel('chat');
   else { renderChatTabs(CHAT_TABS_CACHE); chatRedraw(true); void chatLoadHistory(); }
@@ -4609,8 +4735,16 @@ async function chatNewSession(options={}){
   CHAT_NEW_SESSION = false; /* 后端已注册时无需等首条消息 */
   CHAT_TABS_CACHE = [...CHAT_TABS_CACHE.filter(s => (s.id || 'default') !== id), {id, workspace:r.obj.workspace, turns:0, created_ms:Date.now(), last_active_ms:Date.now()}];
   CHAT_MSGS = [];
+  CHAT_CACHE[id] = CHAT_MSGS;
+  // The creation endpoint has just confirmed this session has no history.
+  CHAT_HISTORY_READY.add(id);
+  chatSyncInputAccess();
   renderChatTabs([]);
   const box = $('chat-box'); if(box) box.innerHTML = '';
+  /* The execution column is global; drop the previous session's run cards. */
+  const rail=$('chat-execution-rail');
+  if(rail){rail.hidden=true;rail.replaceChildren();chatExecutionEntry=null;}
+  $('chat-execution-status')?.replaceChildren();
   updateChatHero();
   const st = $('chat-status');
   if(st) st.textContent = '新会话已创建，正在检查模型配置…';
@@ -4655,6 +4789,7 @@ async function chatDeleteSession(id){
   const r = await call('POST', '/v1/chat/sessions/' + encodeURIComponent(id) + '/delete', {});
   if(r.status >= 300){ toast('删除失败：' + ((r.obj && r.obj.error) || r.status)); return; }
   delete CHAT_CACHE[id];
+  CHAT_HISTORY_READY.delete(id);
   CHAT_ATTACH_DRAFTS.delete(id);
   CHAT_TABS_CACHE = CHAT_TABS_CACHE.filter(s => (s.id || 'default') !== id);
   if(id === CHAT_SESSION){
@@ -5673,10 +5808,26 @@ async function modelPlazaTest(i){
 function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
 async function loadModels(){
-  const r   = await call('GET', '/v1/routes');
-  const cfg = await call('GET', '/v1/config/llm');
-  ROUTES = Array.isArray(r.obj) ? r.obj : [];
-  ACTIVE = (cfg.obj && typeof cfg.obj === 'object') ? cfg.obj : ACTIVE;
+  const r = await call('GET', '/v1/routes');
+  if(r.status!==200 || !Array.isArray(r.obj)){
+    const table=$('routes-body');
+    if(table)table.innerHTML='<tr><td colspan="8">模型路由加载失败。<button type="button" onclick="loadModels()">重试</button></td></tr>';
+    return;
+  }
+  ROUTES = r.obj;
+  void call('GET', '/v1/config/llm').then(cfg=>{
+    if(cfg.status!==200 || !cfg.obj)return;
+    ACTIVE=cfg.obj;
+    for(const [i,row] of Array.from($('routes-body')?.rows || []).entries()){
+      const route=ROUTES[i];
+      if(!route || !row.cells[7])continue;
+      const active=['provider','model','base_url'].every(key=>(route[key]||'')===(ACTIVE[key]||''));
+      row.classList.toggle('active-row',active);
+      row.cells[0].innerHTML=esc(route.name||'')+(active?' <span class="badge badge-ok">active</span>':'');
+      const activate=row.cells[7].querySelector('button[onclick^="setActive("]');
+      if(activate)activate.disabled=active;
+    }
+  });
   loadModelPlaza();
   const rp = $('r-provider');
   if(rp && !rp.dataset.bound){
@@ -6117,6 +6268,22 @@ function durationLabel(ms){
   if(ms > 0 && sec === 0) return '<1 秒';
   return sec >= 60 ? Math.floor(sec / 60) + ' 分 ' + sec % 60 + ' 秒' : sec + ' 秒';
 }
+function fmtTokens(n){
+  n = Number(n) || 0;
+  if(n >= 1000000) return (n/1000000).toFixed(1).replace(/\.0$/,'') + 'M';
+  if(n >= 1000) return (n/1000).toFixed(1).replace(/\.0$/,'') + 'k';
+  return String(n);
+}
+/* 「7m 43s · ↑ 10.9k tokens · thought for 18s」-style thinking meta line. */
+function thoughtMetaText(entry,p){
+  const ms = entry.pending && p.started_ms ? Math.max(0,Date.now()-p.started_ms) : (p.elapsed_ms || 0);
+  const sec = Math.floor(ms/1000);
+  const parts = [sec >= 60 ? Math.floor(sec/60) + 'm ' + (sec%60) + 's' : sec + 's'];
+  if(p.usage_available !== false && (p.tokens_in || p.tokens_out)) parts.push('↑ ' + fmtTokens(p.tokens_in || 0) + ' tokens');
+  const thought = Math.round((p.llm_ms || 0)/1000);
+  if(thought > 0) parts.push('thought for ' + thought + 's');
+  return parts.join(' · ');
+}
 function progressLabel(p){
   if(['completed','failed','cancelled','timed_out','interrupted'].includes(p.stage)) return STAGE_LABELS[p.stage];
   if(p.stage === 'planning') return '正在规划下一步';
@@ -6197,6 +6364,8 @@ function chatProgressClock(entry){
   if(!p || !entry.el?.isConnected) return;
   const elapsed = entry.executionStatus?.querySelector('.run-time');
   if(elapsed) elapsed.textContent = '用时 ' + durationLabel(entry.pending && p.started_ms ? Date.now()-p.started_ms : p.elapsed_ms || 0);
+  const thoughtMeta = chatExecutionEntry===entry ? document.getElementById('chat-execution-rail')?.querySelector('.run-thought-meta') : null;
+  if(thoughtMeta) thoughtMeta.textContent = thoughtMetaText(entry,p);
   const waiting = chatExecutionEntry===entry ? document.getElementById('chat-execution-rail')?.querySelector('.run-stage-time') : null;
   if(waiting && entry.pending && entry.stageSince) waiting.textContent = ' · 已等待 ' + durationLabel(Date.now()-entry.stageSince);
 }
@@ -6239,10 +6408,14 @@ function chatRenderTimestamp(entry){
 function chatToggleExecution(){
   const panel=$('chat-execution-sidebar'), button=$('chat-execution-toggle');
   panel.hidden=!panel.hidden;
+  chatExecutionAuto=false; /* manual control opts out of auto reveal */
   button.setAttribute('aria-expanded',String(!panel.hidden));
   button.textContent=panel.hidden?'执行进度':'收起进度';
 }
 let chatExecutionEntry=null;
+/* Running tasks reveal their live chain automatically; a manual collapse
+   opts out until the next submit or session switch. */
+let chatExecutionAuto=true;
 function renderChatEntry(entry){
   const el = entry.el;
   if(!el?.isConnected)return;
@@ -6313,6 +6486,7 @@ function renderChatEntry(entry){
         chatExecutionEntry=entry;
         showChain();
       }
+      chatExecutionAuto=false; /* manual control opts out of auto reveal */
       updateCollapse();
     });
     updateCollapse();
@@ -6331,9 +6505,15 @@ function renderChatEntry(entry){
       const note = document.createElement('p'); note.className = 'run-outline-note'; note.textContent = row.note;
       item.append(title,note); outline.append(item);
     }
-    const plan = document.createElement('details'); plan.className = 'run-plan'; plan.open = wasOutlineOpen;
-    const planSummary = document.createElement('summary'); planSummary.textContent = '思考与执行脉络';
-    plan.append(planSummary,outline);
+    const plan = document.createElement('details'); plan.className = 'run-plan run-thought'; plan.open = wasOutlineOpen;
+    const planSummary = document.createElement('summary'); planSummary.textContent = '思考过程';
+    /* Meta stays outside the scroll body so elapsed/tokens/thought time remain
+       visible while the thinking outline scrolls. */
+    const thoughtMeta = document.createElement('div'); thoughtMeta.className = 'run-thought-meta';
+    thoughtMeta.textContent = thoughtMetaText(entry,p);
+    const thoughtBody = document.createElement('div'); thoughtBody.className = 'run-thought-body';
+    thoughtBody.append(outline);
+    plan.append(planSummary,thoughtMeta,thoughtBody);
     plan.addEventListener('toggle',() => { if(plan.isConnected){entry.outlineOpen = plan.open; chatPersist();} });
     chain.append(plan);
     const detailBody = document.createElement('details'); detailBody.className = 'run-details'; detailBody.open = wasOpen;
@@ -6447,6 +6627,21 @@ function renderChatEntry(entry){
     if(entry.executionStatus?.isConnected)entry.executionStatus.replaceWith(panel);
     else $('chat-execution-status')?.append(panel);
     entry.executionStatus=panel;
+    if(entry.pending && chatExecutionAuto && rail){
+      const side=$('chat-execution-sidebar'), toggle=$('chat-execution-toggle');
+      if(side?.hidden){
+        side.hidden=false;
+        toggle?.setAttribute('aria-expanded','true');
+        if(toggle)toggle.textContent='收起进度';
+      }
+      if(chatExecutionEntry!==entry){
+        const old=chatExecutionEntry?.executionStatus?.querySelector('.run-collapse');
+        if(old){old.textContent='展开进度';old.setAttribute('aria-expanded','false');}
+        chatExecutionEntry=entry;
+      }
+      showExecutionChain();
+      updateCollapse();
+    }
     chatProgressClock(entry);
   }
   // A reply may reference previews from earlier snapshots, including restored history.
@@ -6599,7 +6794,8 @@ async function chatPollTask(session,id,entry){
             ? '任务已离开当前执行器，运行状态无法确认。会话记录已保留，可点击“恢复”继续。'
             : STAGE_LABELS[stage]);
           chatFinish(session,id,entry,output,stage);
-          if(CHAT_SESSION === session) void chatLoadHistory();
+          CHAT_HISTORY_READY.delete(session);
+          if(CHAT_SESSION === session) void chatLoadHistory(true);
         } else if(last?.a && question && last.q === question)
           chatFinish(session,id,entry,last.a,'completed');
         else
@@ -6630,6 +6826,7 @@ async function chatPollTask(session,id,entry){
   } finally { CHAT_POLLERS.delete(id); }
 }
 async function chatSubmit(resume = false){
+  if(!CHAT_HISTORY_READY.has(CHAT_SESSION)){toast('请先加载当前会话记录');return;}
   const executionWorkspace=CHAT_WORKSPACE;
   if(chatIsBusy()){
     if(!resume && !CHAT_SUBMITTING.has(CHAT_SESSION)) return chatSteer();
@@ -6682,12 +6879,14 @@ async function chatSubmit(resume = false){
   sideRecent(CHAT_TABS_CACHE);
   if(CHAT_SESSION === session){
     CHAT_TASK_ID = id; CHAT_NEW_SESSION = false; CHAT_RESUME_OK = false;
+    chatExecutionAuto = true; /* a fresh run reveals its live progress again */
     CHAT_ATTACH = CHAT_ATTACH_DRAFTS.get(session) || []; chatAttachRender(); chatBusyUI(true);
   }
   renderChatEntry(entry); chatPersist(); void loadChatSessions();
   await chatPollTask(session,id,entry);
 }
 async function chatSteer(){
+  if(!CHAT_HISTORY_READY.has(CHAT_SESSION))return;
   const session = CHAT_SESSION, id = chatTaskOf(session), input = $('chat-input');
   const message = input?.value.trim();
   if(!message || id === null) return;

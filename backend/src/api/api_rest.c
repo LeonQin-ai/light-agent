@@ -271,10 +271,34 @@ static int h_workspaces(const http_request *req,http_response *resp,void *ud) {
     char *text=body_str(req);cJSON *body=text?cJSON_Parse(text):NULL;free(text);
     const char *requested=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(body,"path"));
     char *path=requested && *requested?fs_absolute_path(requested):NULL;
-    if(strcmp(req->method,"GET") && (!path || !fs_is_dir(path))){resp->status=400;http_resp_json(resp,"{\"error\":\"choose an existing workspace directory\"}");free(path);cJSON_Delete(body);return 0;}
+    int is_get=!strcmp(req->method,"GET"),is_del=!strcmp(req->method,"DELETE");
+    /* DELETE may target a registry entry whose directory no longer exists. */
+    if(!is_get && (!path || (!is_del && !fs_is_dir(path)))){resp->status=400;http_resp_json(resp,"{\"error\":\"choose an existing workspace directory\"}");free(path);cJSON_Delete(body);return 0;}
     mutex_lock(&ctx->workspace_lock);cJSON *o=workspace_load(ctx);
     if(!o){resp->status=500;http_resp_json(resp,"{\"error\":\"workspace registry is unreadable\"}");goto done;}
     cJSON *items=cJSON_GetObjectItemCaseSensitive(o,"workspaces");
+    if(is_del){
+        char *base=fs_absolute_path(ctx->workspace?ctx->workspace:".");
+        int is_default=base && !strcmp(base,path);free(base);
+        if(is_default){resp->status=400;http_resp_json(resp,"{\"error\":\"the default workspace cannot be removed\"}");goto done;}
+        int idx=0,found=0;cJSON *entry;
+        cJSON_ArrayForEach(entry,items){
+            const char *p=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(entry,"path"));
+            if(p && !strcmp(p,path)){cJSON_DeleteItemFromArray(items,idx);found=1;break;}
+            idx++;
+        }
+        if(!found){resp->status=404;http_resp_json(resp,"{\"error\":\"workspace is not registered\"}");goto done;}
+        /* Drop session/task bindings so a removed directory cannot be
+         * resurrected through a stale mapping; they fall back to default. */
+        const char *maps[]={"sessions","tasks"};
+        for(int m=0;m<2;m++){
+            cJSON *map=cJSON_GetObjectItemCaseSensitive(o,maps[m]),*it=map?map->child:NULL;
+            while(it){cJSON *next=it->next;const char *v=cJSON_GetStringValue(it);
+                if(v && !strcmp(v,path))cJSON_DeleteItemFromObjectCaseSensitive(map,it->string);
+                it=next;}
+        }
+        if(workspace_save(ctx,o)){resp->status=500;http_resp_json(resp,"{\"error\":\"cannot save workspace\"}");goto done;}
+    }
     if(!strcmp(req->method,"POST")) {
         cJSON *existing=NULL,*entry;cJSON_ArrayForEach(entry,items){const char *p=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(entry,"path"));if(p && !strcmp(p,path))existing=entry;}
         if(!existing){existing=cJSON_CreateObject();cJSON_AddStringToObject(existing,"path",path);cJSON_AddNumberToObject(existing,"created_ms",(double)time_now_ms());cJSON_AddItemToArray(items,existing);}
@@ -5993,6 +6017,7 @@ int api_attach(runtime_ctx *ctx) {
     http_server_route(ctx->http,"GET","/v1/workspaces/directories",h_workspace_directories,ctx);
     http_server_route(ctx->http,"GET","/v1/workspaces",h_workspaces,ctx);
     http_server_route(ctx->http,"POST","/v1/workspaces",h_workspaces,ctx);
+    http_server_route(ctx->http,"DELETE","/v1/workspaces",h_workspaces,ctx);
     http_server_route(ctx->http, "POST", "/v1/chat/sessions", h_chat_session_post, ctx);
     http_server_route(ctx->http, "DELETE", "/v1/chat/sessions/", h_chat_sessions, ctx);
     http_server_route(ctx->http, "GET", "/v1/policy/rules", h_policy_rules, ctx);

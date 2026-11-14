@@ -128,7 +128,8 @@ for provider_name in ('openai','anthropic'):
     if n==0:calls=[('file_read',{'path':'explanation.txt','max_bytes':32})]
     else:answer='注释中的完整阅读是概念，本次片段足够解释，没有要求读取剩余内容。'
    elif case=='NATIVE_RESEARCH':
-    if n<17:calls=[('file_read',{'path':f'research-{n}.txt'})]
+    if n==0:calls=[('declare_task',{'acceptance':{'requires_observation':True}})]
+    elif n<=17:calls=[('file_read',{'path':f'research-{n-1}.txt'})]
     else:answer='17份样例均已核对，这是只读分析结果，无需创建文件。'
    elif case=='NATIVE_SCHEMA':
     if n==0:calls=[('file_write',{'path':'schema-prefix.txt','content':'must not execute'}),('file_read',{'tool':'file_read','args':{'path':'schema.txt'}})]

@@ -58,7 +58,6 @@ static const UINT WM_APP_NAV = WM_APP + 1; /* wParam 1 = console, 2 = error page
 static HWND g_hwnd = nullptr;
 static ICoreWebView2 *g_web = nullptr;
 static bool g_startup_animation = true;
-static bool g_startup_battle = false;
 static constexpr UINT_PTR kStartupFinishTimer = 41;
 static ICoreWebView2Controller *g_ctrl = nullptr;
 static HANDLE g_server = nullptr;
@@ -766,12 +765,7 @@ static bool wait_server(int port, int timeout_ms) {
 static const char kStartingHtml[] = R"START(<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 50% 15%,#622333,transparent 65%),linear-gradient(160deg,#210c21,#391021 55%,#100a10);color:#fff4f8;font:15px system-ui;overflow:hidden}
 .startup-landscape{position:fixed;inset:0;width:100%;height:100%;pointer-events:none}
-.startup-wallpaper{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;filter:brightness(.76) saturate(1.14)}
-.startup-embers{position:fixed;inset:0;pointer-events:none;overflow:hidden;background:radial-gradient(ellipse at center,transparent 38%,#14081299)}
-.startup-embers::before,.startup-embers::after{content:"";position:absolute;inset:-25% 0;background-image:radial-gradient(circle,#ffba78 0 1px,transparent 2.5px),radial-gradient(circle,#ff5340 0 1px,transparent 3px);background-size:113px 151px,179px 97px;animation:startup-embers 8s linear infinite}
-.startup-embers::after{opacity:.45;animation-duration:13s;animation-direction:reverse}
-@keyframes startup-embers{from{transform:translate(0,8%)}to{transform:translate(5%,-15%)}}
-.ready:has(.battle-shot) .startup-wallpaper{animation:ascend 1.05s ease-in both}
+.startup-wallpaper{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;}
 .startup-media,.aura{position:fixed;inset:0;width:100%;height:100%;object-fit:contain}
 .startup-media{filter:brightness(.55) saturate(.8);transition:filter .45s,transform .7s}
 .aura{pointer-events:none;background:radial-gradient(ellipse,#ff294a40,transparent 60%);mix-blend-mode:screen;animation:pulse 2s ease-in-out infinite alternate}
@@ -781,34 +775,19 @@ header{display:flex;justify-content:space-between;gap:12px}p{margin:12px 0 0;col
 .fill{width:12%;height:100%;background:linear-gradient(90deg,#b52346,#ff819c);box-shadow:0 0 12px #ff5977;transition:width .28s ease}
 .ready .startup-media{filter:brightness(1) saturate(1.2);transform:scale(1.035)}
 .ready .aura{animation:flash .65s ease-out both}@keyframes flash{0%{opacity:0}28%{opacity:1;background:#ffc2d399}100%{opacity:.16}}
-.startup-hero,.battle-shot{position:fixed;inset:4vh 0 auto;width:100%;height:68vh;object-fit:contain;pointer-events:none}
-.battle-shot{opacity:0}
-.startup-dragon{position:fixed;left:50%;top:32%;width:min(24vw,230px);overflow:visible;pointer-events:none;animation:orbit 6s linear infinite}
-.startup-dragon .fire{transform-origin:150px 55px;animation:breath 6s linear infinite}
-@keyframes orbit{0%,100%{transform:translate(-43vw,-9vh) scale(.58);z-index:0}24%{transform:translate(19vw,-21vh) scale(.75);z-index:0}49%{transform:translate(22vw,8vh) scaleX(-1);z-index:2}75%{transform:translate(-35vw,17vh) scaleX(-.82);z-index:2}}
-@keyframes breath{0%,26%,48%,70%,93%,100%{opacity:0;transform:scaleX(.15)}32%,78%{opacity:1;transform:scaleX(1)}}
-.ready .startup-hero{animation:ascend 1.05s ease-in both}
-.ready .startup-dragon{visibility:hidden}
-.startup-status{z-index:3}
-.ready:has(.battle-shot) .startup-media{animation:ascend 1.05s ease-in both}
-.ready .battle-shot{animation:charge 2.2s .94s ease-out both}
-.ready:has(.battle-shot) .aura{animation:flash .7s .69s ease-out both,flash .45s 2.32s ease-out both}
-@keyframes ascend{0%{opacity:1}65%{opacity:1;filter:brightness(2.7) saturate(1.6)}100%{opacity:0;transform:translateY(-35vh) scale(1.2)}}
-@keyframes charge{0%{opacity:0;transform:translateY(8vh) scale(1.2);filter:brightness(2.3)}25%{opacity:1;transform:translateY(0) scale(1.06);filter:brightness(1)}100%{opacity:1;transform:scale(1.17)}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
-@media(prefers-reduced-motion:reduce){.startup-dragon,.ready .startup-hero{display:none}.ready .battle-shot{opacity:1}}
 </style></head><body><svg class="startup-landscape" viewBox="0 0 1200 700" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
 <defs><radialGradient id="moon"><stop stop-color="#f5b195"/><stop offset="1" stop-color="#863444"/></radialGradient></defs>
 <circle cx="880" cy="195" r="98" fill="url(#moon)" opacity=".68"/>
 <path fill="#411628" d="M0 460L150 285 253 385 366 248 525 445 651 373 735 426 905 301 1020 407 1200 331V700H0Z"/>
 <path fill="#250f20" d="M0 490L129 418 228 488 349 390 530 550 667 481 769 523 949 415 1082 491 1200 397V700H0Z"/>
 <path fill="#160c17" d="M0 550L202 512 382 607 590 531 820 624 1035 525 1200 576V700H0Z"/>
-</svg><div class="aura"></div><main class="startup-status" role="status">
+</svg><div class="startup-media-anchor"></div><main class="startup-status" role="status">
 <header><strong>light-agent</strong><span id="percent">12%</span></header>
 <div class="track" id="track" role="progressbar" aria-label="启动进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="12"><div class="fill" id="fill"></div></div>
 <p id="stage">正在初始化桌面环境…</p></main>
 <script>
-const phases=[[12,'正在初始化桌面环境…'],[38,'正在连接本地运行时…'],[72,'等待运行时就绪 · 龙女正在蓄力'],[100,'运行时已就绪 · 变身完成']];
+const phases=[[12,'正在初始化桌面环境…'],[38,'正在连接本地运行时…'],[72,'等待运行时就绪'],[100,'运行时已就绪']];
 let phase=0;
 function startupPhase(next){
   if(next<=phase)return;
@@ -818,15 +797,7 @@ function startupPhase(next){
   document.getElementById('percent').textContent=value+'%';
   document.getElementById('track').setAttribute('aria-valuenow',value);
   document.getElementById('stage').textContent=label;
-  if(phase===3){
-    document.body.classList.add('ready');
-    if(document.querySelector('.battle-shot') && !matchMedia('(prefers-reduced-motion: reduce)').matches){
-      const stage=document.getElementById('stage');
-      stage.textContent='能量释放 · 龙女升空';
-      setTimeout(()=>stage.textContent='战斗形态觉醒 · 骑龙出击',1050);
-      setTimeout(()=>stage.textContent='变身完成 · 运行时已就绪',2530);
-    }
-  }
+
 }
 setTimeout(()=>startupPhase(1),180);
 setTimeout(()=>startupPhase(2),1100);
@@ -1194,7 +1165,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_NAV:
         if (wp == 1 && g_startup_animation && g_web) {
             g_web->ExecuteScript(L"window.startupPhase && startupPhase(3)", nullptr);
-            if (!SetTimer(hwnd, kStartupFinishTimer, g_startup_battle ? 3200 : 720, nullptr))
+            if (!SetTimer(hwnd, kStartupFinishTimer, 720, nullptr))
                 navigate_main();
         } else if (wp == 1)
             navigate_main();
@@ -1435,21 +1406,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                     }
                     if (use_default) {
                         const auto wallpaper = startup_file_url(g_startup_wallpaper);
-                        const auto battle = startup_file_url(g_dragon_mount);
-                        if (!wallpaper.empty())
-                            tag += "<img alt=\"\" class=\"startup-wallpaper\" src=\"" + wallpaper +
-                                   "\"><div class=\"startup-embers\" aria-hidden=\"true\"></div>";
-                        if (!wallpaper.empty() && !battle.empty()) {
-                            tag += R"SVG(<svg class="startup-dragon" viewBox="0 0 230 95" aria-hidden="true">
-<path class="fire" fill="#ff5928" d="M149 53 Q187 36 217 46L203 52 229 57 205 61 214 69Q176 67 149 57Z"/>
-<path class="fire" fill="#ffdd88" d="M150 54Q181 49 217 56Q183 62 150 56Z"/>
-<path fill="#5d1026" stroke="#eb5670" stroke-width="2" d="M17 66Q52 78 68 58L45 20 83 34 98 12 115 39 128 39 140 25 141 42 157 47 150 56 132 58Q114 79 93 69L75 83 78 68Q45 87 17 66Z"/>
-<circle fill="#ffc971" cx="143" cy="47" r="2"/></svg>)SVG";
-                            tag += "<img alt=\"\" class=\"battle-shot\" src=\"" + battle + "\">";
-                            g_startup_battle = true;
+                        if (!wallpaper.empty()) {
+                            tag += "<img alt=\"\" class=\"startup-wallpaper\" src=\"" + wallpaper + "\">";
                         }
                     }
-                    size_t status=starting.find("<div class=\"aura\"");
+                    size_t status=starting.find("<div class=\"startup-media-anchor\"");
                     if(body!=std::string::npos && status!=std::string::npos)starting.insert(status,tag);
                 }
             }
@@ -1479,7 +1440,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             }
         }
         if (FAILED(navigation)) {
-            g_startup_battle = false;
             const auto fallback = data_url(kStartingHtml);
             const std::wstring url(fallback.begin(), fallback.end());
             g_web->Navigate(url.c_str());

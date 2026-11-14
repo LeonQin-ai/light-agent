@@ -194,13 +194,17 @@ int snapshot_capture(snapshot *s, const char *path) {
              * will leave the file untouched instead of deleting it. */
             cap.skipped = 1;
         } else {
-            char *content = fs_read_file(path);
+            size_t length = 0;
+            int more = 0;
+            char *content = sz >= 0 && (unsigned long long)sz < SIZE_MAX
+                ? fs_read_file_slice(path, 0, sz ? (size_t)sz : 1, &length, &more) : NULL;
             if (content) {
-                const char *h = cow_put(s->cow, content, strlen(content));
+                const char *h = more ? NULL : cow_put(s->cow, content, length);
                 if (h)
                     snprintf(cap.hash, sizeof(cap.hash), "%s", h);
                 free(content);
             }
+            if (!cap.hash[0]) cap.skipped = 1;
         }
     }
 
@@ -339,7 +343,7 @@ static int restore_entry(snapshot *s, snapshot_entry *e) {
                 fs_write_file(cap->path, blob, blen);
                 free(blob);
             }
-        } else {
+        } else if (!cap->existed) {
             fs_remove(cap->path);
         }
     }

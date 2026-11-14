@@ -254,7 +254,7 @@ struct reasoning {
     char unresolved_failed_tools[32][48];
     char unresolved_failed_scopes[32][2048];
     char unresolved_failure_args[32][4096];
-    char unresolved_failure_errors[32][1024];
+    char unresolved_failure_errors[32][2048];
     char unresolved_discovered_reads[32][2048];
     int unresolved_failed_tool_count;
     int unresolved_failed_tools_overflow;
@@ -578,8 +578,22 @@ static int blocking_failed_tools(reasoning *r) {
 
 static int needs_delivery_review(const reasoning *r) {
     if (r->gate_mode) return 0;
+    if (r->gate_auto && r->run_successful_tools > 0 && !r->run_mutated &&
+        !r->file_equalities && r->acceptance && !r->acceptance_invalid &&
+        cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(r->acceptance,"requires_observation")) &&
+        !cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(r->acceptance,"requires_action")) &&
+        !cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(r->acceptance,"requires_images")) &&
+        !cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(r->acceptance,"artifacts")) &&
+        !cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(r->acceptance,"full_reads")))
+        return 0;
     if (r->run_successful_tools > 0) return 1;
-    return r->gate_auto && (r->acceptance || r->file_equalities);
+    /* A zero-tool answer needs review only when it carries a real acceptance
+     * obligation. The structured-decision wrapper attaches an empty acceptance
+     * object to every plain complete_task; counting that as a contract would
+     * spend a delivery-review round on every informational answer (#139). */
+    return r->gate_auto &&
+        ((r->acceptance && cJSON_GetArraySize(r->acceptance) > 0) ||
+         (r->file_equalities && cJSON_GetArraySize(r->file_equalities) > 0));
 }
 static int advisory_failed_tools(reasoning *r) {
     int n = 0;
@@ -3470,11 +3484,14 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
         if(r->n_steps)remember_tool_image(r,&r->steps[r->n_steps-1]);
         if (rc == 0) record_discovered_read_paths(r, r->actions[i].tool, r->actions[i].args_json, full_step_out ? full_step_out : step_out);
         if(rc==0)observe_action_progress(r,&r->actions[i],output_hash,is_search,full_step_out?full_step_out:step_out);
-        free(full_step_out);
         if (rc != 0) {
             r->all_actions_ok = 0;
             r->run_had_action_failure = 1;
-            note_failed_tool(r, r->actions[i].tool, r->actions[i].args_json, step_out);
+            /* The failure ledger must keep the complete tool error, not the
+             * 240-byte step preview that cut messages mid-sentence. */
+            note_failed_tool(r, r->actions[i].tool, r->actions[i].args_json,
+                             full_step_out ? full_step_out : step_out);
+            free(full_step_out);
             strbuf_appendf(&b, "[%s] FAILED\n", r->actions[i].tool);
             log_warn("reasoning: action '%s' failed", r->actions[i].tool);
             if (r->last_failed_action_sig == action_sig)
@@ -3504,6 +3521,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
             if (r->hooks)
                 hook_dispatch(r->hooks, "exec.on_failure", r->actions[i].tool);
         } else {
+            free(full_step_out);
             resolve_failed_tool(r, r->actions[i].tool, r->actions[i].args_json);
             for(int k=0;k<r->invalid_args_n;k++)
                 if(!strcmp(r->invalid_args[k].tool,r->actions[i].tool)) r->invalid_args[k].attempts=0;
@@ -3904,7 +3922,11 @@ static void compact_history(reasoning *r, size_t n_drop) {
     if (r->llm->max_output_tokens > 0 && r->llm->max_output_tokens < request.max_tokens)
         request.max_tokens = (int)r->llm->max_output_tokens;
     llm_response response = {0};
+    /* The active lane owns this session until the turn ends. The request
+     * uses a detached prompt, so history readers can proceed while it runs. */
+    mutex_unlock(&r->cur->mtx);
     int rc = llm_chat(r->llm, &request, &response);
+    mutex_lock(&r->cur->mtx);
     sum = response.content;
     free(response.error);
     free(response.tool_actions_json);

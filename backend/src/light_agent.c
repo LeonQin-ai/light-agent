@@ -1367,16 +1367,16 @@ void runtime_shutdown(runtime_ctx *ctx) {
         ctx->index = NULL;
     }
 
-    if (ctx->im) {
-        im_free(ctx->im);
-        ctx->im = NULL;
-    }
-
     /* stop and join the channel poller before freeing the channel registry */
     ctx->channels_stop = 1;
     if (ctx->channels_poller) {
         thread_join(ctx->channels_poller);
         ctx->channels_poller = NULL;
+    }
+
+    if (ctx->im) {
+        im_free(ctx->im);
+        ctx->im = NULL;
     }
 
     if (ctx->channels) {

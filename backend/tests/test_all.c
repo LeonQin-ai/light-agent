@@ -2945,6 +2945,50 @@ static void test_unresolved_action_failure_cannot_report_done(void) {
     }
 }
 
+/* Regression: the failure ledger must keep the complete tool error. The old
+ * 240-byte step preview cut long diagnostics mid-sentence before they reached
+ * the continuation prompt and the final report. */
+typedef struct long_error_fixture { int calls; } long_error_fixture;
+static int long_error_chat(llm *self, const llm_request *req, llm_response *resp) {
+    (void)req;
+    long_error_fixture *f = (long_error_fixture *)self->impl;
+    ++f->calls;
+    if (f->calls == 1) resp->content = xstrdup("[{\"tool\":\"fixture_long_error\",\"args\":{}}]");
+    else resp->content = xstrdup("任务已完成。");
+    fixture_final_decision(req,resp,1); return resp->content ? 0 : -1;
+}
+static tool_result *long_error_execute(const tool *self, const tool_ctx *ctx, const char *args) {
+    (void)self; (void)ctx; (void)args;
+    char msg[600];
+    int n = snprintf(msg,sizeof(msg),"fixture_long_error: detailed diagnostic head; ");
+    while (n < 400 && n < (int)sizeof(msg)-40) msg[n++] = 'x';
+    snprintf(msg+n,sizeof(msg)-(size_t)n,"; TAIL_MARKER full error preserved");
+    return tool_result_new(0, msg);
+}
+static void test_failure_ledger_keeps_full_error(void) {
+    section("failure ledger keeps full tool error beyond 240-byte preview");
+    static const llm_vtable vt = {.chat = long_error_chat};
+    long_error_fixture f = {0};
+    llm provider = {.vt = &vt, .provider = "fixture", .model = "fixture", .impl = &f};
+    tool_registry *reg = tool_registry_new();
+    CHECK(reg != NULL); if (!reg) return;
+    tool failure = {"fixture_long_error", "fails with a long diagnostic", NULL, 0,
+                    long_error_execute, &f};
+    CHECK(tool_register(reg, &failure) == 0);
+    reasoning_config cfg = {0}; cfg.llm = &provider; cfg.tools = reg;
+    cfg.workspace = "state-test/long-error"; cfg.max_rounds = 4;
+    reasoning *r = reasoning_new(&cfg); CHECK(r != NULL);
+    if (r) {
+        char *answer = NULL;
+        int rc = reasoning_run(r, "检查运行结果并汇总", &answer);
+        CHECK(rc != 0);
+        CHECK(answer && strstr(answer, "detailed diagnostic head"));
+        CHECK(answer && strstr(answer, "TAIL_MARKER full error preserved"));
+        free(answer); reasoning_free(r);
+    }
+    tool_registry_free(reg);
+}
+
 typedef struct rate_limit_fixture_state { int calls; } rate_limit_fixture_state;
 static int rate_limit_fixture_chat(llm *self, const llm_request *req, llm_response *resp) {
     (void)req;
@@ -10232,6 +10276,7 @@ int main(int argc, char **argv) {
     }
     if (argc==2 && !strcmp(argv[1],"--action-failure-status")) {
         test_unresolved_action_failure_cannot_report_done();
+        test_failure_ledger_keeps_full_error();
         printf("%d passed, %d failed\n",g_pass,g_fail); return g_fail ? 1:0;
     }
     if (argc==2 && !strcmp(argv[1],"--skills")) {
@@ -10286,6 +10331,7 @@ int main(int argc, char **argv) {
     test_llm_caps_cancel();
     test_cross_round_progress();
     test_unresolved_action_failure_cannot_report_done();
+    test_failure_ledger_keeps_full_error();
     test_rate_limit_stops_without_retry();
     test_transport_failure_stops_after_recovery();
     test_git_empty_args_checks_status();

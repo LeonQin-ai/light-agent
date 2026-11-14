@@ -81,10 +81,10 @@ void episodic_add_full(episodic *e, const char *task, const char *result, long l
 
     if (e->count == e->cap) {
         size_t cap = e->cap ? e->cap * 2 : 8;
-        char **nt = (char **)realloc(e->task, cap * sizeof(char *));
-        char **nr = (char **)realloc(e->result, cap * sizeof(char *));
-        long long *ns = (long long *)realloc(e->ts, cap * sizeof(long long));
-        double *nw = (double *)realloc(e->strength, cap * sizeof(double));
+        char **nt = (char **)malloc(cap * sizeof(char *));
+        char **nr = (char **)malloc(cap * sizeof(char *));
+        long long *ns = (long long *)malloc(cap * sizeof(long long));
+        double *nw = (double *)malloc(cap * sizeof(double));
         if (!nt || !nr || !ns || !nw) {
             free(nt);
             free(nr);
@@ -93,6 +93,16 @@ void episodic_add_full(episodic *e, const char *task, const char *result, long l
             mutex_unlock(&e->mtx);
             return;
         }
+        if (e->count) {
+            memcpy(nt, e->task, e->count * sizeof(*nt));
+            memcpy(nr, e->result, e->count * sizeof(*nr));
+            memcpy(ns, e->ts, e->count * sizeof(*ns));
+            memcpy(nw, e->strength, e->count * sizeof(*nw));
+        }
+        free(e->task);
+        free(e->result);
+        free(e->ts);
+        free(e->strength);
         e->task = nt;
         e->result = nr;
         e->ts = ns;

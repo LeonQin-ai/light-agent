@@ -8,7 +8,7 @@ BUILD=ROOT/os.environ.get('COA_BUILD_DIR','build')
 PNG=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
 JPEG=base64.b64decode('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z')
 def exercise(protocol,mode):
-    calls=[];errors=[];invalid=mode.startswith('invalid');expected='FAILED' if invalid else 'DONE'
+    calls=[];errors=[];seen=[False];invalid=mode.startswith('invalid');expected='FAILED' if invalid else 'DONE'
     data=JPEG if mode=='jpeg' else PNG
     filename='picture.jpg' if mode=='jpeg' else 'picture.png'
     actions=[('file_read',{'path':filename})]
@@ -32,7 +32,11 @@ def exercise(protocol,mode):
                         if block.get('type')=='image_url':images.append(block['image_url']['url'].split(',',1)[-1])
                         if block.get('type')=='image':images.append(block['source']['data'])
                 after_read=n>=(2 if mode=='generated' else 1)
-                if after_read and not invalid:assert images==[base64.b64encode(data).decode()],images
+                # Images are attached once (sent marker); later text-only
+                # completion-review rounds must not resend or leak them.
+                if after_read and not invalid:
+                    assert images==[base64.b64encode(data).decode()] or (not images and seen[0]),images
+                    seen[0]=seen[0] or bool(images)
                 elif not after_read or invalid:assert not images,images
                 name,args=actions[min(n,len(actions)-1)]
                 if protocol=='anthropic':reply={'content':[{'type':'tool_use','id':f'c{n}','name':name,'input':args}],'stop_reason':'tool_use'}
@@ -68,6 +72,7 @@ def exercise(protocol,mode):
                         assert time.monotonic()<deadline,task;time.sleep(.02)
                     assert not errors,errors
                     assert task['status']==expected,task
+                    if not invalid:assert seen[0],'image never attached to any model request'
                     if protocol=='native':
                         journal_deadline=time.monotonic()+5
                         while True:

@@ -8,6 +8,7 @@ const data='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA
   await page.route('http://ui.test/**',r=>{
    const url=new URL(r.request().url());let obj=[],contentType='application/json';
    if(url.pathname==='/')return r.fulfill({status:200,contentType:'text/html',body:fs.readFileSync(path.join(__dirname,'../apps/web/index.html'),'utf8')});
+   if(url.pathname==='/v1/chat/history')obj={turns:[],runs:[]};
    if(url.pathname==='/v1/config/llm')obj={configured:true,api_key_set:true,provider:'openai',model:'fixture'};
    if(url.pathname==='/v1/uploads/preview'){
     if(!/^verified-image(?:-[1-5])?$/.test(url.searchParams.get('id'))||url.searchParams.get('session')!=='picture-session')return r.fulfill({status:404,body:'{}'});
@@ -16,6 +17,14 @@ const data='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA
    return r.fulfill({status:200,contentType,body:JSON.stringify(obj)});
   });
   await page.goto('http://ui.test/');
+  await page.evaluate(async()=>{
+    chatModelReady=true;
+    CHAT_HISTORY_READY.delete(CHAT_SESSION);
+    chatSyncInputAccess();
+    if(!document.getElementById('chat-input').disabled) throw Error('history gate must lock input');
+    await chatLoadHistory();
+    if(document.getElementById('chat-input').disabled) throw Error('history gate must unlock after load');
+  });
   await page.evaluate(()=>{
     const panel=$('chat-execution-sidebar'), button=$('chat-execution-toggle');
     if (!panel.hidden || panel.previousElementSibling?.id!=='chat-box') throw Error('execution panel must start hidden after the chat');
@@ -139,11 +148,13 @@ const data='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA
    chatAddBubble('bot','');window.collapseFixture=CHAT_MSGS.at(-1);
    collapseFixture.pending=true;collapseFixture.progress={stage:'planning',commentary:'阶段结论保留',steps:[]};renderChatEntry(collapseFixture);
   });
-  assert.equal(await page.evaluate(()=>(document.querySelector('#chat-execution-rail .run-context')?.getBoundingClientRect().height || 0)),0);
+  /* A running task auto-reveals its live chain on a fresh page load. */
+  assert.ok(await page.evaluate(()=>(document.querySelector('#chat-execution-rail .run-context')?.getBoundingClientRect().height || 0)>0));
+  await page.evaluate(()=>collapseFixture.executionStatus.querySelector('.run-collapse').click());
   await page.evaluate(()=>renderChatEntry(collapseFixture));
-  assert.equal(await page.evaluate(()=>collapseFixture.executionStatus.querySelector('.run-collapse').getAttribute('aria-expanded')),'false','progress refresh preserves collapse');
+  assert.equal(await page.evaluate(()=>collapseFixture.executionStatus.querySelector('.run-collapse').getAttribute('aria-expanded')),'false','progress refresh preserves manual collapse');
   assert.equal(await page.evaluate(()=>collapseFixture.el.querySelector('.chat-stage-updates').textContent),'阶段结论保留');
-  await page.evaluate(()=>{ document.getElementById('chat-execution-toggle').click(); collapseFixture.executionStatus.querySelector('.run-collapse').click(); });
+  await page.evaluate(()=>{ collapseFixture.executionStatus.querySelector('.run-collapse').click(); });
   assert.ok(await page.evaluate(()=>(document.querySelector('#chat-execution-rail .run-context')?.getBoundingClientRect().height || 0)>0));
   assert.deepEqual(errors,[]);console.log('PASS #241: assistant plain-path output displays verified images, zoom, redraw, rollover and mobile; untrusted tool text cannot forge previews');
  }finally{await browser.close();}

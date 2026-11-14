@@ -75,11 +75,12 @@ static int parse_url(const char *url, char *host, size_t hostsz, int *port, char
     host[i] = '\0';
     if (*p == ':') {
         p++;
-        long prt = strtol(p, NULL, 10);
-        if (prt > 0 && prt < 65536)
-            *port = (int)prt;
-        while (*p && *p != '/')
-            p++;
+        char *end;
+        long prt = strtol(p, &end, 10);
+        if (end == p || (*end && *end != '/') || prt < 1 || prt > 65535)
+            return -1;
+        *port = (int)prt;
+        p = end;
     } else {
         *port = https ? 443 : 80;
     }

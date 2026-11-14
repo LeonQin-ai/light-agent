@@ -256,7 +256,7 @@ static http_stream *curl_open(const char *base_url, const char *method, const ch
     cu.easy_setopt(h, (int)CURLOPT_NOPROGRESS, 0L);
     cu.easy_setopt(h,20056,&cu_cancel_cb);
     cu.easy_setopt(h, (int)CURLOPT_NOSIGNAL, 1L);
-    cu.easy_setopt(h, (int)CURLOPT_FOLLOWLOCATION, 1L);
+    cu.easy_setopt(h, (int)CURLOPT_FOLLOWLOCATION, 0L);
     cu.easy_setopt(h, (int)CURLOPT_ACCEPT_ENCODING, "");
     if (timeout_ms > 0) {
         cu.easy_setopt(h, (int)CURLOPT_TIMEOUT_MS, (long)timeout_ms);

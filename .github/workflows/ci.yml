@@ -421,6 +421,7 @@ jobs:
           NODE_PATH="$PWD/webarena/node_modules" node tests/test_plugin_install_ui.cjs
           NODE_PATH="$PWD/webarena/node_modules" node tests/test_market_sections_ui.cjs
           NODE_PATH="$PWD/webarena/node_modules" node tests/test_workspaces_ui.cjs
+          NODE_PATH="$PWD/webarena/node_modules" node tests/test_session_history_ui.cjs
           NODE_PATH="$PWD/webarena/node_modules" node tests/test_composer_controls_ui.cjs
           python tests/test_image_preview.py
           COA_PAGING_BROWSER=1 NODE_PATH="$PWD/webarena/node_modules" python tests/test_session_paging_e2e.py

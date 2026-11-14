@@ -146,7 +146,7 @@ char *vectorstore_nearest(vectorstore *v, const char *query, int k) {
     cJSON *arr;
     char *s;
 
-    if (!v)
+    if (!v || k <= 0)
         return xstrdup("[]");
     embed_text(query, qvec);
 

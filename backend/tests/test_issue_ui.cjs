@@ -27,6 +27,10 @@ const assert = require('node:assert/strict');
         target:'st_diag_step1.py',args:'{"path":"st_diag_step1.py","content":"WRITE_DETAILS_MARKER"}',out:'wrote 20 bytes'}]};
       renderChatEntry(entry);
     });
+    /* Execution details now live in the right rail: open the sidebar and
+       expand this run's chain before the written-file card is in the DOM. */
+    await page.locator('#chat-execution-toggle').click();
+    await page.locator('.run-collapse').last().click();
     const file=page.locator('.run-file-detail');
     assert.equal(await file.count(),1);
     await page.locator('.run-details > summary').click();
