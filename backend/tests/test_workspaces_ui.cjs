@@ -49,6 +49,13 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(created.length,3,'adding workspace creates an independent chat');
   assert.equal(sessions[1].workspace,'D:/项目 A','adding workspace must not move the old chat');
   const header=page.locator('.workspace-group[data-path="D:/new folder"] > summary');
+  const group=header.locator('..');
+  const initiallyOpen=await group.evaluate(element=>element.open);
+  await header.locator('.workspace-group-label').click();
+  assert.equal(await group.evaluate(element=>element.open),!initiallyOpen);
+  await header.locator('.workspace-group-label').click();
+  assert.equal(await group.evaluate(element=>element.open),initiallyOpen);
+
   const dimensions=await header.locator('span').boundingBox();assert.ok(dimensions.width>80,'folder name has readable width, not squeezed by plus button');
   assert.equal(await header.locator('span').innerText(),'<project>');
   await page.locator('.side-recent-row > button.on').click({button:'right'});
@@ -71,13 +78,13 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('.workspace-group[data-path="D:/project B"]').count(),0,'deleted workspace leaves the sidebar');
   assert.equal(created.length,beforeDelete,'deleting a workspace must not create a chat');
   /* Clicking the workspace name opens it: reuse its newest conversation. */
-  await page.locator('.workspace-group[data-path="D:/项目 A"] .workspace-group-label').click();
+  await page.locator('.workspace-group[data-path="D:/项目 A"] .workspace-open').click();
   await page.waitForFunction(()=>CHAT_WORKSPACE==='D:/项目 A'&&CHAT_SESSION==='session-2');
   assert.equal(created.length,beforeDelete,'opening a workspace with history reuses its newest chat');
   assert.equal(await page.locator('#chat-workspace').inputValue(),'D:/项目 A');
   /* A workspace without conversations opens a fresh chat there. */
   await page.evaluate(async()=>{const r=await call('POST','/v1/workspaces',{path:'D:/empty',name:'empty'});WORKSPACES=r.obj.workspaces;sideRecent(CHAT_TABS_CACHE);});
-  await page.locator('.workspace-group[data-path="D:/empty"] .workspace-group-label').click();
+  await page.locator('.workspace-group[data-path="D:/empty"] .workspace-open').click();
   await page.waitForFunction(()=>CHAT_WORKSPACE==='D:/empty'&&CHAT_NEW_SESSION_REQUEST===null);
   assert.equal(created.length,beforeDelete+1,'empty workspace opens exactly one new chat');
   assert.equal(created.at(-1).workspace,'D:/empty');

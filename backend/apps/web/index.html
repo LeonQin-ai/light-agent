@@ -4304,8 +4304,11 @@ function sideRecent(list){
     details.open=WORKSPACE_FOLDS.has(path)?WORKSPACE_FOLDS.get(path):true;
     const summary=document.createElement('summary');summary.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v2M3 8h18l-3 12H2z"/></svg>';
     const label=document.createElement('span');label.className='workspace-group-label';label.textContent=workspaceLabel(path);summary.title=path;summary.append(label);
-    label.title='打开工作区：'+path;
-    label.onclick=e=>{e.preventDefault();e.stopPropagation();workspaceOpen(path);};
+    const open=document.createElement('button');
+    open.className='workspace-open';open.textContent='↗';
+    open.title='进入工作区：'+path;open.setAttribute('aria-label',open.title);
+    open.onclick=e=>{e.preventDefault();e.stopPropagation();workspaceOpen(path);};
+    summary.append(open);
     const create=document.createElement('button');create.textContent='＋';create.title='在此工作区新建聊天';create.setAttribute('aria-label','在 '+label.textContent+' 新建聊天');
     create.onclick=async e=>{e.preventDefault();e.stopPropagation();CHAT_WORKSPACE=path;await chatNewSession();if(current!=='chat')switchPanel('chat');};
     summary.append(create);
