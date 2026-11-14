@@ -773,10 +773,16 @@
 .run-card.run-collapsed>:not(.run-header){display:none}
 .chat-execution-layout{display:flex;flex:1;min-height:0;gap:14px}
 .chat-execution-layout>#chat-box{min-width:0}
-.chat-execution-rail{flex:0 0 min(340px,35%);min-width:0;overflow:auto;overscroll-behavior:contain;padding:8px;border-right:1px solid var(--border)}
+.chat-execution-sidebar{flex:0 0 min(340px,35%);min-width:0;display:flex;flex-direction:column;overflow:hidden}
+.chat-execution-sidebar[hidden]{display:none}
+.chat-execution-sidebar:has(.chat-execution-rail:not([hidden])){flex-basis:min(340px,35%)}
+#chat-execution-status{max-height:35%;overflow:auto}
+#chat-execution-status .run-card{padding:6px;margin:0 0 4px}
+#chat-execution-status .run-header{flex-wrap:wrap;gap:6px}
+.chat-execution-rail{flex:1;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;padding:8px;border-left:1px solid var(--border)}
 .chat-execution-rail[hidden]{display:none}
 .chat-execution-rail pre{white-space:pre-wrap;overflow-wrap:anywhere}
-@media(max-width:640px){.chat-execution-layout{flex-direction:column}.chat-execution-rail{flex:0 0 auto;max-height:34vh;border-right:0;border-bottom:1px solid var(--border)}}
+@media(max-width:640px){.chat-execution-layout{flex-direction:column}.chat-execution-sidebar,.chat-execution-sidebar:has(.chat-execution-rail:not([hidden])){flex:0 0 auto;max-height:38vh}#chat-execution-status{max-height:12vh}.chat-execution-rail{flex:0 0 auto;max-height:34vh;border-left:0;border-top:1px solid var(--border)}}
 .run-collapse{flex-shrink:0;padding:2px 8px;font-size:12px}
 @media(max-width:899px){#sidebar{width:min(var(--side-w),90vw)}#chat-sidebar-resize{display:none}}
 #chat-settings{max-height:min(52vh,440px);overflow:auto}
@@ -1402,6 +1408,7 @@ panels.chat = `
         <option value="classic">经典机器人</option><option value="dragon">龙女</option>
       </select>
       <button class="sec sm" id="chat-task-pet" type="button" hidden disabled>开启桌宠</button>
+      <button class="sec sm" id="chat-execution-toggle" type="button" aria-controls="chat-execution-sidebar" aria-expanded="false" onclick="chatToggleExecution()">执行进度</button>
       </div>
     </div>
     <div id="chat-settings" style="display:none;width:100%;margin:10px 0 0;padding:10px 14px;border:1px solid var(--border);border-radius:10px;font-size:12.5px;background:var(--card)">
@@ -1445,8 +1452,10 @@ panels.chat = `
       </details>
     </div>
     <div class="chat-execution-layout">
-      <section id="chat-execution-rail" class="chat-execution-rail" aria-label="执行链路" tabindex="0" hidden></section>
     <div id="chat-box" style="display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto;padding:4px 2px"></div>
+      <div class="chat-execution-sidebar" id="chat-execution-sidebar" hidden><div id="chat-execution-status" aria-label="任务进度"></div>
+      <section id="chat-execution-rail" class="chat-execution-rail" aria-label="执行链路" tabindex="0" hidden></section></div>
+
     </div>
     <div class="muted" id="chat-status" style="min-height:16px;font-size:12px"></div>
     <div id="chat-attach" style="display:none;flex-wrap:wrap;gap:4px;margin:0 0 6px"></div>
@@ -3889,6 +3898,7 @@ function chatRedraw(toBottom = false){
   const follow = toBottom || chatNearBottom();
   const rail=$('chat-execution-rail');
   if(rail){rail.hidden=true;rail.replaceChildren();chatExecutionEntry=null;}
+  $('chat-execution-status')?.replaceChildren();
   box.innerHTML = '';
   CHAT_MSGS.forEach(m => { m.el = chatAddBubble(m.role, m.text, false); if(m.role!=='bot' && m.images) chatRenderImages(m.el,m.images); renderChatEntry(m); });
   updateChatHero();
@@ -4474,7 +4484,7 @@ async function chatLoadHistory(){
   const lastReply = CHAT_MSGS.findLast(message => message.role === 'bot');
   CHAT_RESUME_OK = ['interrupted','failed','cancelled','timed_out'].includes(lastReply?.progress?.stage);
   chatBusyUI(chatIsBusy(session));
-  loading.textContent='历史记录已完整加载 · '+r.obj.turns.length+' 轮对话';
+  loading.remove();
 }
 
 /* The durable journal appends one record for each task transition (RUNNING,
@@ -6185,9 +6195,9 @@ function progressOutline(entry,p){
 function chatProgressClock(entry){
   const p = entry.progress;
   if(!p || !entry.el?.isConnected) return;
-  const elapsed = entry.el.querySelector('.run-time');
+  const elapsed = entry.executionStatus?.querySelector('.run-time');
   if(elapsed) elapsed.textContent = '用时 ' + durationLabel(entry.pending && p.started_ms ? Date.now()-p.started_ms : p.elapsed_ms || 0);
-  const waiting = entry.el.querySelector('.run-stage-time');
+  const waiting = chatExecutionEntry===entry ? document.getElementById('chat-execution-rail')?.querySelector('.run-stage-time') : null;
   if(waiting && entry.pending && entry.stageSince) waiting.textContent = ' · 已等待 ' + durationLabel(Date.now()-entry.stageSince);
 }
 function chatPersist(){
@@ -6225,6 +6235,12 @@ function chatRenderTimestamp(entry){
     time.title=Intl.DateTimeFormat().resolvedOptions().timeZone;
   }else{time.textContent='时间未记录';}
   el.append(time);
+}
+function chatToggleExecution(){
+  const panel=$('chat-execution-sidebar'), button=$('chat-execution-toggle');
+  panel.hidden=!panel.hidden;
+  button.setAttribute('aria-expanded',String(!panel.hidden));
+  button.textContent=panel.hidden?'执行进度':'收起进度';
 }
 let chatExecutionEntry=null;
 function renderChatEntry(entry){
@@ -6292,7 +6308,7 @@ function renderChatEntry(entry){
         rail.replaceChildren();
         chatExecutionEntry=null;
       }else{
-        const old=chatExecutionEntry?.el?.querySelector('.run-collapse');
+        const old=chatExecutionEntry?.executionStatus?.querySelector('.run-collapse');
         if(old){old.textContent='展开进度';old.setAttribute('aria-expanded','false');}
         chatExecutionEntry=entry;
         showChain();
@@ -6428,7 +6444,9 @@ function renderChatEntry(entry){
       item.textContent = '正在建立执行记录…'; detailBody.append(item);
     }
     chain.append(detailBody);
-    el.append(panel);
+    if(entry.executionStatus?.isConnected)entry.executionStatus.replaceWith(panel);
+    else $('chat-execution-status')?.append(panel);
+    entry.executionStatus=panel;
     chatProgressClock(entry);
   }
   // A reply may reference previews from earlier snapshots, including restored history.
