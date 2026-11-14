@@ -4684,7 +4684,6 @@ async function chatSwitchSession(id){
   chatAttachActivate(id);
   if($('ssh-session-details')?.open) void sshSessionLoad();
   CHAT_NEW_SESSION = false;
-  chatExecutionAuto = true;
   CHAT_MSGS = CHAT_CACHE[id] || [];
   if(current !== 'chat') switchPanel('chat');
   else { renderChatTabs(CHAT_TABS_CACHE); chatRedraw(true); void chatLoadHistory(); }
@@ -6411,14 +6410,10 @@ function chatRenderTimestamp(entry){
 function chatToggleExecution(){
   const panel=$('chat-execution-sidebar'), button=$('chat-execution-toggle');
   panel.hidden=!panel.hidden;
-  chatExecutionAuto=false; /* manual control opts out of auto reveal */
   button.setAttribute('aria-expanded',String(!panel.hidden));
   button.textContent=panel.hidden?'执行进度':'收起进度';
 }
 let chatExecutionEntry=null;
-/* Running tasks reveal their live chain automatically; a manual collapse
-   opts out until the next submit or session switch. */
-let chatExecutionAuto=true;
 function renderChatEntry(entry){
   const el = entry.el;
   if(!el?.isConnected)return;
@@ -6469,13 +6464,9 @@ function renderChatEntry(entry){
     const chain=executionChain=document.createElement('div');
     chain.className='chat-execution-chain';
     const showChain=showExecutionChain=()=>{
-      const same=wasSelected && rail.firstElementChild;
-      const oldTop=same?rail.scrollTop:0;
-      const follow=!same || rail.scrollHeight-rail.clientHeight-oldTop<48;
       rail.replaceChildren(chain);
       rail.hidden=false;
-      if(follow)rail.scrollTop=rail.scrollHeight;
-      else rail.scrollTop=oldTop;
+      rail.scrollTop=rail.scrollHeight;
     };
     collapse.addEventListener('click',()=>{
       if(!rail)return;
@@ -6489,7 +6480,6 @@ function renderChatEntry(entry){
         chatExecutionEntry=entry;
         showChain();
       }
-      chatExecutionAuto=false; /* manual control opts out of auto reveal */
       updateCollapse();
     });
     updateCollapse();
@@ -6630,21 +6620,6 @@ function renderChatEntry(entry){
     if(entry.executionStatus?.isConnected)entry.executionStatus.replaceWith(panel);
     else $('chat-execution-status')?.append(panel);
     entry.executionStatus=panel;
-    if(entry.pending && chatExecutionAuto && rail){
-      const side=$('chat-execution-sidebar'), toggle=$('chat-execution-toggle');
-      if(side?.hidden){
-        side.hidden=false;
-        toggle?.setAttribute('aria-expanded','true');
-        if(toggle)toggle.textContent='收起进度';
-      }
-      if(chatExecutionEntry!==entry){
-        const old=chatExecutionEntry?.executionStatus?.querySelector('.run-collapse');
-        if(old){old.textContent='展开进度';old.setAttribute('aria-expanded','false');}
-        chatExecutionEntry=entry;
-      }
-      showExecutionChain();
-      updateCollapse();
-    }
     chatProgressClock(entry);
   }
   // A reply may reference previews from earlier snapshots, including restored history.
@@ -6882,7 +6857,6 @@ async function chatSubmit(resume = false){
   sideRecent(CHAT_TABS_CACHE);
   if(CHAT_SESSION === session){
     CHAT_TASK_ID = id; CHAT_NEW_SESSION = false; CHAT_RESUME_OK = false;
-    chatExecutionAuto = true; /* a fresh run reveals its live progress again */
     CHAT_ATTACH = CHAT_ATTACH_DRAFTS.get(session) || []; chatAttachRender(); chatBusyUI(true);
   }
   renderChatEntry(entry); chatPersist(); void loadChatSessions();

@@ -148,9 +148,8 @@ const data='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA
    chatAddBubble('bot','');window.collapseFixture=CHAT_MSGS.at(-1);
    collapseFixture.pending=true;collapseFixture.progress={stage:'planning',commentary:'阶段结论保留',steps:[]};renderChatEntry(collapseFixture);
   });
-  /* A running task auto-reveals its live chain on a fresh page load. */
-  assert.ok(await page.evaluate(()=>(document.querySelector('#chat-execution-rail .run-context')?.getBoundingClientRect().height || 0)>0));
-  await page.evaluate(()=>collapseFixture.executionStatus.querySelector('.run-collapse').click());
+  assert.equal(await page.locator('#chat-execution-sidebar').isHidden(),true,'a new run keeps progress hidden');
+  await page.locator('#chat-execution-toggle').click();
   await page.evaluate(()=>renderChatEntry(collapseFixture));
   assert.equal(await page.evaluate(()=>collapseFixture.executionStatus.querySelector('.run-collapse').getAttribute('aria-expanded')),'false','progress refresh preserves manual collapse');
   assert.equal(await page.evaluate(()=>collapseFixture.el.querySelector('.chat-stage-updates').textContent),'阶段结论保留');
