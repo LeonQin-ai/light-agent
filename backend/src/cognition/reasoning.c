@@ -1708,7 +1708,22 @@ static void clear_actions(reasoning *r) {
 /* Append text to a growable log buffer, tail-keeping: once past its budget
  * the oldest half is dropped so recent action results always stay available.
  * Returns 1 when old observations were folded away. */
-static int log_append(char **buf, size_t *blen, size_t *bcap, const char *text, size_t budget) {
+/* Advance to a recognized record header, or omit the remaining fragment. */
+static size_t observation_boundary(reasoning *r, const char *text, size_t offset, size_t end) {
+    for (size_t i = offset; i < end; ++i) {
+        if (text[i] != '[' || (i && text[i-1] != '\n')) continue;
+        size_t n = 1;
+        while (i+n < end && n < 49 && text[i+n] != ']' && text[i+n] != '\n') ++n;
+        if (i+n >= end || text[i+n] != ']') continue;
+        char name[49];
+        memcpy(name, text+i+1, n-1);
+        name[n-1] = 0;
+        if (!strcmp(name,"system") || tool_find(r->tools,name)) return i;
+    }
+    return end;
+}
+
+static int log_append(reasoning *r, char **buf, size_t *blen, size_t *bcap, const char *text, size_t budget) {
     const char *add = text;
     char *elided = NULL;
     size_t len;
@@ -1741,7 +1756,8 @@ static int log_append(char **buf, size_t *blen, size_t *bcap, const char *text, 
         }
     }
 
-    need = *blen + len + 1;
+    const int separator = *blen && (*buf)[*blen - 1] != '\n';
+    need = *blen + len + (size_t)separator + 1;
     if (need > *bcap) {
         size_t ncap = *bcap ? *bcap * 2 : 2048;
         while (ncap < need)
@@ -1755,17 +1771,12 @@ static int log_append(char **buf, size_t *blen, size_t *bcap, const char *text, 
         *bcap = ncap;
     }
 
+    if (separator) (*buf)[(*blen)++] = '\n';
     memcpy(*buf + *blen, add, len + 1);
     *blen += len;
     free(elided);
     if (*blen > budget) {
-        size_t half = *blen / 2;
-        /* Keep a complete observation when possible and never start with a
-         * UTF-8 continuation byte (long Chinese tool outputs hit this path). */
-        size_t line_end = half;
-        while (line_end < *blen && (*buf)[line_end] != '\n') line_end++;
-        if (line_end < *blen) half = line_end + 1;
-        else while (half < *blen && ((unsigned char)(*buf)[half] & 0xc0) == 0x80) half++;
+        size_t half = observation_boundary(r, *buf, *blen / 2, *blen);
         memmove(*buf, *buf + half, *blen - half + 1);
         *blen -= half;
         /* tell the model the log was folded, so it knows earlier results
@@ -1802,10 +1813,10 @@ static int log_append_entries(reasoning *r, char **buf, size_t *len, size_t *cap
         char *entry = malloc(n+1);
         if (!entry) break;
         memcpy(entry, start, n); entry[n] = 0;
-        folded |= log_append(buf, len, cap, entry, budget);
+        folded |= log_append(r, buf, len, cap, entry, budget);
         free(entry); start = p;
     }
-    return folded | log_append(buf, len, cap, start, budget);
+    return folded | log_append(r, buf, len, cap, start, budget);
 }
 
 static void pending_reads_clear(reasoning *r) {
@@ -2282,14 +2293,15 @@ static char *build_context(reasoning *r, const char *prompt) {
 
     /* agent-loop feedback: results of the rounds executed so far in this run,
      * so the planner can decide "next actions" vs "task complete" */
+    const size_t observations_start = b.len;
     if (r->round_log_len > 0) {
         strbuf_appendf(&b, "## 之前轮次的动作结果 (第 %d/%d 轮)\n", r->round_idx - 1, r->max_rounds);
         /* Keep the full run log for the UI, but bound repeated planner input.
          * Otherwise each round resends every prior page and burns tokens. */
         size_t log_budget = input_budget / 2;
         size_t log_start = r->round_log_len > log_budget ? r->round_log_len - log_budget : 0;
-        while (log_start < r->round_log_len &&
-               (((unsigned char)r->round_log[log_start] & 0xc0) == 0x80)) log_start++;
+        if (log_start)
+            log_start = observation_boundary(r, r->round_log, log_start, r->round_log_len);
         if (log_start)
             strbuf_append(&b, "[Earlier action log compressed; full log is retained. Recent observations follow.]\n");
         if (strstr(r->round_log, "(earlier action results were folded away"))
@@ -2399,7 +2411,11 @@ static char *build_context(reasoning *r, const char *prompt) {
         size_t keep = background_budget > strlen(omitted) ? background_budget - strlen(omitted) : 0;
         size_t start = protected_start - instruction_bytes > keep ?
             protected_start - keep : instruction_bytes;
-        while (start < protected_start && ((unsigned char)b.buf[start] & 0xc0) == 0x80) start++;
+        if (start > instruction_bytes && start < observations_start &&
+            protected_start - observations_start <= keep)
+            start = observations_start;
+        else if (start > instruction_bytes)
+            start = observation_boundary(r, b.buf, start, protected_start);
         strbuf tail;
         strbuf_init(&tail);
         if (instruction_bytes) strbuf_appendf(&tail, "%.*s", (int)instruction_bytes, b.buf);
@@ -5018,8 +5034,7 @@ restart_planning:
         char tail[12288];
         size_t loglen = r->round_log ? strlen(r->round_log) : 0;
         size_t start = loglen >= sizeof(tail) - 1 ? loglen - (sizeof(tail) - 1) : 0;
-        while (start < loglen && ((unsigned char)r->round_log[start] & 0xc0) == 0x80)
-            start++;
+        if (start) start = observation_boundary(r, r->round_log, start, loglen);
         snprintf(tail, sizeof(tail), "%s", r->round_log + start);
         char *user = (char *)malloc(strlen(prompt) + sizeof(tail) + 64);
         if (user) {
