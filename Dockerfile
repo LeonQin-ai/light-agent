@@ -26,6 +26,6 @@ ENV HOME=/state PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /workspace
 EXPOSE 18300
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=6 \
-    CMD curl --fail --silent http://127.0.0.1:18300/v1/scheduler > /dev/null || exit 1
+    CMD python3 -c "import json,urllib.request;k=json.load(open('/state/light-agent.json',encoding='utf-8')).get('auth.key','');urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:18300/v1/scheduler',headers={'Authorization':'Bearer '+k}),timeout=3)"
 ENTRYPOINT ["python3", "/usr/local/bin/container-entrypoint.py"]
 CMD ["serve", "18300"]
