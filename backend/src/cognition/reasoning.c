@@ -2973,16 +2973,17 @@ static int shell_command_read_only(const char *cmd){
     memcpy(buf,cmd,n+1);
     for (char *p=buf; *p; p++)
         if (*p=='>'||*p=='<'||*p=='|'||*p=='`'||*p=='$'||*p==';'||*p=='\n'||*p=='\r') return 0;
-    /* manual '&' split: strtok_r is not declared under strict -std=c11 on
-     * every toolchain here (see note at line ~1414). Consecutive '&' (&&)
-     * simply yields empty segments, which pass as no-ops. */
-    for (char *seg=buf, *p=buf; ; p++){
-        if (*p=='&' || *p=='\0'){
-            char c=*p; *p='\0';
-            if (!shell_segment_read_only(seg)) return 0;
-            if (c=='\0') break;
-            seg=p+1;
-        }
+    /* Only foreground AND chains can share a completed observation. */
+    char *segment = buf;
+    for (;;) {
+        char *separator = strchr(segment, '&');
+        if (separator && separator[1] != '&') return 0;
+        char *end = separator ? separator : segment + strlen(segment);
+        while (end > segment && (end[-1] == ' ' || end[-1] == '\t')) --end;
+        *end = '\0';
+        if (!shell_segment_read_only(segment)) return 0;
+        if (!separator) break;
+        segment = separator + 2;
     }
     return 1;
 }

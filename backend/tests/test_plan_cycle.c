@@ -117,10 +117,10 @@ static int probe_chat(llm *self, const llm_request *req, llm_response *resp) {
     fixture->calls++;
     const char *plan = NULL;
     switch (fixture->calls) {
-    case 1: plan = "[{\"tool\":\"shell\",\"args\":{\"command\":\"pwd\"}}]"; break;
-    case 2: plan = "[{\"tool\":\"shell\",\"args\":{\"command\":\"pwd\"}}]"; break;
+    case 1: plan = "[{\"tool\":\"shell\",\"args\":{\"command\":\"git status --short && git rev-parse HEAD\"}}]"; break;
+    case 2: plan = "[{\"tool\":\"shell\",\"args\":{\"command\":\"git status --short && git rev-parse HEAD\"}}]"; break;
     case 3: plan = "[{\"tool\":\"file_write\",\"args\":{\"path\":\"probe-invalidate.txt\",\"content\":\"changed\"}}]"; break;
-    case 4: plan = "[{\"tool\":\"shell\",\"args\":{\"command\":\"pwd\"}}]"; break;
+    case 4: plan = "[{\"tool\":\"shell\",\"args\":{\"command\":\"git status --short && git rev-parse HEAD\"}}]"; break;
     default: plan = "探针复用验证完成。"; break;
     }
     resp->content = copy_text(plan);
