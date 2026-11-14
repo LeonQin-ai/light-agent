@@ -657,7 +657,7 @@
 </style>
 <style>
 /* Quiet, spacious conversation surfaces, shared with the native macOS shell. */
-.chat-wrap{max-width:940px;box-sizing:border-box;padding:30px 28px 22px;min-height:0}
+.chat-wrap{max-width:1200px;box-sizing:border-box;padding:30px 28px 22px;min-height:0}
 #chat-hero{flex:0 0 auto;gap:18px;min-height:176px!important;padding:28px 0 22px}
 #chat-hero .hero-title{font-size:clamp(26px,3vw,36px);font-weight:550;letter-spacing:-1px;line-height:1.35}
 #chat-hero::before{content:'LIGHT-AGENT';font-size:11px;letter-spacing:3px;color:var(--muted)}
@@ -773,6 +773,12 @@
 .pillbar.composer-collapsed #chat-input{display:none}
 #chat-composer-toggle{position:absolute;right:12px;top:0;padding:0 6px;font-size:11px;line-height:18px;z-index:3}
 .run-card.run-collapsed>:not(.run-header){display:none}
+.chat-execution-layout{display:flex;flex:1;min-height:0;gap:14px}
+.chat-execution-layout>#chat-box{min-width:0}
+.chat-execution-rail{flex:0 0 min(340px,35%);min-width:0;overflow:auto;overscroll-behavior:contain;padding:8px;border-right:1px solid var(--border)}
+.chat-execution-rail[hidden]{display:none}
+.chat-execution-rail pre{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:640px){.chat-execution-layout{flex-direction:column}.chat-execution-rail{flex:0 0 auto;max-height:34vh;border-right:0;border-bottom:1px solid var(--border)}}
 .run-collapse{flex-shrink:0;padding:2px 8px;font-size:12px}
 @media(max-width:899px){#sidebar{width:min(var(--side-w),90vw)}#chat-sidebar-resize{display:none}}
 #chat-settings{max-height:min(52vh,440px);overflow:auto}
@@ -1437,7 +1443,10 @@ panels.chat = `
         <div class="hint" style="margin:8px 0 0">支持图片、Word、PPT、PDF 和视频。文档提取文字与页面，视频抽取带时间点的画面；每个附件最多 64 MiB。</div>
       </details>
     </div>
+    <div class="chat-execution-layout">
+      <section id="chat-execution-rail" class="chat-execution-rail" aria-label="执行链路" tabindex="0" hidden></section>
     <div id="chat-box" style="display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto;padding:4px 2px"></div>
+    </div>
     <div class="muted" id="chat-status" style="min-height:16px;font-size:12px"></div>
     <div id="chat-attach" style="display:none;flex-wrap:wrap;gap:4px;margin:0 0 6px"></div>
     <div class="pillbar">
@@ -3880,6 +3889,8 @@ function chatCacheStore(){ CHAT_CACHE[CHAT_SESSION] = CHAT_MSGS; }
 function chatRedraw(toBottom = false){
   const box = $('chat-box'); if(!box) return;
   const follow = toBottom || chatNearBottom();
+  const rail=$('chat-execution-rail');
+  if(rail){rail.hidden=true;rail.replaceChildren();chatExecutionEntry=null;}
   box.innerHTML = '';
   CHAT_MSGS.forEach(m => { m.el = chatAddBubble(m.role, m.text, false); if(m.role!=='bot' && m.images) chatRenderImages(m.el,m.images); renderChatEntry(m); });
   updateChatHero();
@@ -6201,18 +6212,22 @@ function chatRenderTimestamp(entry){
   }else{time.textContent='时间未记录';}
   el.append(time);
 }
+let chatExecutionEntry=null;
 function renderChatEntry(entry){
   const el = entry.el;
   if(!el?.isConnected)return;
   if(entry.role !== 'bot'){chatRenderTimestamp(entry);return;}
   const follow = CHAT_FOLLOW || chatNearBottom();
-  const previous = el.querySelector('.run-details');
+  const rail=$('chat-execution-rail');
+  const wasSelected=chatExecutionEntry===entry && rail && !rail.hidden;
+  const source=wasSelected?rail:el;
+  const previous = source.querySelector('.run-details');
   const wasOpen = previous?.open ?? entry.detailsOpen ?? false;
-  const wasOutlineOpen = el.querySelector('.run-plan')?.open ?? entry.outlineOpen ?? true;
+  const wasOutlineOpen = source.querySelector('.run-plan')?.open ?? entry.outlineOpen ?? true;
   const actionsOpen = previous?.querySelector('.run-actions')?.open ?? entry.actionsOpen ?? true;
   const timelineOpen = previous?.querySelector('.run-timeline')?.open ?? entry.timelineOpen ?? true;
   const expandedSteps = new Set(entry.expandedSteps || []);
-  for(const d of el.querySelectorAll('.run-step-detail')){
+  for(const d of source.querySelectorAll('.run-step-detail')){
     if(d.open) expandedSteps.add(d.dataset.step); else expandedSteps.delete(d.dataset.step);
   }
   el.replaceChildren();
@@ -6224,6 +6239,7 @@ function renderChatEntry(entry){
     el.append(log);
   }
   const p = entry.progress;
+  let executionChain, showExecutionChain;
   if(p){
     const panel = document.createElement('section'); panel.className = 'run-card';
     panel.dataset.active = String(!!entry.pending);
@@ -6237,20 +6253,46 @@ function renderChatEntry(entry){
     const ms = entry.pending && p.started_ms ? Math.max(0,Date.now()-p.started_ms) : (p.elapsed_ms || 0);
     elapsed.textContent = '用时 ' + durationLabel(ms);
     const collapse=document.createElement('button');collapse.type='button';collapse.className='run-collapse';
+    panel.classList.add('run-collapsed');
+    collapse.setAttribute('aria-controls','chat-execution-rail');
     const updateCollapse=()=>{
-      panel.classList.toggle('run-collapsed',!!entry.runCollapsed);
-      collapse.textContent=entry.runCollapsed?'展开进度':'收起进度';
-      collapse.setAttribute('aria-expanded',String(!entry.runCollapsed));
+      const open=chatExecutionEntry===entry && rail && !rail.hidden;
+      collapse.textContent=open?'收起进度':'展开进度';
+      collapse.setAttribute('aria-expanded',String(!!open));
     };
-    collapse.addEventListener('click',()=>{entry.runCollapsed=!entry.runCollapsed;updateCollapse();chatPersist();});
+    const chain=executionChain=document.createElement('div');
+    chain.className='chat-execution-chain';
+    const showChain=showExecutionChain=()=>{
+      const same=wasSelected && rail.firstElementChild;
+      const oldTop=same?rail.scrollTop:0;
+      const follow=!same || rail.scrollHeight-rail.clientHeight-oldTop<48;
+      rail.replaceChildren(chain);
+      rail.hidden=false;
+      if(follow)rail.scrollTop=rail.scrollHeight;
+      else rail.scrollTop=oldTop;
+    };
+    collapse.addEventListener('click',()=>{
+      if(!rail)return;
+      if(chatExecutionEntry===entry && !rail.hidden){
+        rail.hidden=true;
+        rail.replaceChildren();
+        chatExecutionEntry=null;
+      }else{
+        const old=chatExecutionEntry?.el?.querySelector('.run-collapse');
+        if(old){old.textContent='展开进度';old.setAttribute('aria-expanded','false');}
+        chatExecutionEntry=entry;
+        showChain();
+      }
+      updateCollapse();
+    });
     updateCollapse();
-    summary.append(dot,label,elapsed,collapse); panel.append(summary);
+    summary.append(collapse,dot,label,elapsed); panel.append(summary);
     const context = document.createElement('div'); context.className = 'run-context';
     context.textContent = p.stage === 'planning' ? '正在结合任务要求和已有结果，规划下一步。' : progressNarrative(p);
     if(entry.pending && ['planning','queued','reconnecting'].includes(p.stage)){
       const waiting = document.createElement('span'); waiting.className = 'run-stage-time'; context.append(waiting);
     }
-    panel.append(context);
+    chain.append(context);
     const outline = document.createElement('ol'); outline.className = 'run-outline';
     outline.setAttribute('aria-label','思考与执行脉络');
     for(const row of progressOutline(entry,p)){
@@ -6263,7 +6305,7 @@ function renderChatEntry(entry){
     const planSummary = document.createElement('summary'); planSummary.textContent = '思考与执行脉络';
     plan.append(planSummary,outline);
     plan.addEventListener('toggle',() => { if(plan.isConnected){entry.outlineOpen = plan.open; chatPersist();} });
-    panel.append(plan);
+    chain.append(plan);
     const detailBody = document.createElement('details'); detailBody.className = 'run-details'; detailBody.open = wasOpen;
     const detailSummary = document.createElement('summary');
     detailSummary.textContent = '详细执行记录' + (p.tool_calls ? ' · ' + p.tool_calls + ' 个动作' : '');
@@ -6371,7 +6413,7 @@ function renderChatEntry(entry){
       const item = document.createElement('div'); item.className = 'run-steps-title';
       item.textContent = '正在建立执行记录…'; detailBody.append(item);
     }
-    panel.append(detailBody);
+    chain.append(detailBody);
     el.append(panel);
     chatProgressClock(entry);
   }
@@ -6418,6 +6460,11 @@ function renderChatEntry(entry){
       inline.add(key);return merged.get(key);
     };
     chatRenderText(answer,entry.text,resolveImage);
+    const standalone=entry.text.trim();
+    if(!inline.size && !standalone.includes('\n') && /\.(?:png|jpe?g|gif|webp)$/i.test(standalone)){
+      const preview=resolveImage(standalone);
+      if(preview)answer.append(document.createElement('br'),chatLoadPreview(preview));
+    }
     // Plain filename mentions in prose also identify verified reply attachments.
     // Prefer a numbered detail paragraph over a table or an artifact inventory.
     const candidates=[...answer.children].filter(row=>row.tagName==='DIV' &&
@@ -6439,8 +6486,21 @@ function renderChatEntry(entry){
   chatRenderTimestamp(entry);
   if(merged.size){
     entry.images=[...merged.values()];
-    chatRenderImages(el,entry.images.filter(i=>!inline.has(imageKey(i))));
+    const previews=entry.images.filter(i=>!inline.has(imageKey(i)));
+    if(previews.length){
+      const gallery=document.createElement('details');
+      gallery.className='run-image-previews';
+      const title=document.createElement('summary');
+      title.textContent='执行图片预览 · '+previews.length+' 张';
+      gallery.append(title);
+      gallery.open=!!entry.toolPreviewsOpen;
+      const load=()=>{if(gallery.open && gallery.children.length===1)chatRenderImages(gallery,previews);};
+      gallery.ontoggle=()=>{entry.toolPreviewsOpen=gallery.open;load();};
+      (executionChain || el).append(gallery);
+      load();
+    }
   }
+  if(wasSelected && executionChain)showExecutionChain();
   if(follow) chatScroll(true);
 }
 function chatNearBottom(){
