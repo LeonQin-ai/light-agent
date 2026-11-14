@@ -283,13 +283,20 @@ static char *truncate_output(const char *out, size_t limit, const tool_ctx *ctx)
                 cJSON_AddNumberToObject(meta,"max_bytes",4000);
                 char *json=cJSON_PrintUnformatted(meta); cJSON_Delete(meta);
                 strbuf b; strbuf_init(&b);
-                strbuf_append(&b,"[full tool result saved] Read the complete content with file_read using these arguments, then follow next_offset_bytes until end of file. Do not reopen the browser to retrieve the same text.\n");
+                strbuf_append(&b,"[full tool result saved] Use the preview if sufficient. Read only the needed ranges from the saved result with file_read; reach EOF only when required by the task. Reuse this result instead of repeating the tool.\n");
                 strbuf_append(&b,json ? json : "");
                 strbuf_append(&b,"\nPreview (not the whole result):\n");
                 size_t preview=strlen(safe)<800 ? strlen(safe):800;
                 /* Do not cut a UTF-8 code point in the preview. */
                 while(preview && ((unsigned char)safe[preview]&0xc0)==0x80) preview--;
                 strbuf_append_n(&b,safe,preview);
+                const size_t size = strlen(safe);
+                if (size > preview + 800) {
+                    size_t start = size - 800;
+                    while (((unsigned char)safe[start] & 0xc0) == 0x80) start++;
+                    strbuf_append(&b, "\nEnd of result:\n");
+                    strbuf_append(&b, safe + start);
+                }
                 free(json); free(safe);
                 return strbuf_detach(&b);
             }

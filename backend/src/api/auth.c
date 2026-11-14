@@ -33,22 +33,23 @@ void auth_free(auth *a) {
     free(a);
 }
 
-void auth_add_key(auth *a, const char *key) {
+int auth_add_key(auth *a, const char *key) {
     if (!a || !key || !*key || strlen(key) >= AUTH_TOKEN_BYTES)
-        return;
+        return -1;
     if (a->count == a->cap) {
         size_t cap = a->cap ? a->cap * 2 : 4;
         char **nk = (char **)realloc(a->keys, cap * sizeof(char *));
         if (!nk)
-            return;
+            return -1;
         a->keys = nk;
         a->cap = cap;
     }
 
     char *padded = (char *)calloc(AUTH_TOKEN_BYTES, 1);
-    if (!padded) return;
+    if (!padded) return -1;
     memcpy(padded, key, strlen(key));
     a->keys[a->count++] = padded;
+    return 0;
 }
 
 int auth_count(auth *a) {
@@ -100,13 +101,14 @@ int auth_check_header(auth *a, const char *authorization) {
     return auth_check(a, tok);
 }
 
-void auth_generate_token(char *out, size_t bytes) {
+void auth_generate_token(char *out, size_t cap, size_t bytes) {
     static const char hexc[] = "0123456789abcdef";
     unsigned char *random;
     int ok = 0;
 
-    if (!out || bytes == 0)
-        return;
+    if (!out || !cap) return;
+    out[0] = '\0';
+    if (!bytes || bytes > (cap - 1) / 2 || bytes > UINT32_MAX) return;
     random = malloc(bytes);
     if (!random) { out[0] = '\0'; return; }
 #if defined(_WIN32)

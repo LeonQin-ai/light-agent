@@ -159,6 +159,13 @@ char *filetracker_json(filetracker *ft) {
     n = (size_t)ft->count;
     const char **paths = n ? calloc(n, sizeof(char *)) : NULL;
     opsv = n ? calloc(n, sizeof(int)) : NULL;
+    if (!arr || (n && (!paths || !opsv))) {
+        free(paths);
+        free(opsv);
+        mutex_unlock(&ft->mtx);
+        cJSON_Delete(arr);
+        return xstrdup("[]");
+    }
     for (ft_entry *e = ft->head; e && i < n; e = e->next) {
         paths[i] = e->path;
         opsv[i] = e->ops;

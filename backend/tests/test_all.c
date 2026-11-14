@@ -786,8 +786,10 @@ static void test_memory(void) {
     memory_flush(m);
     /* facade accessors over the sub-stores */
     CHECK(memory_working_count(m) == 2);
-    CHECK_STR(memory_working_at(m, 0), "item two");
-    CHECK_STR(memory_working_at(m, 1), "item one");
+    char *first = memory_working_at(m, 0);
+    char *second = memory_working_at(m, 1);
+    CHECK_STR(first, "item two");
+    CHECK_STR(second, "item one");
     char *ep = memory_episodes_json(m);
     CHECK(ep && strstr(ep, "task") != NULL && strstr(ep, "result") != NULL);
     free(ep);
@@ -797,6 +799,8 @@ static void test_memory(void) {
     char *w = memory_working_json(m);
     CHECK(w && strstr(w, "item one") != NULL);
     free(w);
+    free(first);
+    free(second);
     char *l = memory_longterm_json(m);
     CHECK(l && strstr(l, "lang") != NULL);
     free(l);
@@ -2250,7 +2254,7 @@ static void test_auth(void) {
     CHECK(auth_check_header(a, "Bearer wrong") == 0);
     CHECK(auth_check_header(a, NULL) == 0);
     char tok[33];
-    auth_generate_token(tok, 16);
+    auth_generate_token(tok, sizeof tok, 16);
     CHECK(strlen(tok) == 32);
     auth_add_key(a, tok);
     CHECK(auth_check(a, tok) == 1);
@@ -2643,6 +2647,12 @@ static int rolling_summary_chat(llm *self, const llm_request *req, llm_response 
         int constraint=input.buf && strstr(input.buf,"NO_EDIT_RUNTIME_73C9");
         int todo=input.buf && strstr(input.buf,"RUN_ALL_TESTS_91AD");
         if(!constraint || !todo)s->missing_constraint++;
+        if (s->compactions == 1) {
+            resp->content = xstrdup("Incomplete summary");
+            resp->truncated = 1;
+            strbuf_free(&input);
+            return resp->content ? 0 : -1;
+        }
         strbuf summary;strbuf_init(&summary);
         if(constraint)strbuf_append(&summary,"约束：NO_EDIT_RUNTIME_73C9\n");
         if(todo)strbuf_append(&summary,"待办：RUN_ALL_TESTS_91AD\n");
@@ -2672,7 +2682,7 @@ static void test_rolling_compaction(void) {
             free(answer);
         }
         CHECK(failures==0);CHECK(observed.compactions>=60);
-        CHECK(observed.continued==observed.compactions-1);
+        CHECK(observed.continued==observed.compactions-2);
         CHECK(observed.missing_constraint==0);
         char *state=reasoning_session_json(r);CHECK(state && strstr(state,"NO_EDIT_RUNTIME_73C9") && strstr(state,"RUN_ALL_TESTS_91AD"));free(state);
         char *answer=NULL;CHECK(reasoning_run_ex(r,"rolling-500","FINAL_CONSTRAINT_CHECK，只回答 ACK。",&answer)==0);free(answer);
@@ -10046,6 +10056,16 @@ static void test_crash_journal(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--audit-p0")) {
+        http_response response = {0};
+        http_resp_appendf(&response, "%05000d:end", 1);
+        CHECK(response.body.len == 5004 && strstr(response.body.buf, "1:end"));
+        strbuf_free(&response.body);
+        test_memory();
+        test_filetracker();
+        printf("%d passed, %d failed\n", g_pass, g_fail);
+        return g_fail ? 1 : 0;
+    }
     if (argc==2 && !strcmp(argv[1],"--step-utf8")) {
         test_utf8_step_json();printf("%d passed, %d failed\n",g_pass,g_fail);return g_fail?1:0;
     }

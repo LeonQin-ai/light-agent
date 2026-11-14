@@ -57,9 +57,8 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  assert.ok(await page.evaluate(()=>taskPetTimer===null));
  await page.locator('#chat-model').selectOption('route-a');await page.locator('#chat-permission').selectOption('ask');await page.locator('#chat-effort-menu summary').click();
  assert.equal(await page.locator('select.composer-policy#chat-gate-mode').count(),0,'gate selector is no longer a permission peer in the composer row');
- assert.ok(await page.locator('#chat-effort-menu #chat-gate-mode').isVisible(),'gate selector moved into the reasoning panel');
  await page.locator('#chat-effort').fill('3');
- await page.locator('#chat-gate-mode').selectOption('simple');
+ assert.equal(await page.locator('#chat-gate-mode').count(),0);
  await page.locator('#chat-effort-menu summary').click();
  await pet.click();
  await page.evaluate(()=>{
@@ -79,15 +78,14 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  assert.deepEqual(sessionRequests[1],{workspace:'D:/selected'});
  assert.equal(await page.locator('#chat-composer-toggle').getAttribute('aria-expanded'),'true');
  assert.equal(await page.locator('#chat-permission').inputValue(),'auto');assert.equal(await page.locator('#chat-effort-summary').innerText(),'默认');
- assert.equal(await page.locator('#chat-gate-mode').inputValue(),'full','fresh session defaults to the full completion gate');
  await page.locator('#chat-model').selectOption('route-b');await page.locator('#chat-permission').selectOption('full');
  await page.evaluate(()=>chatSwitchSession('a'));await page.waitForFunction(()=>$('chat-model').value==='route-a');
  assert.equal(await page.locator('#chat-permission').inputValue(),'ask');assert.equal(await page.locator('#chat-effort-summary').innerText(),'高度');
- assert.equal(await page.locator('#chat-gate-mode').inputValue(),'simple','switching back restores the session gate choice');
+ assert.equal(await page.locator('#chat-gate-mode').count(),0);
  await page.locator('#chat-input').fill('message for A');await page.evaluate(()=>{const upload=new Promise(r=>window.finishUpload=r);CHAT_ATTACH.push({id:'fixture-image',name:'fixture.png',kind:'image',status:'ready',upload});window.submission=chatSubmit();});
  await page.waitForFunction(()=>CHAT_SUBMITTING.has('a'));await page.evaluate(()=>chatSwitchSession('b'));await page.locator('#chat-input').fill('draft for B');
  await page.evaluate(()=>finishUpload());await page.waitForFunction(()=>!CHAT_SUBMITTING.has('a'));await page.evaluate(()=>submission);
- assert.equal(submitted[0].session,'a');assert.equal(submitted[0].route,'route-a');assert.equal(submitted[0].permission_mode,'ask');assert.equal(submitted[0].reasoning_effort,'high');assert.equal(submitted[0].gate,'simple');assert.ok(!('thinking' in submitted[0]));
+ assert.equal(submitted[0].session,'a');assert.equal(submitted[0].route,'route-a');assert.equal(submitted[0].permission_mode,'ask');assert.equal(submitted[0].reasoning_effort,'high');assert.ok(!('gate' in submitted[0]));assert.ok(!('thinking' in submitted[0]));
  assert.equal(await page.locator('#chat-input').inputValue(),'draft for B','waiting submission must not clear another chat draft');
  assert.equal(await page.evaluate(()=>CHAT_MSGS.some(m=>m.text==='message for A')),false,'pending attachment submission belongs only to original conversation');
  await page.evaluate(()=>switchPanel('agents'));await page.locator('#agent-model option[value="openai|a"]').waitFor({state:'attached'});await page.locator('#agent-model').selectOption('openai|a');await page.evaluate(()=>fillAgentModelSelect());assert.equal(await page.locator('#agent-model').inputValue(),'openai|a');assert.deepEqual(errors,[]);

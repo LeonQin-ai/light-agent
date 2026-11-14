@@ -60,18 +60,30 @@ static char *body_str(const http_request *req) {
  * (Chinese keywords arrive as %E6%BC%94... UTF-8; '+' means space).
  * Returns buf (empty string when the parameter is absent). */
 static char *query_param(const http_request *req, const char *key, char *buf, size_t cap) {
-    const char *p = strstr(req->query, key);
+    const char *p = req->query;
+    const size_t key_len = strlen(key);
     size_t o = 0;
 
+    if (!cap) return buf;
     buf[0] = '\0';
-    if (!p || p[strlen(key)] != '=')
-        return buf;
-    p += strlen(key) + 1;
-    while (*p && *p != '&' && o + 1 < cap) {
+    while (p && *p && (strncmp(p, key, key_len) || p[key_len] != '=')) {
+        p = strchr(p, '&');
+        if (p) p++;
+    }
+    if (!p || !*p) return buf;
+    p += key_len + 1;
+    while (*p && *p != '&') {
+        if (o + 1 >= cap) { buf[0] = '\0'; return buf; }
         char c = *p;
-        if (c == '%' && p[1] && p[2]) {
+        if (c == '%') {
+            if (!isxdigit((unsigned char)p[1]) || !isxdigit((unsigned char)p[2])) {
+                buf[0] = '\0';
+                return buf;
+            }
             char hex[3] = {p[1], p[2], 0};
-            buf[o++] = (char)strtol(hex, NULL, 16);
+            long decoded = strtol(hex, NULL, 16);
+            if (!decoded) { buf[0] = '\0'; return buf; }
+            buf[o++] = (char)decoded;
             p += 3;
         } else if (c == '+') {
             buf[o++] = ' ';
@@ -676,11 +688,11 @@ static char *chat_route_snapshot(runtime_ctx *ctx,cJSON *body,int *invalid){
         *invalid = 1;
         return NULL;
     }
-    /* Completion-gate mode (#271): "simple" runs a Claude-Code-like flow
-     * without the structured-acceptance gates; absent/"full" is the default. */
+    /* Omitted or "auto" routes from runtime evidence. Explicit modes are
+     * retained for API clients that already rely on their behavior. */
     cJSON *gate_item = cJSON_GetObjectItemCaseSensitive(body, "gate");
     const char *gate = cJSON_GetStringValue(gate_item);
-    if (gate_item && (!gate || (strcmp(gate,"full") && strcmp(gate,"simple")))) {
+    if (gate_item && (!gate || (strcmp(gate,"auto") && strcmp(gate,"full") && strcmp(gate,"simple")))) {
         *invalid = 1;
         return NULL;
     }
@@ -2349,9 +2361,23 @@ static int h_route_add(const http_request *req, http_response *resp, void *ud) {
     }
 
     if (ctx->router) {
-        router_add_ex(ctx->router, name, provider, json_str(root, "base_url"), json_str(root, "api_key"),
-                          json_str(root, "model"), json_dbl(root, "weight", 1.0), (int)json_dbl(root, "cost_rank", 0),
-                          (int)json_dbl(root, "latency_ms", 0), json_str(root, "caps"));
+        const char *base = json_str(root, "base_url");
+        const char *model = json_str(root, "model");
+        const char *key = json_str(root, "api_key");
+        const char *active_key = config_get_str(ctx->config, "llm.api_key", "");
+        int refresh_active = key && strcmp(key, active_key) &&
+            !strcmp(provider, config_get_str(ctx->config, "llm.provider", "")) &&
+            !strcmp(base ? base : "", config_get_str(ctx->config, "llm.base_url", "")) &&
+            !strcmp(model ? model : "", config_get_str(ctx->config, "llm.model", ""));
+        if (router_add_ex(ctx->router, name, provider, base, key, model,
+                          json_dbl(root, "weight", 1.0), (int)json_dbl(root, "cost_rank", 0),
+                          (int)json_dbl(root, "latency_ms", 0), json_str(root, "caps")) != 0 ||
+            (refresh_active && set_llm(ctx, provider, base, model, key) != 0)) {
+            cJSON_Delete(root);
+            resp->status = 500;
+            http_resp_json(resp, "{\"error\":\"Could not update model route\"}");
+            return 0;
+        }
         cJSON *window = cJSON_GetObjectItemCaseSensitive(root, "context_window");
         if (!cJSON_IsNumber(window))
             window = cJSON_GetObjectItemCaseSensitive(root, "context_window_tokens");

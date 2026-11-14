@@ -278,13 +278,13 @@ int memory_working_count(memory *m) {
     return n;
 }
 
-const char *memory_working_at(memory *m, int i) {
+char *memory_working_at(memory *m, int i) {
     if (!m || i < 0)
         return NULL;
     mutex_lock(&m->mtx);
-    const char *v = ((size_t)i < m->working.count) ? m->working.items[i] : NULL;
+    char *copy = ((size_t)i < m->working.count) ? xstrdup(m->working.items[i]) : NULL;
     mutex_unlock(&m->mtx);
-    return v;
+    return copy;
 }
 
 void memory_remember(memory *m, const char *key, const char *value) {

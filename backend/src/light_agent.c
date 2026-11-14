@@ -1000,7 +1000,11 @@ int init(runtime_ctx *ctx, const config *cfg) {
         const char *auth_key = config_get_str(ctx->config, "auth.key", NULL);
         if (auth_key && *auth_key) {
             ctx->auth = auth_new();
-            auth_add_key(ctx->auth, auth_key);
+            if (auth_add_key(ctx->auth, auth_key) != 0) {
+                log_error("Cannot register configured API authentication key");
+                runtime_shutdown(ctx);
+                return -1;
+            }
         }
     }
 
@@ -1500,10 +1504,10 @@ int set_llm(runtime_ctx *ctx, const char *provider, const char *base_url, const 
                 }
             }
         }
-        if (ctx->provider)
-            router_remove(ctx->router, ctx->provider);
-        if (!have_same)
+        if (!have_same) {
+            if (ctx->provider) router_remove(ctx->router, ctx->provider);
             router_add(ctx->router, provider, provider, base_url, api_key, model, 1.0);
+        }
     }
 
     if (old)
@@ -1590,6 +1594,11 @@ int agent_run(runtime_ctx *ctx, const char *agent, const char *task, char **answ
 int serve(runtime_ctx *ctx) {
     if (!ctx || !ctx->http)
         return -1;
+    if ((!ctx->http_bind || strcmp(ctx->http_bind, "127.0.0.1") != 0) &&
+        !auth_count(ctx->auth)) {
+        log_error("Non-loopback HTTP binding requires auth.key");
+        return -1;
+    }
     log_info("light-agent HTTP API serving on port %u", (unsigned)ctx->http_port);
     return http_server_serve(ctx->http);
 }

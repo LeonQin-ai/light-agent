@@ -46,6 +46,9 @@ Source: "..\dist\light-agent.ico";         DestDir: "{app}";                    
 Source: "..\dist\light-agent-logo.ico";          DestDir: "{app}";                                   Flags: ignoreversion
 Source: "..\assets\light-agent-pet.png";          DestDir: "{app}";                                   Flags: ignoreversion
 Source: "..\assets\light-agent-pet-thinking.png"; DestDir: "{app}";                                   Flags: ignoreversion
+Source: "..\assets\dragon-girl.gif"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\dragon-girl-mounted.png"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\dragon-girl-pet.png"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md";                DestDir: "{app}"; DestName: "README.txt";           Flags: ignoreversion
 
 [Icons]

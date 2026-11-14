@@ -179,11 +179,12 @@ static int def_recall_key(void *impl, mem_type t, const char *key, char **text) 
     if (t == MEM_WORKING) {
         int n = memory_working_count(d->m);
         for (int i = 0; i < n; i++) {
-            const char *w = memory_working_at(d->m, i);
+            char *w = memory_working_at(d->m, i);
             if (w && strcmp(w, key) == 0) {
-                *text = xstrdup(w);
-                return *text ? 0 : -1;
+                *text = w;
+                return 0;
             }
+            free(w);
         }
         return -1;
     }

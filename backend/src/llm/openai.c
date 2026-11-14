@@ -33,7 +33,13 @@ static void openai_destroy(llm *llm) {
     free(llm);
 }
 
-static char *build_request_body(const llm_request *req, const char *model, int stream) {
+static char *build_request_body(const llm_request *req, const llm *client, int stream) {
+    const char *model = client->model;
+    const char *base = client->base_url;
+    const char *official = "https://api.deepseek.com";
+    const size_t host_len = strlen(official);
+    const int deepseek = base && !strncmp(base, official, host_len) &&
+                         (base[host_len] == '/' || base[host_len] == '\0');
     cJSON *root = cJSON_CreateObject();
     cJSON *msgs;
     char *s;
@@ -87,8 +93,18 @@ static char *build_request_body(const llm_request *req, const char *model, int s
         cJSON_AddNumberToObject(root, "temperature", req->temperature);
     if (req->max_tokens > 0)
         cJSON_AddNumberToObject(root, "max_tokens", req->max_tokens);
-    if (req->reasoning_effort && *req->reasoning_effort)
-        cJSON_AddStringToObject(root, "reasoning_effort", req->reasoning_effort);
+    if (req->reasoning_effort && *req->reasoning_effort) {
+        const char *effort = req->reasoning_effort;
+        if (deepseek) {
+            const int disabled = !strcmp(effort, "none");
+            cJSON *thinking = cJSON_AddObjectToObject(root, "thinking");
+            cJSON_AddStringToObject(thinking, "type", disabled ? "disabled" : "enabled");
+            if (!disabled)
+                cJSON_AddStringToObject(root, "reasoning_effort", effort);
+        } else {
+            cJSON_AddStringToObject(root, "reasoning_effort", effort);
+        }
+    }
     if (stream) {
         cJSON_AddBoolToObject(root, "stream", 1);
         cJSON *options = cJSON_AddObjectToObject(root, "stream_options");
@@ -162,7 +178,7 @@ static char *normalize_base(const char *base, const char **path_out) {
 
 #include "native_preview.h"
 static int openai_chat(llm *llm, const llm_request *req, llm_response *resp) {
-    char *body = build_request_body(req, llm->model, req->preview && req->tools_json);
+    char *body = build_request_body(req, llm, req->preview && req->tools_json);
     const char *path;
     char *base;
     strmap *hdrs = NULL;
@@ -301,7 +317,7 @@ static int openai_chat(llm *llm, const llm_request *req, llm_response *resp) {
 }
 
 static int openai_stream(llm *llm, const llm_request *req, llm_stream_cb cb, void *ud) {
-    char *body = build_request_body(req, llm->model, 1);
+    char *body = build_request_body(req, llm, 1);
     const char *path;
     char *base;
     strmap *hdrs = NULL;

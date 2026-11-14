@@ -67,7 +67,7 @@ struct session {
     long long created_ms; /* session creation time */
     long long total_ms;   /* accumulated execution duration across runs */
     int shared_memory;    /* opt-in shared recall; private memory remains enabled */
-    volatile int in_run;  /* >0 while a lane run executes on this session
+    _Atomic int in_run;  /* >0 while a lane run executes on this session
                            * (reasoning_session_delete refuses to free it) */
 };
 
@@ -317,6 +317,7 @@ struct reasoning {
     int acceptance_declares;       /* contract-growing declarations this run (#270) */
     int acceptance_frozen;         /* oscillation breaker: the contract is final */
     int gate_mode;                 /* 1 = simple mode: evidence gates and reviews are skipped */
+    int gate_auto;                 /* choose completion review from runtime evidence */
 
     /* live run progress for status display (polled via reasoning_progress):
      * run start time, executed tool-call count, tool currently running.
@@ -574,6 +575,12 @@ static int blocking_failed_tools(reasoning *r) {
         if (!failed_entry_is_advisory(r, i)) n++;
     return n;
 }
+
+static int needs_delivery_review(const reasoning *r) {
+    if (r->gate_mode) return 0;
+    if (r->run_successful_tools > 0) return 1;
+    return r->gate_auto && (r->acceptance || r->file_equalities);
+}
 static int advisory_failed_tools(reasoning *r) {
     int n = 0;
     for (int i = 0; i < r->unresolved_failed_tool_count; ++i)
@@ -738,7 +745,8 @@ int reasoning_acceptance_validate(const char *json) {
     cJSON *o=cJSON_ParseWithOpts(json?json:"{}",NULL,1);int valid=cJSON_IsObject(o);cJSON *field;
     if(!valid){cJSON_Delete(o);return -1;}
     cJSON_ArrayForEach(field,o) {
-        if(!strcmp(field->string,"requires_action") || !strcmp(field->string,"requires_observation")) {
+        if(!strcmp(field->string,"requires_action") || !strcmp(field->string,"requires_observation") ||
+           !strcmp(field->string,"requires_images")) {
             if(!cJSON_IsBool(field))valid=0;
         } else if(!strcmp(field->string,"artifacts") || !strcmp(field->string,"full_reads")) {
             if(!cJSON_IsArray(field)||cJSON_GetArraySize(field)>64)valid=0;
@@ -842,6 +850,13 @@ static void verify_completion_files(reasoning *r,const char *completion_json){
     if(r->acceptance_invalid){r->file_checks_failed=1;snprintf(r->file_check_error,sizeof(r->file_check_error),"Invalid structured acceptance contract.");}
     if(!r->file_checks_failed && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(r->acceptance,"requires_action")) && !r->run_mutated){r->file_checks_failed=1;snprintf(r->file_check_error,sizeof(r->file_check_error),"Acceptance requires a successful action; no committed action receipt is present.");}
     if(!r->file_checks_failed && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(r->acceptance,"requires_observation")) && !r->run_successful_tools){r->file_checks_failed=1;snprintf(r->file_check_error,sizeof(r->file_check_error),"Acceptance requires a successful tool observation.");}
+    if (!r->file_checks_failed &&
+        cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(r->acceptance,"requires_images")) &&
+        cJSON_GetArraySize(r->tool_images) == 0) {
+        r->file_checks_failed = 1;
+        snprintf(r->file_check_error, sizeof(r->file_check_error),
+                 "Image delivery requires a verified image preview from this run. Read the image with file_read, reference it in the answer, or report the image delivery blocked.");
+    }
     cJSON_ArrayForEach(entry,cJSON_GetObjectItemCaseSensitive(r->acceptance,"artifacts"))
         if(!r->file_checks_failed && !run_has_verified_artifact(r,entry->valuestring)){r->file_checks_failed=1;snprintf(r->file_check_error,sizeof(r->file_check_error),"Artifact acceptance requires the file produced and read back in this run: %.200s. Use file_write, or run the producing shell command with the path declared in its outputs array and then file_read the file back.",entry->valuestring);}
     cJSON_ArrayForEach(entry,cJSON_GetObjectItemCaseSensitive(r->acceptance,"full_reads"))
@@ -1173,7 +1188,7 @@ static void chat_file_path(char *out, size_t n, const char *state_root, const ch
 /* OS entropy avoids Windows CRT rand() thread-local sequences repeating on
  * different HTTP workers. Never return an existing conversation's ID. */
 static int session_uuid(char out[37]) {
-    char hex[33];auth_generate_token(hex,16);
+    char hex[33];auth_generate_token(hex,sizeof hex,16);
     if(!hex[0]){out[0]='\0';return -1;}
     unsigned variant=hex[16]<='9' ? (unsigned)(hex[16]-'0') : (unsigned)(hex[16]-'a'+10);
     hex[12]='4';hex[16]="89ab"[variant&3];
@@ -1691,11 +1706,8 @@ static void clear_actions(reasoning *r) {
 
 /* Copy at most `cap` bytes of s, cutting back to a UTF-8 boundary and adding
  * an ellipsis when truncated. Caller frees. NULL only on OOM. */
-#define HIST_TURN_CAP 4000       /* per-turn chars kept in history (chat UI
-                                  * serves this store verbatim — 500 made
-                                  * reloaded answers visibly truncated) */
 #define LEARN_RESULT_CAP 300     /* chars of a result kept as a memory episode */
-#define COMPACT_SUMMARY_CAP 2000 /* rolling compaction summary cap */
+#define COMPACT_SUMMARY_CAP 6000 /* rolling compaction summary byte cap */
 /* AGENT_LOOP_MAX_ROUNDS comes from cognition/reasoning.h (#270). */
 #define REASONING_CONSEC_FAIL_ABORT 5 /* consecutive stage failures before aborting the run */
 #define REASONING_CONSEC_FAIL_ABORT_STR "5"
@@ -2444,12 +2456,17 @@ static uint64_t observation_json_hash(const cJSON *item);
 static char *planning_images(reasoning *r) {
     const char *original=r->run_task?r->run_task->attachments_json:NULL;
     if(!cJSON_GetArraySize(r->tool_images))return original?xstrdup(original):NULL;
-    cJSON *all=cJSON_Duplicate(r->tool_images,1),*base=original?cJSON_Parse(original):NULL,*item;
+    cJSON *all=cJSON_CreateArray(),*base=original?cJSON_Parse(original):NULL,*item;
+    cJSON_ArrayForEach(item,r->tool_images) {
+        if (!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(item,"sent")))
+            cJSON_AddItemToArray(all,cJSON_Duplicate(item,1));
+    }
     cJSON_ArrayForEach(item,base) {
         if(cJSON_GetArraySize(all)>=4)break;
         cJSON_AddItemToArray(all,cJSON_Duplicate(item,1));
     }
-    char *text=cJSON_PrintUnformatted(all);cJSON_Delete(base);cJSON_Delete(all);return text;
+    char *text=cJSON_GetArraySize(all)?cJSON_PrintUnformatted(all):NULL;
+    cJSON_Delete(base);cJSON_Delete(all);return text;
 }
 /* REASON: ask the LLM for a plan (JSON array of actions, or plain text). */
 static int h_reason(state_machine *sm, void *ud, const char *input, char **out) {
@@ -2487,6 +2504,13 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
                                  &r->planner_response_truncated, output_override, &r->planner_native_end_turn, &diagnostic,
                                  r->completion_review_required,&completion_json,r->planner_temperature,r->planner_effort);
     free(images);
+    if (rc == 0 && !r->planner_response_truncated) {
+        cJSON *image;
+        cJSON_ArrayForEach(image,r->tool_images) {
+            if (!cJSON_GetObjectItemCaseSensitive(image,"sent"))
+                cJSON_AddBoolToObject(image,"sent",1);
+        }
+    }
     if(rc==0 && r->planner_native_end_turn==3) {
         cJSON *control=cJSON_Parse(completion_json?completion_json:"{}");
         cJSON *acc=cJSON_GetObjectItemCaseSensitive(control,"acceptance");
@@ -2517,6 +2541,7 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
         cJSON_AddNumberToObject(decision,"round",r->round_idx);
         cJSON_AddNumberToObject(decision,"max_rounds",r->max_rounds);
         cJSON_AddStringToObject(decision,"tool_protocol",planner_uses_native_tools(r->llm)?"native":"legacy");
+        cJSON_AddStringToObject(decision,"completion_route",needs_delivery_review(r)?"verified":"direct");
         cJSON_AddBoolToObject(decision,"completion_review_required",review_requested);
         cJSON_AddStringToObject(decision,"completion_declaration",r->planner_native_end_turn==1?"complete":r->planner_native_end_turn==2?"blocked":r->planner_native_end_turn==3?"contract":r->planner_native_end_turn==4?"commentary":"none");
         cJSON_AddNumberToObject(decision,"planned_actions",r->n_actions);
@@ -3036,7 +3061,10 @@ static void remember_tool_image(reasoning *r,struct run_step *step) {
         int duplicate=0;cJSON *item;
         cJSON_ArrayForEach(item,r->tool_images) {
             const char *old=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(item,"id"));
-            if(old && !strcmp(old,id))duplicate=1;
+            if(old && !strcmp(old,id)) {
+                duplicate=1;
+                cJSON_DeleteItemFromObjectCaseSensitive(item,"sent");
+            }
         }
         if(!duplicate) {
             if(cJSON_GetArraySize(r->tool_images)>=4)cJSON_DeleteItemFromArray(r->tool_images,0);
@@ -3198,7 +3226,8 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
         /* missing-capability self-evolution: the planner referenced a tool
          * that does not exist — try generating a plugin for it (once per run)
          * and bind the generated skill under the planned tool name. */
-        if (!r->gen_attempted && r->plugin_registry && r->llm && r->skills &&
+        if (!planner_uses_native_tools(r->llm) &&
+            !r->gen_attempted && r->plugin_registry && r->llm && r->skills &&
             !tool_find(r->tools, r->actions[i].tool)) {
             r->gen_attempted = 1;
             char *desc = str_head(r->last_prompt ? r->last_prompt : r->actions[i].tool, 300);
@@ -3855,7 +3884,7 @@ static void compact_history(reasoning *r, size_t n_drop) {
                            "1. 用户核心意图\n2. 技术概念与术语\n3. 涉及文件与代码\n4. 错误与修复\n"
                            "5. 用户全部消息要点\n6. 已完成事项\n7. 未完成待办\n8. 当前工作状态\n"
                            "9. 下一步建议\n"
-                           "总长度不超过 2000 字，只输出纪要本身，不要任何前言。\n\n");
+                           "UTF-8 总长度不得超过 6000 字节，中文正文控制在 1500 字以内。只输出纪要本身。\n\n");
     if(r->cur->summary && *r->cur->summary){
         strbuf_append(&pb,"## 已有会话纪要\n");
         strbuf_append(&pb,r->cur->summary);
@@ -3866,14 +3895,23 @@ static void compact_history(reasoning *r, size_t n_drop) {
     free(turns);
     user_prompt = strbuf_detach(&pb);
 
-    sum = llm_chat_simple(r->llm, "你是会话压缩器。输出简体中文 Markdown 纪要。", user_prompt);
+    llm_message messages[] = {
+        {.role = "system", .content = "你是会话压缩器。输出简体中文 Markdown 纪要。"},
+        {.role = "user", .content = user_prompt},
+    };
+    llm_request request = {.messages = messages, .num_messages = 2,
+                           .temperature = 0.2, .max_tokens = 16384};
+    if (r->llm->max_output_tokens > 0 && r->llm->max_output_tokens < request.max_tokens)
+        request.max_tokens = (int)r->llm->max_output_tokens;
+    llm_response response = {0};
+    int rc = llm_chat(r->llm, &request, &response);
+    sum = response.content;
+    free(response.error);
+    free(response.tool_actions_json);
     free(user_prompt);
-    if (sum && *sum) {
+    if (rc == 0 && !response.truncated && sum && *sum && strlen(sum) <= COMPACT_SUMMARY_CAP) {
         free(r->cur->summary);
-        r->cur->summary = str_head(sum, COMPACT_SUMMARY_CAP);
-        if (!r->cur->summary)
-            r->cur->summary = xstrdup(sum);
-        free(sum);
+        r->cur->summary = sum;
         r->cur->compact_fails = 0;
         log_info("reasoning: compacted %zu turns into a %zu-char summary", n_drop, strlen(r->cur->summary));
     } else {
@@ -3881,7 +3919,7 @@ static void compact_history(reasoning *r, size_t n_drop) {
         r->cur->compact_fails++;
         if (r->cur->compact_fails >= 3)
             r->cur->compact_disabled = 1; /* circuit breaker */
-        log_warn("reasoning: compaction LLM call failed (%d consecutive)", r->cur->compact_fails);
+        log_warn("reasoning: compaction summary failed, was truncated, or exceeded byte budget (%d consecutive)", r->cur->compact_fails);
         return; /* keep the turns; retry at the next threshold */
     }
 
@@ -3979,6 +4017,9 @@ static void record_turn(reasoning *r, const char *q, const char *a) {
         r->cur->hist_a = calloc(r->cur->hist_cap, sizeof(char *));
     }
 
+    int retry_compaction = r->cur->hist_n >= r->cur->hist_cap;
+    if (retry_compaction && !r->cur->compact_disabled && r->llm)
+        compact_history(r, r->cur->hist_cap / 2);
     if (r->cur->hist_n >= r->cur->hist_cap) {
         free(r->cur->hist_q[0]);
         free(r->cur->hist_a[0]);
@@ -3987,19 +4028,16 @@ static void record_turn(reasoning *r, const char *q, const char *a) {
         r->cur->hist_n--;
     }
 
-    r->cur->hist_q[r->cur->hist_n] = str_head(q, HIST_TURN_CAP);
+    r->cur->hist_q[r->cur->hist_n] = xstrdup(q);
     /* Display/persistence must retain the answer. Model prompt history has
      * its own hot-tier budget; shrinking that must not corrupt chat records. */
     r->cur->hist_a[r->cur->hist_n] = xstrdup(a);
-    if (!r->cur->hist_q[r->cur->hist_n])
-        r->cur->hist_q[r->cur->hist_n] = xstrdup(q);
     if (!r->cur->hist_a[r->cur->hist_n])
         r->cur->hist_a[r->cur->hist_n] = xstrdup(a);
     r->cur->hist_n++;
     stored_q = xstrdup(r->cur->hist_q[r->cur->hist_n - 1] ? r->cur->hist_q[r->cur->hist_n - 1] : q);
     stored_a = xstrdup(r->cur->hist_a[r->cur->hist_n - 1] ? r->cur->hist_a[r->cur->hist_n - 1] : a);
-    /* ring full → compact the oldest half via LLM instead of silent loss */
-    if (r->cur->hist_n >= r->cur->hist_cap && !r->cur->compact_disabled && r->llm)
+    if (!retry_compaction && r->cur->hist_n >= r->cur->hist_cap && !r->cur->compact_disabled && r->llm)
         compact_history(r, r->cur->hist_cap / 2);
     mutex_unlock(&r->cur->mtx);
     /* durable copy (after unlock — file I/O off the hot path; private copies
@@ -4488,6 +4526,7 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     {
         const char *gate = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o, "gate"));
         r->gate_mode = (gate && strcmp(gate, "simple") == 0) ? 1 : 0;
+        r->gate_auto = !gate || strcmp(gate, "auto") == 0;
     }
     cJSON *temperature = cJSON_GetObjectItemCaseSensitive(o, "temperature");
     r->planner_temperature = cJSON_IsNumber(temperature) ? temperature->valuedouble : -1;
@@ -4894,8 +4933,7 @@ restart_planning:
              * stop hook. Never classify answer prose or recursively review
              * the review itself; ordinary zero-tool conversation needs no extra call. */
             if (r->planner_native_end_turn == 1 &&
-                r->run_successful_tools > 0 &&
-                !completion_reviewed && !r->gate_mode) {
+                !completion_reviewed && needs_delivery_review(r)) {
                 if (r->round_idx >= r->max_rounds) {
                     if(r->planner_native_end_turn==1 && !completion_grace && r->round_idx==r->max_rounds){
                         completion_grace=1;round_log_append(r,completion_reserve_note);

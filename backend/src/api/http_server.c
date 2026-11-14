@@ -447,15 +447,21 @@ void http_resp_append(http_response *resp, const char *s) {
 }
 
 void http_resp_appendf(http_response *resp, const char *fmt, ...) {
-    char tmp[4096];
-    va_list ap;
+    va_list ap, copy;
 
     if (!resp)
         return;
     va_start(ap, fmt);
-    vsnprintf(tmp, sizeof(tmp), fmt, ap);
+    va_copy(copy, ap);
+    int len = vsnprintf(NULL, 0, fmt, copy);
+    va_end(copy);
+    char *text = len >= 0 ? malloc((size_t)len + 1) : NULL;
+    if (text) {
+        if (vsnprintf(text, (size_t)len + 1, fmt, ap) == len)
+            strbuf_append_n(&resp->body, text, (size_t)len);
+        free(text);
+    }
     va_end(ap);
-    strbuf_append(&resp->body, tmp);
 }
 
 void http_resp_json(http_response *resp, const char *json) {

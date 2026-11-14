@@ -139,7 +139,7 @@ static char *build_catalog_prompt(const tool_registry *tools, struct skill_regis
         return NULL;
     strbuf_init(&b);
     strbuf_append(&b, native ? SYS_NATIVE_HEAD:SYS_PROMPT_HEAD);
-    strbuf_append(&b,"\nControl decisions: declare_task({acceptance:{requires_action:boolean,requires_observation:boolean,artifacts:[path],full_reads:[path]}}) records requirements before operations. Artifact paths require a real nonempty write and later readback; full_reads require contiguous EOF. Requirements accumulate and cannot be omitted later. complete_task may append acceptance.\n");
+    strbuf_append(&b,"\nControl decisions: declare_task({acceptance:{requires_action:boolean,requires_observation:boolean,requires_images:boolean,artifacts:[path],full_reads:[path]}}) records requirements before operations. Artifact paths require a real nonempty write and later readback; full_reads require contiguous EOF. Requirements accumulate and cannot be omitted later. complete_task may append acceptance. When the user asks to deliver images, declare requires_images and reference the verified images in the final answer. Read image files together in a single tool-call batch.\n");
     strbuf_append(&b,"declare_task is a separate control turn: it must be the only call in its response. Wait for its receipt before emitting file or other tool operations.\n");
     strbuf_append(&b,native ? "Native turns with tools continue execution; a complete tool-free answer enters delivery review. Use complete_task to declare explicit status or acceptance.\n" : "Legacy final answers require complete_task(status=complete or blocked,requires_tools=false,answer). Plain text is commentary.\n");
     if (native)
@@ -202,6 +202,17 @@ static char *build_catalog_prompt(const tool_registry *tools, struct skill_regis
         "Batch independent facts: put independent read-only checks into one plan as multiple actions, or chain "
         "them with && in one read-only shell command. Do not re-run an identical read-only probe while the "
         "workspace is unchanged; the runtime reuses that observation instead of executing it again.\n");
+    strbuf_append(&b,
+        "For bulk fetch or conversion, reuse one command or helper across items and return a compact per-item "
+        "ledger (source, output, validation and error) in the same execution. Bound remote requests and "
+        "validate outputs before recording success. Retry only failed items through the same helper; avoid "
+        "new one-off scripts, directory listings and rereading an unchanged ledger. When optional items are "
+        "unavailable, deliver verified items and identify the gap rather than repeating the whole batch.\n");
+    strbuf_append(&b,
+        "For bounded fetch-and-present tasks, aim to finish within ten model requests including completion "
+        "review. Fetch the primary source first, batch independent enrichment, and turn the resulting ledger "
+        "directly into the requested answer. Preserve verified results when enrichment fails; do not treat "
+        "optional enrichment as a prerequisite for delivering the verified core.\n");
     strbuf_append(&b,
         "Artifacts: declare acceptance.artifacts or shell outputs only for files the user explicitly asked to be "
         "written. Analysis/verification tasks use requires_observation satisfied by direct tool results; do not "
@@ -737,7 +748,7 @@ size_t planner_input_budget_bytes(llm *l, const tool_registry *tools,
 }
 
 static cJSON *acceptance_schema(void) {
-    return cJSON_Parse("{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"requires_action\":{\"type\":\"boolean\"},\"requires_observation\":{\"type\":\"boolean\"},\"artifacts\":{\"type\":\"array\",\"maxItems\":64,\"items\":{\"type\":\"string\"}},\"full_reads\":{\"type\":\"array\",\"maxItems\":64,\"items\":{\"type\":\"string\"}}}}");
+    return cJSON_Parse("{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"requires_action\":{\"type\":\"boolean\"},\"requires_observation\":{\"type\":\"boolean\"},\"requires_images\":{\"type\":\"boolean\"},\"artifacts\":{\"type\":\"array\",\"maxItems\":64,\"items\":{\"type\":\"string\"}},\"full_reads\":{\"type\":\"array\",\"maxItems\":64,\"items\":{\"type\":\"string\"}}}}");
 }
 static char *native_tool_catalog(const tool_registry *tools, struct policy_engine *policy) {
     if (!tools) return NULL;

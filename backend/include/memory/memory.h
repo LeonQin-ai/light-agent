@@ -22,7 +22,8 @@ void memory_free(memory *m);
 void memory_working_push(memory *m, const char *text);
 int memory_working_count(memory *m);
 /* Borrowed i-th working item (0 = newest). Do not free. */
-const char *memory_working_at(memory *m, int i);
+/* Snapshot owned by the caller. Free after use. */
+char *memory_working_at(memory *m, int i);
 
 /* Long-term facts. value may be NULL to delete the key. */
 void memory_remember(memory *m, const char *key, const char *value);

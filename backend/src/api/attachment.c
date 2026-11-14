@@ -149,7 +149,7 @@ cJSON *attachment_store(const char *root, memory *m, const char *name,
     if (!root || !name || !*name || !body || !len || len>ATTACHMENT_MAX_BYTES) return NULL;
     char dir[1100], id[33], path[1200], base[64];
     path_join(dir,sizeof dir,root,"uploads"); fs_mkdirs(dir);
-    do { auth_generate_token(id,16); if(!*id) return NULL; file_path(path,root,id,"json"); } while (fs_exists(path));
+    do { auth_generate_token(id,33,16); if(!*id) return NULL; file_path(path,root,id,"json"); } while (fs_exists(path));
     file_path(path,root,id,"raw");
     if (fs_write_file(path,body,len)) return NULL;
     cJSON *o=cJSON_CreateObject();
