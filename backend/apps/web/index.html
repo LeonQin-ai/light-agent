@@ -6445,23 +6445,6 @@ function renderChatEntry(entry){
     meta.textContent=thoughtMetaText(entry,entry.progress);
     el.append(meta);
   }
-  if(entry.pending && entry.progress){
-    const timeline=document.createElement('div');
-    timeline.className='muted';
-    timeline.setAttribute('role','log');
-    timeline.setAttribute('aria-label','实时执行过程');
-    timeline.style.cssText='font-size:12px;line-height:1.6;overflow-wrap:anywhere';
-    const labels=[...(entry.progressEvents||[]),entry.progress]
-      .filter(p=>p.activity || p.cur_tool)
-      .map(p=>p.activity || progressLabel(p));
-    for(const [i,label] of labels.entries()){
-      if(label===labels[i-1])continue;
-      const row=document.createElement('div');
-      row.textContent=label;
-      timeline.append(row);
-    }
-    if(timeline.childElementCount)el.append(timeline);
-  }
   const updates=[...(entry.progressEvents||[]),entry.progress||{}].map(p=>p.commentary).filter(Boolean);
   if(updates.length && (entry.pending || entry.progress?.stage!=='completed')){
     const log=document.createElement('div');log.className='chat-stage-updates';log.setAttribute('role','log');log.setAttribute('aria-label','阶段性结论');
