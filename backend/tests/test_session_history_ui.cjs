@@ -71,7 +71,9 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('.run-collapse').last().click();
   const meta=page.locator('.run-thought-meta').last();
   await meta.waitFor({state:'visible',timeout:5000});
-  assert.equal(await meta.innerText(),'7m 43s · ↑ 10.9k tokens · thought for 18s');
+  const expectedMeta='7m 43s · ↑ 10.9k · ↓ 800 tokens · thought for 18s';
+  assert.equal(await meta.innerText(),expectedMeta);
+  assert.equal(await page.locator('.chat-execution-meta').last().innerText(),expectedMeta);
   const body=page.locator('.run-thought-body').last();
   const css=await body.evaluate(el=>({overflow:getComputedStyle(el).overflowY,max:getComputedStyle(el).maxHeight}));
   assert.equal(css.overflow,'auto','thinking body must scroll');
