@@ -17,6 +17,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
    return route.fulfill({contentType:'application/json',body:JSON.stringify(obj)});
   });
   await page.goto('http://ui.test/');await page.locator('#chat-input').waitFor();assert.equal(await page.locator('#chat-mic').count(),0,'unavailable dictation entry is removed (#217)');
+  await page.waitForFunction(()=>!document.getElementById('chat-input').disabled);
   await page.locator('#chat-permission').selectOption('ask');await page.evaluate(()=>loadChat());
   assert.equal(await page.locator('#chat-permission').inputValue(),'ask');
   assert.equal(await page.locator('#chat-thinking-toggle').count(),0);
