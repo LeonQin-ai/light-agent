@@ -105,7 +105,7 @@ static int is_powershell_launcher(const char *command) {
 static char *powershell_command(const char *utf8) {
     static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     strbuf script;strbuf_init(&script);
-    strbuf_append(&script,"$ProgressPreference='SilentlyContinue';[Console]::OutputEncoding=[Text.Encoding]::UTF8;");
+    strbuf_append(&script,"$ProgressPreference='SilentlyContinue';[Console]::OutputEncoding=[Text.Encoding]::UTF8;$env:PYTHONIOENCODING='utf-8';");
     strbuf_append(&script,utf8);
     int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, script.buf, -1, NULL, 0);
     if (n <= 0 || n > 12000) {strbuf_free(&script);return NULL;}
@@ -460,7 +460,7 @@ static int ssh_append_options(strbuf *out, const ssh_profile *profile, int has_p
     if (rc) { strbuf_free(&native); return rc; }
     /* ProcessStartInfo.Arguments bypasses CMD and PowerShell's native argument
      * rewriting. Remote pipes, percent signs and backslashes remain literal. */
-    strbuf_append(out,"$ProgressPreference='SilentlyContinue';[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
+    strbuf_append(out,"$ProgressPreference='SilentlyContinue';[Console]::OutputEncoding=[Text.Encoding]::UTF8;$env:PYTHONIOENCODING='utf-8';"
                      "$i=New-Object Diagnostics.ProcessStartInfo;$i.FileName='ssh';$i.Arguments=");
     ps_literal(out,native.buf+4);
     strbuf_append(out,";$i.UseShellExecute=$false;$i.CreateNoWindow=$true;$i.RedirectStandardOutput=$true;"

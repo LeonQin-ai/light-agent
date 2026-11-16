@@ -200,18 +200,23 @@ char *tool_file_cache_context_excluding(const char *session_id, const char *quer
         while (*p && out.len<max_bytes) {
             const char *end=strchr(p,'\n'); if(!end) end=p+strlen(p);
             size_t n=(size_t)(end-p);
-            if (n && cached_line_relevant(p,n,query) && !excerpt_already_present(recent_observations,p,n)) {
+            if (n && cached_line_relevant(p,n,query) && !excerpt_already_present(recent_observations,p,n) &&
+                !excerpt_already_present(out.buf,p,n)) {
                 char header[2200];
                 int hn=snprintf(header,sizeof(header),"- %s@%llu:%zu: ",e->path,(unsigned long long)e->offset,line_no);
                 size_t remain=max_bytes-out.len;
-                if(hn<0) break;
-                if((size_t)hn>=remain){strbuf_append_n(&out,header,remain);break;}
+                if(hn<0 || (size_t)hn>=sizeof(header)) break;
+                /* Preserve complete source lines. Oversized excerpts remain
+                 * available through file_read instead of entering the prompt
+                 * as a misleading partial fact. */
+                if ((size_t)hn + n + 1 > remain) {
+                    if (!*end) break;
+                    p=end+1; line_no++;
+                    continue;
+                }
                 strbuf_append_n(&out,header,(size_t)hn);
-                remain=max_bytes-out.len;
-                size_t take=n;
-                if(take>=remain) take=remain ? remain-1 : 0;
-                if(take) strbuf_append_n(&out,p,take);
-                if(out.len<max_bytes) strbuf_append(&out,"\n");
+                strbuf_append_n(&out,p,n);
+                strbuf_append(&out,"\n");
                 e->tick=++g_file_page_tick;
             }
             if(!*end) break;

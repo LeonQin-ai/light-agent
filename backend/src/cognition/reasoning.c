@@ -271,7 +271,7 @@ struct reasoning {
     int timeout_script_nudged; /* one-shot "stop rewriting scripts" guidance */
     uint64_t versioned_seen[512]; /* file pages and directory contents survive opaque tools */
     int versioned_seen_n;
-    int round_search_skips;
+    int round_cached_action_skips;
     /* Same-target grep cadence: the engine appends a file_read guidance note
      * when one tree is searched piecemeal over and over. */
     struct { char path[1024]; int count; } grep_path[8];
@@ -2311,8 +2311,11 @@ static char *build_context(reasoning *r, const char *prompt) {
     /* L1 page cache: recover older, still-version-valid source excerpts by
      * relevance when their original tool output falls outside the bounded
      * recent observation window. Scope is the active session only. */
-    size_t recent_start = r->round_log_len > input_budget / 2 ? r->round_log_len - input_budget / 2 : 0;
-    const char *recent = r->round_log ? r->round_log + recent_start : "";
+    size_t log_budget = input_budget / 2;
+    size_t log_start = r->round_log_len > log_budget ? r->round_log_len - log_budget : 0;
+    if (log_start)
+        log_start = observation_boundary(r, r->round_log, log_start, r->round_log_len);
+    const char *recent = r->round_log ? r->round_log + log_start : "";
     size_t cache_budget = input_budget / 6;
     if (cache_budget > r->observation_budget_bytes / 2)
         cache_budget = r->observation_budget_bytes / 2;
@@ -2331,10 +2334,6 @@ static char *build_context(reasoning *r, const char *prompt) {
         strbuf_appendf(&b, "## 之前轮次的动作结果 (第 %d/%d 轮)\n", r->round_idx - 1, r->max_rounds);
         /* Keep the full run log for the UI, but bound repeated planner input.
          * Otherwise each round resends every prior page and burns tokens. */
-        size_t log_budget = input_budget / 2;
-        size_t log_start = r->round_log_len > log_budget ? r->round_log_len - log_budget : 0;
-        if (log_start)
-            log_start = observation_boundary(r, r->round_log, log_start, r->round_log_len);
         if (log_start)
             strbuf_append(&b, "[Earlier action log compressed; full log is retained. Recent observations follow.]\n");
         if (strstr(r->round_log, "(earlier action results were folded away"))
@@ -3076,8 +3075,10 @@ static void remember_tool_image(reasoning *r,struct run_step *step) {
         cJSON_ArrayForEach(item,r->tool_images) {
             const char *old=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(item,"id"));
             if(old && !strcmp(old,id)) {
+                /* The attachment id identifies the captured file version.
+                 * Reusing that observation must not upload the same image
+                 * again on every subsequent planning request. */
                 duplicate=1;
-                cJSON_DeleteItemFromObjectCaseSensitive(item,"sent");
             }
         }
         if(!duplicate) {
@@ -3101,7 +3102,7 @@ static int probe_reuse_round(reasoning *r,int probe_only,const char *tool,
         : cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"args"));
     int round=-1;
     if(cmd && *cmd) {
-        uint64_t sig=hash64(cmd,strlen(cmd));
+        uint64_t sig=hash64(args_json,strlen(args_json));
         for(int i=0;i<r->probe_seen_n;i++)
             if(r->probe_seen[i].cmd==sig && r->probe_seen[i].digest) {
                 round=r->probe_seen[i].round;
@@ -3121,7 +3122,7 @@ static void probe_mark_executed(reasoning *r,int probe_only,const char *tool,
         ? cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"command"))
         : cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"args"));
     if(cmd && *cmd) {
-        uint64_t sig=hash64(cmd,strlen(cmd));
+        uint64_t sig=hash64(args_json,strlen(args_json));
         int slot=-1;
         for(int i=0;i<r->probe_seen_n;i++)if(r->probe_seen[i].cmd==sig){slot=i;break;}
         if(slot<0 && r->probe_seen_n<(int)(sizeof(r->probe_seen)/sizeof(r->probe_seen[0]))){
@@ -3145,7 +3146,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
 
     (void)sm;
     r->all_actions_ok = 1;
-    r->round_search_skips = 0;
+    r->round_cached_action_skips = 0;
     r->round_new_observations = r->round_repeat_reads = 0;
     strbuf_init(&b);
 
@@ -3347,7 +3348,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
             for (int j = 0; search_sig && j < count && !repeated; j++)
                 repeated = seen[j] == search_sig;
             if (repeated) {
-                r->round_search_skips++;
+                r->round_cached_action_skips++;
                 r->round_repeat_reads++;
                 r->ok_actions++; /* cached observation satisfies verification */
                 resolve_failed_tool(r,r->actions[i].tool,r->actions[i].args_json);
@@ -3386,12 +3387,26 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
         if (probe_only) {
             int reused = probe_reuse_round(r, probe_only, r->actions[i].tool, r->actions[i].args_json);
             if (reused > 0) {
+                r->round_cached_action_skips++;
                 r->round_repeat_reads++;
                 r->ok_actions++;
                 strbuf_appendf(&b,
                     "[%s] [note] read-only probe already executed in round %d; no write has occurred since. "
                     "Reuse that observation instead of running the same query again.\n",
                     r->actions[i].tool, reused);
+                /* Reuse the observed facts as well as the success receipt.
+                 * The original observation may have left the context window. */
+                for (int k=r->n_steps-1; k>=0; --k) {
+                    struct run_step *previous=&r->steps[k];
+                    if (previous->ok==1 && previous->args && previous->out &&
+                        strcmp(previous->out,"read-only probe reused; workspace unchanged") &&
+                        !strcmp(previous->tool,r->actions[i].tool) &&
+                        !strcmp(previous->args,r->actions[i].args_json)) {
+                        strbuf_append(&b,previous->out);
+                        strbuf_append(&b,"\n");
+                        break;
+                    }
+                }
                 run_step_add(r, r->actions[i].tool, r->actions[i].args_json,
                              "read-only probe reused; workspace unchanged", 1, 0);
                 continue;
@@ -4657,7 +4672,7 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     r->run_successful_tools = 0;
     r->search_seen_n = r->versioned_seen_n = 0;
     r->grep_path_n = 0;
-    r->round_search_skips = 0;
+    r->round_cached_action_skips = 0;
     r->observation_seen_n = 0;
     r->opaque_seen_n = 0;r->artifact_seen_n=0;r->artifact_versions_seen_n=0;r->file_receipts_n=0;
     r->round_new_observations = r->round_repeat_reads = 0;
@@ -5016,7 +5031,7 @@ restart_planning:
                 strcmp(r->actions[i].tool, "file_read") != 0 &&
                 strcmp(r->actions[i].tool, "list_dir") != 0) search_only = 0;
         search_only_rounds = search_only ? search_only_rounds + 1 : 0;
-        if (r->n_actions > 0 && r->round_search_skips == r->n_actions) {
+        if (r->n_actions > 0 && r->round_cached_action_skips == r->n_actions) {
             round_log_append(r, "[system] 本轮全部动作已经成功执行过，没有新增事实。"
                                 "先核对已有结果是否已满足原始请求：满足则按当前完成协议交付答案，不要再次执行原请求中的第一步。"
                                 "仅在仍缺少明确必需事实时才查询新的目标；不得为了继续执行而列目录、扩大范围或无条件翻页。"

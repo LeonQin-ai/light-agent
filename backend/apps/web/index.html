@@ -4822,10 +4822,43 @@ function chatImageButton(src,name){
   button.append(image); button.title='点击放大图片';
   image.addEventListener('error',()=>button.replaceWith(document.createTextNode('图片暂不可预览：'+image.alt)),{once:true});
   button.onclick=()=>{
-    const dialog=document.createElement('dialog'); dialog.style.maxWidth='95vw';
-    const close=document.createElement('button'); close.textContent='关闭'; close.onclick=()=>dialog.close();
-    const full=document.createElement('img'); full.src=src; full.alt=image.alt; full.style.cssText='display:block;max-width:85vw;max-height:80vh;object-fit:contain';
-    dialog.append(close,full); document.body.append(dialog); dialog.addEventListener('close',()=>dialog.remove(),{once:true}); dialog.showModal();
+    const dialog=document.createElement('dialog');
+    dialog.style.cssText='max-width:95vw;width:90vw;padding:16px';
+    dialog.setAttribute('aria-label','图片预览');
+    const toolbar=document.createElement('div');
+    toolbar.style.cssText='display:flex;gap:8px;align-items:center;margin-bottom:12px';
+    const viewport=document.createElement('div');
+    viewport.style.cssText='overflow:auto;height:75vh';
+    const full=document.createElement('img'); full.src=src; full.alt=image.alt;
+    full.style.cssText='display:block;max-width:none;max-height:none';
+    let scale=1, fittedWidth=0;
+    const label=document.createElement('span'); label.setAttribute('aria-live','polite');
+    const resize=(next)=>{
+      scale=Math.max(0.1,Math.min(8,next));
+      if(fittedWidth) full.style.width=(fittedWidth*scale)+'px';
+      label.textContent=Math.round(scale*100)+'%';
+    };
+    const control=(text,action)=>{
+      const button=document.createElement('button'); button.type='button';
+      button.textContent=text; button.onclick=action; toolbar.append(button);
+    };
+    control('缩小',()=>resize(scale/1.25));
+    control('放大',()=>resize(scale*1.25));
+    control('适应窗口',()=>{resize(1);viewport.scrollTo(0,0);});
+    toolbar.append(label);
+    control('关闭',()=>dialog.close());
+    full.onload=()=>{
+      fittedWidth=Math.min(full.naturalWidth,viewport.clientWidth,
+        viewport.clientHeight*full.naturalWidth/full.naturalHeight);
+      resize(1);
+    };
+    viewport.addEventListener('wheel',event=>{
+      if(!event.ctrlKey)return;
+      event.preventDefault();resize(scale*(event.deltaY<0?1.1:1/1.1));
+    },{passive:false});
+    viewport.append(full);dialog.append(toolbar,viewport);document.body.append(dialog);
+    dialog.addEventListener('close',()=>dialog.remove(),{once:true});dialog.showModal();
+    resize(1);
   };
   return button;
 }

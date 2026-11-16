@@ -178,8 +178,8 @@ static char *build_catalog_prompt(const tool_registry *tools, struct skill_regis
     strbuf_append(&b, "Browser extraction: a navigation/accessibility snapshot may omit article text. "
         "When supported by the installed browser MCP, evaluate document.body.innerText (and relevant frames) "
         "after the requested content loads. Follow actual site pagination/scroll loading when needed. "
-        "If a tool returns [full tool result saved], read its local file in 4000-byte pages to EOF; "
-        "the preview is not the complete result. Do not repeatedly navigate to the same page for missing text.\n");
+        "If a tool returns [full tool result saved], use its preview when sufficient and read only ranges needed for the current task; "
+        "the full result remains available at that path. Read to EOF only when the user requires exhaustive coverage. Do not repeatedly navigate to the same page for missing text.\n");
     /* The runtime may execute through Git-for-Windows bash even on Windows.
      * Report the interpreter that will actually run, so the model's syntax
      * matches it instead of writing cmd-only commands into bash (#274). */
@@ -189,10 +189,11 @@ static char *build_catalog_prompt(const tool_registry *tools, struct skill_regis
         strbuf_appendf(&b,
             "Shell environment: %s. Use the matching syntax: POSIX (forward slashes, &&, $VAR, single quotes) "
             "for bash/sh; cmd-only syntax (cd /d, %%VAR%%, dir /b, set VAR=) only when the backend is cmd.exe. "
-            "Do not mix the two. Avoid heredocs and multi-line input; for file search use grep/glob, for file "
-            "content use file_read paging, and for text processing write a python file with file_write then run "
+            "Do not mix the two. For file search use grep/glob, for file "
+            "content use file_read paging. Use a direct command for simple text processing. For complex reusable processing, write a python file with file_write then run "
             "`python script.py`. Redirect output with > file when a tool result needs to become an artifact.\n",
             shell_desc);
+        strbuf_append(&b,"A successful file_write verifies the written bytes. Run newly written helper scripts directly; reread source only to diagnose an error or inspect changed content. Validate their actual outputs.\n");
     }
     strbuf_append(&b,
         "Evidence parity: direct tool results (file_read, grep, glob, git, shell) and results produced by your own "
