@@ -239,6 +239,22 @@ char *agent_pool_role_copy(agent_pool *p, const char *name) {
     return role;
 }
 
+int agent_pool_model_copy(agent_pool *p, const char *name, char **provider, char **model) {
+    if (provider) *provider = NULL;
+    if (model) *model = NULL;
+    if (!p || !name) return -1;
+    mutex_lock(&p->mtx);
+    int idx = find_agent(p, name);
+    if (idx >= 0) {
+        if (provider && p->agents[idx].provider && *p->agents[idx].provider)
+            *provider = xstrdup(p->agents[idx].provider);
+        if (model && p->agents[idx].model && *p->agents[idx].model)
+            *model = xstrdup(p->agents[idx].model);
+    }
+    mutex_unlock(&p->mtx);
+    return idx >= 0 ? 0 : -1;
+}
+
 char *agent_pool_task_prompt(agent_pool *p, const char *name, const char *task) {
     if (!task) return NULL;
     char *role = agent_pool_role_copy(p, name);

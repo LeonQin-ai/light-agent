@@ -27,7 +27,10 @@ SRCS := $(shell find src third_party/cJSON -name '*.c' | grep -v -E '^src/os/(li
 include/api/web_ui.h: apps/web/index.html tools/gen_web_ui.py
 	python3 tools/gen_web_ui.py
 
-$(SRCS): | include/api/web_ui.h
+include/api/manju_pipeline.h: tools/manju/manju_pipeline.py tools/gen_manju_pipeline.py
+	python3 tools/gen_manju_pipeline.py
+
+$(SRCS): | include/api/web_ui.h include/api/manju_pipeline.h
 .DEFAULT_GOAL := all
 
 all: build/light-agent build/light-agent-test build/light-agent-scenario build/mock-llm-server build/test-adapters build/light-agent-e2e build/light-agent-bench build/bench-runtime

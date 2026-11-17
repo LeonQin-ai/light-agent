@@ -3,6 +3,7 @@
 #include "api/api_rest.h"
 #include "api/http_server.h"
 #include "api/web_ui.h"
+#include "api/manju_pipeline.h"
 #include "api/market.h"
 #include "runtime/scheduler.h"
 #include "cognition/planner.h"
@@ -1190,6 +1191,358 @@ static int h_flow_run(const http_request *req, http_response *resp, void *ud) {
     free(dag_json);
 
     http_resp_appendf(resp, "{\"id\":%lld,\"status\":\"queued\"}", (long long)id);
+    return 0;
+}
+
+/* ================= 漫剧 (motion-comic) one-click production =================
+ * POST /v1/manju/import {"text"|"path","title"?,"episode"?} — split a novel
+ * into chapters inside the workspace, materialise the embedded production
+ * pipeline, register the 分镜导演/画师/配音/合成 team, and queue a fixed DAG:
+ * storyboard → (art ‖ voice) → compose. No LLM call here: the plan is
+ * deterministic, so import works offline and is unit-testable. */
+
+static const char *manju_role_director =
+    "你是漫剧分镜导演。把小说章节改编成镜头脚本 shots.json："
+    "{\"title\",\"badge\",\"shots\":[{\"kind\":\"narration|dialogue|sys\",\"text\"}]}。"
+    "对白独立成镜（dialogue），旁白 narration，系统/提示音 sys；每镜一句、节奏紧凑、突出冲突。"
+    "先运行 python tools/manju/manju_pipeline.py shots --chapter <章节md> --out <shots.json> 生成基础镜头表，"
+    "再按戏剧节奏审阅修订。最终回复用反引号单独标出 shots.json 路径。";
+static const char *manju_role_artist =
+    "你是漫剧画师。依据镜头脚本渲染全部画面："
+    "python tools/manju/manju_pipeline.py panels --shots <shots.json> --out <frames目录> --ep <集号>。"
+    "画面为赛璐璐人物+氛围背景（对白双人过肩、旁白环境远景）。"
+    "核对 panels.json 与每张 PNG、poster.png 均已生成且可打开。最终回复用反引号标出 frames 目录与 poster 路径。";
+static const char *manju_role_voice =
+    "你是漫剧配音导演。为镜头脚本逐句合成配音："
+    "python tools/manju/manju_pipeline.py tts --shots <shots.json> --out <audio目录>。"
+    "旁白低沉男声、对白年轻男声、系统播报腔（edge_tts 神经网络音色）；镜头时长跟随语音长度。"
+    "核对 audio.json 每句 wav 存在且时长合理。最终回复用反引号标出 audio 目录路径。";
+static const char *manju_role_editor =
+    "你是漫剧剪辑合成师。把画面与配音合成整集成片："
+    "python tools/manju/manju_pipeline.py compose --shots <shots.json> --panels <frames目录> --audio <audio目录> "
+    "--out <videos/epNN.mp4> --ep <集号> --manifest <manifest.json>。"
+    "脚本自带帧数/音轨/首尾帧校验；校验失败必须排查并重渲，不能交付损坏文件。"
+    "最终回复用反引号标出 mp4 路径，并给出时长与帧数。";
+
+/* A chapter marker is a short line beginning 第…章 (UTF-8). */
+static int manju_chapter_marker(const char *line, size_t len) {
+    if (len < 9 || len > 120) return 0;
+    if ((unsigned char)line[0] != 0xE7 || (unsigned char)line[1] != 0xAC ||
+        (unsigned char)line[2] != 0xAC) return 0; /* 第 */
+    for (size_t i = 3; i + 3 <= len && i < 60; i++)
+        if ((unsigned char)line[i] == 0xE7 && (unsigned char)line[i + 1] == 0xAB &&
+            (unsigned char)line[i + 2] == 0xA0) return 1; /* 章 */
+    return 0;
+}
+
+/* Split novel text at chapter markers; with none, the whole text is one
+ * chapter. Returns a malloc'd array of malloc'd strings (caller frees). */
+static char **manju_split_chapters(const char *text, int *count) {
+    *count = 0;
+    if (!text || !*text) return NULL;
+    size_t len = strlen(text), pos = 0, starts[500];
+    int nstarts = 0;
+    while (pos < len && nstarts < 500) {
+        const char *nl = strchr(text + pos, '\n');
+        size_t end = nl ? (size_t)(nl - text) : len;
+        size_t ll = end - pos;
+        while (ll && (text[pos + ll - 1] == '\r' || text[pos + ll - 1] == ' ')) ll--;
+        if (manju_chapter_marker(text + pos, ll)) starts[nstarts++] = pos;
+        pos = nl ? end + 1 : len;
+    }
+    int n = nstarts ? nstarts : 1;
+    char **out = calloc((size_t)n, sizeof(*out));
+    if (!out) return NULL;
+    for (int i = 0; i < n; i++) {
+        size_t from = nstarts ? (i == 0 ? 0 : starts[i]) : 0;
+        size_t to = nstarts ? (i + 1 < nstarts ? starts[i + 1] : len) : len;
+        out[i] = malloc(to - from + 1);
+        if (!out[i]) { for (int k = 0; k < i; k++) free(out[k]); free(out); return NULL; }
+        memcpy(out[i], text + from, to - from);
+        out[i][to - from] = '\0';
+    }
+    *count = n;
+    return out;
+}
+
+/* Filesystem-safe slug: keep UTF-8 letters and ASCII alphanumerics, fold
+ * everything else to single dashes, bound to 64 bytes on a UTF-8 boundary. */
+static void manju_slug(const char *title, char *out, size_t cap) {
+    size_t o = 0;
+    int dash = 0;
+    for (const unsigned char *p = (const unsigned char *)(title ? title : ""); *p && o + 1 < cap; p++) {
+        unsigned char c = *p;
+        int keep = c >= 0x80 || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+        if (keep) { out[o++] = (char)c; dash = 0; }
+        else if (!dash && o) { out[o++] = '-'; dash = 1; }
+    }
+    while (o && out[o - 1] == '-') o--;
+    if (o > 64) {
+        o = 64;
+        while (o && ((unsigned char)out[o - 1] & 0xC0) == 0x80) o--;
+        if (o && (unsigned char)out[o - 1] >= 0xC0) o--;
+    }
+    out[o] = '\0';
+    if (!o) snprintf(out, cap, "novel");
+}
+
+static int manju_name_cmp(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+static void manju_free_chapters(char **ch, int n) {
+    if (!ch) return;
+    for (int i = 0; i < n; i++) free(ch[i]);
+    free(ch);
+}
+
+static int manju_ensure_agent(runtime_ctx *ctx, const char *name, const char *role) {
+    if (!ctx->agents) return -1;
+    if (agent_pool_find(ctx->agents, name) >= 0) return 0;
+    if (agent_pool_add(ctx->agents, name, role) < 0) return -1;
+    agent_pool_save(ctx->agents, ctx->state_root);
+    if (ctx->state) state_store_agent_set(ctx->state, name, role, "idle");
+    return 0;
+}
+
+static int h_manju_import(const http_request *req, http_response *resp, void *ud) {
+    runtime_ctx *ctx = (runtime_ctx *)ud;
+    char *b = body_str(req);
+    cJSON *root = b ? cJSON_Parse(b) : NULL;
+    free(b);
+    if (!root || !cJSON_IsObject(root)) {
+        if (root) cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"need a JSON object\"}");
+        return 0;
+    }
+    const char *text = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "text"));
+    const char *path = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "path"));
+    const char *title = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "title"));
+    cJSON *jep = cJSON_GetObjectItemCaseSensitive(root, "episode");
+    int episode = cJSON_IsNumber(jep) ? (int)jep->valuedouble : 1;
+    if ((!text || !*text) && (!path || !*path)) {
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"need 'text' (novel content) or 'path' (server file/dir)\"}");
+        return 0;
+    }
+    char *directory = workspace_pick(ctx, root, NULL);
+    if (!directory) {
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"workspace must be registered and available\"}");
+        return 0;
+    }
+
+    /* Gather chapters: inline text is split at 第X章 markers; a server path
+     * is either one file (split the same way) or a directory of .md/.txt
+     * chapter files (sorted, one chapter per file). */
+    char **chapters = NULL;
+    int nch = 0;
+    char *owned_text = NULL;
+    if (text && *text) {
+        chapters = manju_split_chapters(text, &nch);
+    } else {
+        long long sz = fs_file_size(path);
+        if (sz >= 0) {
+            owned_text = fs_read_file(path);
+            if (owned_text) chapters = manju_split_chapters(owned_text, &nch);
+        } else {
+            dir_list dl;
+            memset(&dl, 0, sizeof(dl));
+            if (fs_list_dir(path, &dl) == 0 && dl.count) {
+                char **names = calloc(dl.count, sizeof(*names));
+                int nn = 0;
+                for (size_t i = 0; i < dl.count; i++) {
+                    const char *nm = dl.items[i].name;
+                    size_t l = strlen(nm);
+                    if (!dl.items[i].is_dir && l > 3 &&
+                        (strcmp(nm + l - 3, ".md") == 0 || strcmp(nm + l - 4, ".txt") == 0))
+                        names[nn++] = xstrdup(nm);
+                }
+                qsort(names, (size_t)nn, sizeof(*names), manju_name_cmp);
+                if (nn > 500) nn = 500;
+                chapters = calloc((size_t)nn, sizeof(*chapters));
+                for (int i = 0; i < nn && chapters; i++) {
+                    char full[2048];
+                    path_join(full, sizeof(full), path, names[i]);
+                    chapters[i] = fs_read_file(full);
+                    if (!chapters[i]) { nn = i; break; }
+                }
+                nch = chapters ? nn : 0;
+                for (int i = 0; i < nn; i++) free(names[i]);
+                free(names);
+            }
+            fs_list_free(&dl);
+        }
+    }
+    free(owned_text);
+    if (!chapters || nch <= 0) {
+        manju_free_chapters(chapters, nch);
+        free(directory);
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"no readable novel chapters in 'text' or 'path'\"}");
+        return 0;
+    }
+    if (episode < 1) episode = 1;
+    if (episode > nch) episode = nch;
+
+    char slug[96];
+    manju_slug(title && *title ? title : "导入小说", slug, sizeof(slug));
+    char novel_dir[256], novel_abs[2048];
+    snprintf(novel_dir, sizeof(novel_dir), "novel/%s", slug);
+    path_join(novel_abs, sizeof(novel_abs), directory, novel_dir);
+    if (fs_mkdirs(novel_abs) != 0) {
+        manju_free_chapters(chapters, nch);
+        free(directory);
+        cJSON_Delete(root);
+        resp->status = 500;
+        http_resp_json(resp, "{\"error\":\"cannot create novel directory in workspace\"}");
+        return 0;
+    }
+    for (int i = 0; i < nch; i++) {
+        char rel[320], abs[2048];
+        snprintf(rel, sizeof(rel), "%s/chapter%02d.md", novel_dir, i + 1);
+        path_join(abs, sizeof(abs), directory, rel);
+        if (fs_write_file(abs, chapters[i], strlen(chapters[i])) != 0) {
+            manju_free_chapters(chapters, nch);
+            free(directory);
+            cJSON_Delete(root);
+            resp->status = 500;
+            http_resp_json(resp, "{\"error\":\"cannot write chapter files\"}");
+            return 0;
+        }
+    }
+    manju_free_chapters(chapters, nch);
+
+    /* Materialise the embedded pipeline so the team can run it from the
+     * workspace with a plain `python tools/manju/manju_pipeline.py …`. */
+    char pipe_dir[2048], pipe_abs[2048];
+    path_join(pipe_dir, sizeof(pipe_dir), directory, "tools/manju");
+    path_join(pipe_abs, sizeof(pipe_abs), directory, "tools/manju/manju_pipeline.py");
+    if (fs_mkdirs(pipe_dir) != 0 ||
+        fs_write_file(pipe_abs, manju_pipeline_py, strlen(manju_pipeline_py)) != 0) {
+        free(directory);
+        cJSON_Delete(root);
+        resp->status = 500;
+        http_resp_json(resp, "{\"error\":\"cannot materialise manju pipeline\"}");
+        return 0;
+    }
+
+    if (manju_ensure_agent(ctx, "manju-director", manju_role_director) != 0 ||
+        manju_ensure_agent(ctx, "manju-artist", manju_role_artist) != 0 ||
+        manju_ensure_agent(ctx, "manju-voice", manju_role_voice) != 0 ||
+        manju_ensure_agent(ctx, "manju-editor", manju_role_editor) != 0) {
+        free(directory);
+        cJSON_Delete(root);
+        resp->status = 500;
+        http_resp_json(resp, "{\"error\":\"cannot register manju team agents\"}");
+        return 0;
+    }
+
+    /* Fixed DAG with deterministic relative paths: storyboard first, art and
+     * voice in parallel behind it, compose last. */
+    char chapter_rel[320], epdir[64], shots[128], frames[128], audio[128], video[160], manifest[160];
+    snprintf(chapter_rel, sizeof(chapter_rel), "%s/chapter%02d.md", novel_dir, episode);
+    snprintf(epdir, sizeof(epdir), "manju/ep%02d", episode);
+    snprintf(shots, sizeof(shots), "%s/shots.json", epdir);
+    snprintf(frames, sizeof(frames), "%s/frames", epdir);
+    snprintf(audio, sizeof(audio), "%s/audio", epdir);
+    snprintf(video, sizeof(video), "%s/videos/ep%02d.mp4", epdir, episode);
+    snprintf(manifest, sizeof(manifest), "%s/manifest.json", epdir);
+    const char *ntitle = title && *title ? title : "导入小说";
+    char task1[2048], task2[2048], task3[2048], task4[2048];
+    snprintf(task1, sizeof(task1),
+             "把小说《%s》第%d章改编成漫剧第%d集镜头脚本。章节文件：%s。"
+             "先运行 python tools/manju/manju_pipeline.py shots --chapter %s --out %s 生成基础镜头表，"
+             "再按戏剧节奏审阅修订（对白独立成镜、每镜一句、突出冲突）。最终回复用反引号标出 %s 路径。",
+             ntitle, episode, episode, chapter_rel, chapter_rel, shots, shots);
+    snprintf(task2, sizeof(task2),
+             "依据镜头脚本 %s 渲染漫剧第%d集全部画面："
+             "python tools/manju/manju_pipeline.py panels --shots %s --out %s --ep %d。"
+             "核对 panels.json 与每张 PNG、poster.png 均已生成。最终回复用反引号标出 %s 目录与 poster 路径。",
+             shots, episode, shots, frames, episode, frames);
+    snprintf(task3, sizeof(task3),
+             "为镜头脚本 %s 逐句合成漫剧第%d集配音："
+             "python tools/manju/manju_pipeline.py tts --shots %s --out %s。"
+             "核对 audio.json 每句 wav 存在且时长合理。最终回复用反引号标出 %s 目录路径。",
+             shots, episode, shots, audio, audio);
+    snprintf(task4, sizeof(task4),
+             "把画面与配音合成漫剧第%d集成片："
+             "python tools/manju/manju_pipeline.py compose --shots %s --panels %s --audio %s --out %s --ep %d --manifest %s。"
+             "脚本自带帧数/音轨/首尾帧校验，失败必须排查重渲。最终回复用反引号标出 %s 路径与时长、帧数。",
+             episode, shots, frames, audio, video, episode, manifest, video);
+
+    cJSON *dag = cJSON_CreateObject();
+    cJSON *nodes = cJSON_CreateArray(), *edges = cJSON_CreateArray();
+    cJSON_AddItemToObject(dag, "nodes", nodes);
+    cJSON_AddItemToObject(dag, "edges", edges);
+    const char *ids[4] = {"step1", "step2", "step3", "step4"};
+    const char *agents[4] = {"manju-director", "manju-artist", "manju-voice", "manju-editor"};
+    const char *tasks[4] = {task1, task2, task3, task4};
+    for (int i = 0; i < 4; i++) {
+        cJSON *nd = cJSON_CreateObject();
+        cJSON_AddStringToObject(nd, "id", ids[i]);
+        cJSON_AddStringToObject(nd, "agent", agents[i]);
+        cJSON_AddStringToObject(nd, "task", tasks[i]);
+        cJSON_AddItemToArray(nodes, nd);
+    }
+    const char *from[4] = {"step1", "step1", "step2", "step3"};
+    const char *to[4] = {"step2", "step3", "step4", "step4"};
+    for (int i = 0; i < 4; i++) {
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "from", from[i]);
+        cJSON_AddStringToObject(e, "to", to[i]);
+        cJSON_AddItemToArray(edges, e);
+    }
+    char *dag_json = cJSON_PrintUnformatted(dag);
+    cJSON_Delete(dag);
+    char *verr = NULL;
+    if (!dag_json || flow_validate(dag_json, &verr) != 0) {
+        http_resp_appendf(resp, "{\"error\":\"invalid manju flow: %s\"}", verr ? verr : "serialize failed");
+        resp->status = 500;
+        free(verr);
+        free(dag_json);
+        free(directory);
+        cJSON_Delete(root);
+        return 0;
+    }
+    free(verr);
+
+    char name_buf[192], input_buf[512];
+    snprintf(name_buf, sizeof(name_buf), "漫剧《%s》第%d集", ntitle, episode);
+    snprintf(input_buf, sizeof(input_buf), "一键导入小说《%s》（%d 章），多 agent 组队制作漫剧第%d集", ntitle, nch, episode);
+    /* userdata marker 2 routes the task runner to flow_run */
+    int64_t id = scheduler_submit_access(ctx->scheduler, 0, dag_json, (void *)2, 0, "flow", 0, NULL, directory, 0, 0);
+    if (id < 0) {
+        free(dag_json);
+        free(directory);
+        cJSON_Delete(root);
+        scheduler_submit_error(resp, id);
+        return 0;
+    }
+    workspace_bind(ctx, NULL, directory, id);
+    flow_record_run(ctx, id, name_buf, input_buf, dag_json, directory, 0);
+
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddNumberToObject(out, "id", (double)id);
+    cJSON_AddStringToObject(out, "status", "queued");
+    cJSON_AddStringToObject(out, "title", ntitle);
+    cJSON_AddStringToObject(out, "novel_dir", novel_dir);
+    cJSON_AddNumberToObject(out, "chapters", nch);
+    cJSON_AddNumberToObject(out, "episode", episode);
+    cJSON_AddStringToObject(out, "pipeline", "tools/manju/manju_pipeline.py");
+    cJSON *ag = cJSON_AddArrayToObject(out, "agents");
+    for (int i = 0; i < 4; i++) cJSON_AddItemToArray(ag, cJSON_CreateString(agents[i]));
+    char *out_json = cJSON_PrintUnformatted(out);
+    cJSON_Delete(out);
+    http_resp_json(resp, out_json ? out_json : "{\"error\":\"serialize failed\"}");
+    free(out_json);
+    free(dag_json);
+    free(directory);
+    cJSON_Delete(root);
     return 0;
 }
 
@@ -6044,6 +6397,7 @@ int api_attach(runtime_ctx *ctx) {
     http_server_route(ctx->http, "POST", "/v1/orchestrate", h_orchestrate, ctx);
     http_server_route(ctx->http, "POST", "/v1/flows", h_flow_run, ctx);
     http_server_route(ctx->http, "POST", "/v1/flows/decompose", h_flow_decompose, ctx);
+    http_server_route(ctx->http, "POST", "/v1/manju/import", h_manju_import, ctx);
     http_server_route(ctx->http, "GET", "/v1/desktop/startup-animation", h_desktop_animation, ctx);
     http_server_route(ctx->http, "PUT", "/v1/desktop/startup-animation", h_desktop_animation, ctx);
     http_server_route(ctx->http, "GET", "/v1/flows/list", h_flow_list, ctx);

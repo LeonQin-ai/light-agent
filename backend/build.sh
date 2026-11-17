@@ -74,6 +74,8 @@ python3 tools/gen_web_ui.py
 
 python3 tools/gen_attachment_extractor.py
 
+python3 tools/gen_manju_pipeline.py
+
 TARGET="${1:-all}"
 case "$TARGET" in
   all)

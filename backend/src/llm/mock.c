@@ -257,6 +257,14 @@ static char *mock_respond(const char *msg,int *commentary) {
         if (in_loop) return xstrdup("任务完成：子代理已交付。");
         return xstrdup("[{\"tool\":\"delegate\",\"args\":{\"task\":\"子代理资料核对：读取 readme.txt 并总结\"}}]");
     }
+    /* A batch made entirely of delegates runs the children on parallel
+     * workers; each child still sees only its own subtask prompt. */
+    if (has_substr(msg, "并行委派回归测试")) {
+        if (in_loop) return xstrdup("任务完成：三个子代理已并行交付。");
+        return xstrdup("[{\"tool\":\"delegate\",\"args\":{\"task\":\"子代理资料核对：读取 readme.txt 并总结 A\"}},"
+                       "{\"tool\":\"delegate\",\"args\":{\"task\":\"子代理资料核对：读取 readme.txt 并总结 B\"}},"
+                       "{\"tool\":\"delegate\",\"args\":{\"task\":\"子代理资料核对：读取 readme.txt 并总结 C\"}}]");
+    }
     if (has_substr(msg, "子代理资料核对")) {
         if (in_loop) return xstrdup("子任务完成：readme 已读取并总结。");
         return xstrdup("[{\"tool\":\"file_read\",\"args\":{\"path\":\"readme.txt\"}}]");

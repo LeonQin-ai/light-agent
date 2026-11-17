@@ -486,11 +486,50 @@ typedef struct flow_job {
     int rc;
 } flow_job;
 
+/* Per-agent model override: resolve the agent's provider/model against the
+ * route table so each role can run on its own LLM. Returns NULL when the
+ * agent has no override or no route matches (node uses ctx->llm). Caller
+ * owns the returned client and must llm_destroy it after the node run. */
+static llm *flow_agent_llm(runtime_ctx *ctx, const char *agent) {
+    if (!ctx || !ctx->agents || !agent || !*agent || !ctx->router) return NULL;
+    char *provider = NULL, *model = NULL;
+    if (agent_pool_model_copy(ctx->agents, agent, &provider, &model) != 0 ||
+        (!provider && !model)) {
+        free(provider); free(model);
+        return NULL;
+    }
+    const route *rt = NULL;
+    if (provider) {
+        for (int i = 0; i < router_count(ctx->router); i++) {
+            const route *cand = router_get(ctx->router, (size_t)i);
+            if (cand && cand->provider && strcmp(cand->provider, provider) == 0) {
+                rt = cand;
+                break;
+            }
+        }
+    } else {
+        rt = router_pick(ctx->router);
+    }
+    llm *nl = NULL;
+    if (rt) {
+        nl = llm_create(rt->provider, rt->base_url, rt->api_key, model ? model : rt->model);
+        if (nl) {
+            nl->context_window_tokens = rt->context_window_tokens;
+            nl->max_output_tokens = rt->max_output_tokens;
+            log_info("flow: agent '%s' runs on %s/%s", agent, rt->provider,
+                     model ? model : (rt->model ? rt->model : ""));
+        }
+    }
+    free(provider); free(model);
+    return nl;
+}
+
 /* Same isolation rules as the orchestrator's per-agent instances. */
-static reasoning *flow_reasoning_new(runtime_ctx *ctx,const char *workspace) {
+static reasoning *flow_reasoning_new(runtime_ctx *ctx,const char *workspace,const char *agent,llm **owned_llm) {
     reasoning_config rc;
     memset(&rc, 0, sizeof(rc));
-    rc.llm = ctx->llm;
+    *owned_llm = flow_agent_llm(ctx, agent);
+    rc.llm = *owned_llm ? *owned_llm : ctx->llm;
     rc.tools = ctx->tools;
     rc.memory = ctx->memory;
     rc.memory_runtime = ctx->memory_v3;
@@ -519,7 +558,8 @@ static void flow_worker(void *arg) {
     http_set_cancel_check(flow_abort_requested,j->parent);
     flow_event(j->ctx, "execute", j->nd->id, j->nd->agent, j->task);
     flow_prog_node_mark(j->task_id, j->nd->id, FP_RUNNING);
-    r = flow_reasoning_new(j->ctx,j->workspace);
+    llm *node_llm = NULL;
+    r = flow_reasoning_new(j->ctx,j->workspace,j->nd->agent,&node_llm);
     if (r) {
         char *prompt = agent_pool_task_prompt(j->ctx->agents, j->nd->agent, j->task);
         reasoning_set_trace_task_id(r, j->task_id);
@@ -553,6 +593,7 @@ static void flow_worker(void *arg) {
     } else {
         j->rc = -1;
     }
+    llm_destroy(node_llm);
 
     http_set_cancel_check(NULL,NULL);
     if (j->parent && task_should_abort(j->parent))

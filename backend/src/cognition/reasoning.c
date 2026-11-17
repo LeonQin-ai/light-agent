@@ -3307,6 +3307,65 @@ static void fast_read_worker(void *arg) {
     }
 }
 
+/* Fast-mode parallel delegation (Claude-Code-style parallel subagents): a
+ * batch made entirely of delegate calls runs its isolated child reasoning
+ * instances on a small worker pool. Children share the parent's services
+ * (llm/tools/policy/trace) exactly like parallel flow nodes do; every
+ * ledger/step/progress update stays sequential in h_act's main loop. */
+typedef struct delegate_job {
+    reasoning *parent;
+    planned_action *actions;
+    char **outs;
+    int *rcs; /* rc+1 per slot; 0 = not executed (main loop runs it serially) */
+    long long *ms;
+    int n, stride, start;
+} delegate_job;
+
+static char *delegate_child_run(reasoning *r, int idx, const char *dtask, const char *dctx, int *drc) {
+    reasoning_config cc = {0};
+    cc.llm = r->llm; cc.tools = r->tools; cc.policy = r->policy;
+    cc.workspace = r->workspace; cc.state_root = r->state_root;
+    cc.skills = r->skills; cc.mcp = r->mcp;
+    cc.metrics = r->metrics; cc.usage_acc = r->usage_acc;
+    cc.trace = r->trace;
+    cc.exec_backend = r->exec_backend; cc.exec_host = r->exec_host;
+    cc.max_rounds = 16; cc.gate_simple = 1; cc.subagent = 1; cc.defer_session_load = 1;
+    reasoning *child = reasoning_new(&cc);
+    char *dout = NULL;
+    *drc = -1;
+    if (child) {
+        char child_session[96];
+        snprintf(child_session, sizeof(child_session), "delegate-%lld-%d",
+                 (long long)time_now_us(), idx);
+        strbuf dp; strbuf_init(&dp);
+        if (dctx && *dctx) strbuf_appendf(&dp, "%s\n\n", dctx);
+        strbuf_append(&dp, dtask);
+        char *danswer = NULL;
+        *drc = reasoning_run_ex(child, child_session, dp.buf ? dp.buf : dtask, &danswer);
+        strbuf_free(&dp);
+        dout = danswer;
+        reasoning_free(child);
+    }
+    if (!dout) dout = xstrdup("子代理启动失败。");
+    return dout;
+}
+
+static void delegate_worker(void *arg) {
+    delegate_job *j = arg;
+    for (int i = j->start; i < j->n; i += j->stride) {
+        cJSON *da = cJSON_Parse(j->actions[i].args_json);
+        const char *dtask = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(da, "task"));
+        const char *dctx = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(da, "context"));
+        long long t0 = time_now_ms();
+        int rc = -1;
+        char *out = delegate_child_run(j->parent, i, dtask, dctx, &rc);
+        cJSON_Delete(da);
+        j->outs[i] = out;
+        j->rcs[i] = rc + 1;
+        j->ms[i] = time_now_ms() - t0;
+    }
+}
+
 static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
     reasoning *r = ud;
     strbuf b;
@@ -3407,6 +3466,51 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
             } else {
                 free(fast_results); fast_results = NULL;
                 free(fast_ercs); fast_ercs = NULL;
+            }
+        }
+    }
+
+    /* Parallel delegation pre-pass: only when EVERY action is a delegate
+     * with a non-empty task, so no ordering dependency exists inside the
+     * batch. Mixed batches keep the serial path unchanged. */
+    char **del_results = NULL;
+    int *del_rcs = NULL;
+    long long *del_ms = NULL;
+    if (r->gate_mode && !r->subagent && !tx && r->n_actions >= 2 && !r->hooks &&
+        (!r->run_task || r->run_task->permission_mode == 0)) {
+        int eligible = 1;
+        for (int i = 0; i < r->n_actions && eligible; i++) {
+            if (strcmp(r->actions[i].tool, "delegate"))
+                eligible = 0;
+            else {
+                cJSON *da = cJSON_Parse(r->actions[i].args_json);
+                const char *dtask = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(da, "task"));
+                if (!dtask || !*dtask) eligible = 0;
+                cJSON_Delete(da);
+            }
+        }
+        if (eligible) {
+            del_results = calloc((size_t)r->n_actions, sizeof(*del_results));
+            del_rcs = calloc((size_t)r->n_actions, sizeof(*del_rcs));
+            del_ms = calloc((size_t)r->n_actions, sizeof(*del_ms));
+            if (del_results && del_rcs && del_ms) {
+                int workers = r->n_actions < 4 ? r->n_actions : 4;
+                delegate_job jobs[4];
+                thread_t *threads[4] = {0};
+                for (int k = 0; k < workers; k++) {
+                    jobs[k] = (delegate_job){r, r->actions, del_results, del_rcs, del_ms, r->n_actions, workers, k};
+                    threads[k] = thread_create(delegate_worker, &jobs[k]);
+                    if (!threads[k])
+                        delegate_worker(&jobs[k]); /* spawn failed → inline */
+                }
+                for (int k = 0; k < workers; k++)
+                    if (threads[k])
+                        thread_join(threads[k]);
+                log_info("reasoning: fast mode ran %d delegates on %d workers", r->n_actions, workers);
+            } else {
+                free(del_results); del_results = NULL;
+                free(del_rcs); del_rcs = NULL;
+                free(del_ms); del_ms = NULL;
             }
         }
     }
@@ -3617,40 +3721,24 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
             long long t_del0 = time_now_ms();
             char *dout = NULL;
             int drc = -1;
-            if (!r->gate_mode) {
+            int del_elapsed = -1;
+            if (del_results && del_rcs && del_rcs[i]) {
+                /* Consume the parallel pre-pass result (ownership transfers). */
+                dout = del_results[i]; del_results[i] = NULL;
+                drc = del_rcs[i] - 1;
+                del_elapsed = (int)del_ms[i];
+            } else if (!r->gate_mode) {
                 dout = xstrdup("delegate 仅在快速模式可用：当前为严格校验模式，请直接执行该步骤，或在会话设置中切换到快速模式。");
             } else if (r->subagent) {
                 dout = xstrdup("子代理不支持再次委派：请直接完成当前子任务。");
             } else if (!dtask || !*dtask) {
                 dout = xstrdup("delegate 缺少 task 参数。");
             } else {
-                reasoning_config cc = {0};
-                cc.llm = r->llm; cc.tools = r->tools; cc.policy = r->policy;
-                cc.workspace = r->workspace; cc.state_root = r->state_root;
-                cc.skills = r->skills; cc.mcp = r->mcp;
-                cc.metrics = r->metrics; cc.usage_acc = r->usage_acc;
-                cc.trace = r->trace;
-                cc.exec_backend = r->exec_backend; cc.exec_host = r->exec_host;
-                cc.max_rounds = 16; cc.gate_simple = 1; cc.subagent = 1; cc.defer_session_load = 1;
-                reasoning *child = reasoning_new(&cc);
-                if (child) {
-                    char child_session[96];
-                    snprintf(child_session, sizeof(child_session), "delegate-%lld-%d",
-                             (long long)time_now_us(), i);
-                    strbuf dp; strbuf_init(&dp);
-                    if (dctx && *dctx) strbuf_appendf(&dp, "%s\n\n", dctx);
-                    strbuf_append(&dp, dtask);
-                    char *danswer = NULL;
-                    drc = reasoning_run_ex(child, child_session, dp.buf ? dp.buf : dtask, &danswer);
-                    strbuf_free(&dp);
-                    dout = danswer;
-                    reasoning_free(child);
-                }
-                if (!dout) dout = xstrdup("子代理启动失败。");
+                dout = delegate_child_run(r, i, dtask, dctx, &drc);
             }
             cJSON_Delete(da);
             run_step_add(r, "delegate", r->actions[i].args_json, dout, drc == 0 ? 1 : 0,
-                         (int)(time_now_ms() - t_del0));
+                         del_elapsed >= 0 ? del_elapsed : (int)(time_now_ms() - t_del0));
             strbuf_appendf(&b, "[delegate] %s\n", dout);
             if (drc == 0) {
                 r->ok_actions++;
@@ -3978,6 +4066,15 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
                 executor_result_free(fast_results[i]);
         free(fast_results);
         free(fast_ercs);
+    }
+    /* Delegate results skipped by dedup/short-circuit/abort are still owned
+     * here; consumed slots were NULLed so this never double-frees. */
+    if (del_results) {
+        for (int i = 0; i < r->n_actions; i++)
+            free(del_results[i]);
+        free(del_results);
+        free(del_rcs);
+        free(del_ms);
     }
 
     executor_free(exec);

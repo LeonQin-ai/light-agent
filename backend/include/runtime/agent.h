@@ -43,6 +43,10 @@ blackboard *agent_pool_blackboard(agent_pool *p);
 int agent_pool_find(agent_pool *p, const char *name);
 /* Copy a role while holding the roster lock. Caller frees the result. */
 char *agent_pool_role_copy(agent_pool *p, const char *name);
+/* Copy the per-agent provider/model while holding the roster lock. Outputs
+ * are strdup'd (NULL when unset → fall back to the global active model);
+ * caller frees. Returns 0 for a known agent, -1 otherwise. */
+int agent_pool_model_copy(agent_pool *p, const char *name, char **provider, char **model);
 /* Combine the registered role and a concrete task for a worker run. */
 char *agent_pool_task_prompt(agent_pool *p, const char *name, const char *task);
 /* A PPT production task is complete only when the reported .pptx exists and

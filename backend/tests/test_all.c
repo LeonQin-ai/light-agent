@@ -5175,6 +5175,25 @@ static void test_agent_loop(void) {
         steps_json = reasoning_steps_json(r);
         CHECK(steps_json && strstr(steps_json, "\"delegate\"") && strstr(steps_json, "子任务完成"));
         free(steps_json); steps_json = NULL;
+        /* An all-delegate batch runs the children on parallel workers; the
+         * ledger still records one ok step per delegate, in batch order. */
+        CHECK(reasoning_run_ex(r, "fast-par-del", "并行委派回归测试：三个子任务", &ans) == 0);
+        CHECK(ans && strstr(ans, "三个子代理已并行交付") != NULL);
+        free(ans); ans = NULL;
+        steps_json = reasoning_steps_json(r);
+        cJSON *par_steps = steps_json ? cJSON_Parse(steps_json) : NULL;
+        CHECK(par_steps && cJSON_IsArray(par_steps));
+        int par_del = 0, par_ok = 0;
+        cJSON *ps;
+        cJSON_ArrayForEach(ps, par_steps) {
+            if (strcmp(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(ps, "tool")), "delegate") == 0) {
+                par_del++;
+                if (cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(ps, "ok")) == 1) par_ok++;
+            }
+        }
+        CHECK(par_del == 3 && par_ok == 3);
+        cJSON_Delete(par_steps);
+        free(steps_json); steps_json = NULL;
         reasoning_free(r);
         /* Strict gate: delegation is refused and the run cannot pass it off
          * as a successful action. */
@@ -9216,6 +9235,66 @@ static void test_http_skill_install_async(void) {
     http_server_free(ctx.http); config_free(ctx.config); skill_registry_free(ctx.skills);
 }
 
+/* One-click novel import: deterministic chapter split, pipeline
+ * materialisation, team registration and a queued 4-node production DAG —
+ * no LLM involved in the import itself. */
+static void test_manju_import(void) {
+    section("manju one-click novel import");
+    const char *root = "state-test/manju-import";
+    fs_mkdirs(root);
+    config cfg = {0};
+    cfg.state_root = root; cfg.workspace = root; cfg.provider = "mock";
+    cfg.http_port = 18233; cfg.workers = 1;
+    runtime_ctx ctx;
+    if (init(&ctx, &cfg) != 0) { CHECK(0); return; }
+    thread_t *api_thread = thread_create(th_serve_ctx, &ctx);
+    raw_http r;
+    int ready = 0;
+    for (int i = 0; i < 300 && !ready; i++) {
+        ready = raw_http_request(18233, "GET", "/v1/scheduler", NULL, &r) == 0 && r.status == 200;
+        if (!ready) time_sleep_ms(10);
+    }
+    CHECK(ready);
+    cJSON *j = api_request_json(18233, "POST", "/v1/manju/import", "{}", 400);
+    cJSON_Delete(j);
+    const char *novel = "{\"title\":\"测试小说\",\"episode\":2,"
+        "\"text\":\"前言\\n第一章 起点\\n他推开门。\\n\\\"走吧。\\\"她说。\\n"
+        "第二章 转折\\n雨落下来。\\n系统提示：任务开始。\"}";
+    j = api_request_json(18233, "POST", "/v1/manju/import", novel, 200);
+    CHECK(j);
+    CHECK(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(j, "chapters")) == 2);
+    CHECK(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(j, "episode")) == 2);
+    int64_t tid = (int64_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(j, "id"));
+    CHECK(tid >= 0);
+    cJSON_Delete(j);
+    char *ch1 = fs_read_file("state-test/manju-import/novel/测试小说/chapter01.md");
+    CHECK(ch1 && strstr(ch1, "第一章 起点") && !strstr(ch1, "第二章"));
+    free(ch1);
+    char *ch2 = fs_read_file("state-test/manju-import/novel/测试小说/chapter02.md");
+    CHECK(ch2 && strstr(ch2, "第二章 转折"));
+    free(ch2);
+    char *pipe = fs_read_file("state-test/manju-import/tools/manju/manju_pipeline.py");
+    CHECK(pipe && strstr(pipe, "argparse"));
+    free(pipe);
+    CHECK(agent_pool_find(ctx.agents, "manju-director") >= 0);
+    CHECK(agent_pool_find(ctx.agents, "manju-artist") >= 0);
+    CHECK(agent_pool_find(ctx.agents, "manju-voice") >= 0);
+    CHECK(agent_pool_find(ctx.agents, "manju-editor") >= 0);
+    j = api_request_json(18233, "GET", "/v1/flows/list", NULL, 200);
+    char *list = j ? cJSON_PrintUnformatted(j) : NULL;
+    CHECK(list && strstr(list, "manju-director") && strstr(list, "manju-editor"));
+    free(list);
+    cJSON_Delete(j);
+    /* Cancel the queued production run: the mock team must not render. */
+    char cancel[64];
+    snprintf(cancel, sizeof(cancel), "/v1/tasks/%lld", (long long)tid);
+    j = api_request_json(18233, "DELETE", cancel, NULL, 200);
+    cJSON_Delete(j);
+    http_server_stop(ctx.http);
+    thread_join(api_thread);
+    runtime_shutdown(&ctx);
+}
+
 static void test_http_capacity(void) {
     section("http admission backpressure");
     runtime_ctx ctx;
@@ -10527,6 +10606,7 @@ int main(int argc, char **argv) {
     test_selected_model_routing();
     test_model_probe_lifecycle();
     test_http_capacity();
+    test_manju_import();
     test_http_cron_update();
     test_http_install_auth();
     test_http_skill_install_async();
