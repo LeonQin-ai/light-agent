@@ -33,6 +33,23 @@ static void openai_destroy(llm *llm) {
     free(llm);
 }
 
+/* DeepSeek-named models behind third-party gateways must also get the
+ * thinking toggle: many gateways ignore reasoning_effort entirely but honor
+ * thinking:{type:disabled} (issue #278). Normalize to lowercase alnum so
+ * vendor prefixes and punctuation ("deepseek-ai/deepseek-v4.1-flash") match. */
+static int model_name_is_deepseek(const char *model) {
+    if (!model) return 0;
+    char norm[128];
+    size_t n = 0;
+    for (const char *p = model; *p && n < sizeof(norm) - 1; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c >= 'A' && c <= 'Z') c = (unsigned char)(c - 'A' + 'a');
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) norm[n++] = (char)c;
+    }
+    norm[n] = '\0';
+    return strstr(norm, "deepseek") != NULL;
+}
+
 static char *build_request_body(const llm_request *req, const llm *client, int stream) {
     const char *model = client->model;
     const char *base = client->base_url;
@@ -95,8 +112,8 @@ static char *build_request_body(const llm_request *req, const llm *client, int s
         cJSON_AddNumberToObject(root, "max_tokens", req->max_tokens);
     if (req->reasoning_effort && *req->reasoning_effort) {
         const char *effort = req->reasoning_effort;
-        if (deepseek) {
-            const int disabled = !strcmp(effort, "none");
+        const int disabled = !strcmp(effort, "none");
+        if (deepseek || (disabled && model_name_is_deepseek(model))) {
             cJSON *thinking = cJSON_AddObjectToObject(root, "thinking");
             cJSON_AddStringToObject(thinking, "type", disabled ? "disabled" : "enabled");
             if (!disabled)

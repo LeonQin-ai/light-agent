@@ -236,6 +236,14 @@ int fs_remove(const char *path) {
     return ok;
 }
 
+int fs_replace_file(const char *tmp, const char *path) {
+    wchar_t *wt = fs_wpath(tmp), *wp = fs_wpath(path);
+    int ok = (wt && wp && MoveFileExW(wt, wp, MOVEFILE_REPLACE_EXISTING)) ? 0 : -1;
+    free(wt);
+    free(wp);
+    return ok;
+}
+
 int fs_list_dir(const char *path, dir_list *out) {
     wchar_t *w = fs_wpath(path);
     wchar_t pattern[1200];

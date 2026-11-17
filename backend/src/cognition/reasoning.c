@@ -1180,7 +1180,8 @@ static struct session *session_get(reasoning *r, const char *id) {
  * so history survives restarts and switching sessions/panels always has a
  * durable source of truth. */
 
-static void chat_file_path(char *out, size_t n, const char *state_root, const char *session_id) {
+static void chat_file_path_ext(char *out, size_t n, const char *state_root, const char *session_id,
+                               const char *ext) {
     char safe[128];
     char dir[600];
     char fname[160];
@@ -1194,10 +1195,14 @@ static void chat_file_path(char *out, size_t n, const char *state_root, const ch
         safe[o++] = ch;
     }
     safe[o] = '\0';
-    snprintf(fname, sizeof(fname), "%s.jsonl", safe);
+    snprintf(fname, sizeof(fname), "%s.%s", safe, ext);
     path_join(dir, sizeof(dir), state_root ? state_root : "state", "chat");
     fs_mkdirs(dir);
     path_join(out, n, dir, fname);
+}
+
+static void chat_file_path(char *out, size_t n, const char *state_root, const char *session_id) {
+    chat_file_path_ext(out, n, state_root, session_id, "jsonl");
 }
 
 /* ---- session metadata index (chat/sessions.json) ---- */
@@ -1292,10 +1297,19 @@ static void meta_save_locked(reasoning *r) {
     if (!js)
         return;
     meta_index_path(path, sizeof(path), r->state_root);
-    f = fopen(path, "wb");
+    /* Write-then-replace: a kill mid-save must never leave a truncated index
+     * (regression: terminate during a run-start save emptied sessions.json and
+     * the restart lost every session). */
+    char tmp[720];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    f = fopen(tmp, "wb");
     if (f) {
-        if(fputs(js,f)==EOF)r->ss->meta_error=1;
-        if(fclose(f))r->ss->meta_error=1;
+        int failed = fputs(js, f) == EOF;
+        if (fclose(f)) failed = 1;
+        if (failed || fs_replace_file(tmp, path) != 0) {
+            r->ss->meta_error = 1;
+            fs_remove(tmp);
+        }
     }else r->ss->meta_error=1;
     free(js);
 }
@@ -1382,30 +1396,25 @@ static void meta_load_legacy(reasoning *r) {
         free(setting);
     }
     meta_index_path(path, sizeof(path), r->state_root);
+    /* A missing/empty/corrupt index must not skip the self-heal below: the
+     * transcripts on disk are the source of truth for session recovery. */
+    root = NULL;
     f = fopen(path, "rb");
-    if (!f)
-        return;
-    fseek(f, 0, SEEK_END);
-    len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (len <= 0) {
+    if (f) {
+        fseek(f, 0, SEEK_END);
+        len = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (len > 0 && (buf = malloc((size_t)len + 1)) != NULL) {
+            size_t rd = fread(buf, 1, (size_t)len, f);
+            buf[rd] = '\0';
+            root = cJSON_Parse(buf);
+            free(buf);
+        }
         fclose(f);
-        return;
     }
-    buf = malloc((size_t)len + 1);
-    if (!buf) {
-        fclose(f);
-        return;
-    }
-    size_t rd = fread(buf, 1, (size_t)len, f);
-    fclose(f);
-    buf[rd] = '\0';
-    root = cJSON_Parse(buf);
-    free(buf);
-    if (!root || !cJSON_IsArray(root)) {
-        if (root)
-            cJSON_Delete(root);
-        return;
+    if (root && !cJSON_IsArray(root)) {
+        cJSON_Delete(root);
+        root = NULL;
     }
     mutex_lock(&r->ss->sess_mtx);
     cJSON_ArrayForEach(it, root) {
@@ -1456,10 +1465,12 @@ static void meta_load_legacy(reasoning *r) {
                     continue;
                 const char *name = dl.items[i].name;
                 size_t nl = strlen(name);
-                if (nl < 7 || strcmp(name + nl - 6, ".jsonl") != 0)
+                int is_jsonl = nl >= 7 && strcmp(name + nl - 6, ".jsonl") == 0;
+                int is_last = nl >= 6 && strcmp(name + nl - 5, ".last") == 0;
+                if (!is_jsonl && !is_last)
                     continue;
                 char sid[128];
-                snprintf(sid, sizeof(sid), "%.*s", (int)(nl - 6), name);
+                snprintf(sid, sizeof(sid), "%.*s", (int)(nl - (is_jsonl ? 6 : 5)), name);
                 struct sess_meta *existing=meta_find(r->ss,sid);
                 if(existing){
                     if(!existing->title[0] && title_recover_from_transcript(r->state_root,sid,existing->title,sizeof(existing->title)))healed=1;
@@ -1477,6 +1488,16 @@ static void meta_load_legacy(reasoning *r) {
                 memset(m, 0, sizeof(*m));
                 snprintf(m->id, sizeof(m->id), "%s", sid);
                 title_recover_from_transcript(r->state_root, m->id, m->title, sizeof(m->title));
+                if (!m->title[0] && is_last) {
+                    /* first turn interrupted before any transcript existed:
+                     * the pending input itself names the session */
+                    char lp[700];
+                    chat_file_path_ext(lp, sizeof(lp), r->state_root, sid, "last");
+                    char *p = fs_read_file(lp);
+                    char *h = p ? str_head(p, 60) : NULL;
+                    if (h) { snprintf(m->title, sizeof(m->title), "%s", h); free(h); }
+                    free(p);
+                }
                 m->shared_memory = 0; /* same default as session_new */
                 healed = 1;
             }
@@ -1708,6 +1729,71 @@ static void chat_persist_append(reasoning *r, const char *session_id, const char
         fclose(f);
     }
     free(line);
+}
+
+/* Issues #280/#281: turns only reach chat/<id>.jsonl when a run ends. A
+ * restart mid-run therefore lost the in-flight input and resume answered
+ * 409 "no recorded input". Persist the pending input at run start
+ * (chat/<id>.last) so resume can always recover the interrupted turn. */
+static void chat_pending_save(reasoning *r, const char *session_id, const char *q) {
+    char fpath[700];
+    FILE *f;
+
+    if (!r || !r->state_root || !q)
+        return;
+    chat_file_path_ext(fpath, sizeof(fpath), r->state_root,
+                       session_id && *session_id ? session_id : "default", "last");
+    f = fopen(fpath, "wb");
+    if (f) {
+        fputs(q, f);
+        fclose(f);
+    }
+}
+
+static char *chat_pending_load(reasoning *r, const char *session_id) {
+    char fpath[700];
+    FILE *f;
+    long len;
+    char *buf;
+    size_t got;
+
+    if (!r || !r->state_root)
+        return NULL;
+    chat_file_path_ext(fpath, sizeof(fpath), r->state_root,
+                       session_id && *session_id ? session_id : "default", "last");
+    f = fopen(fpath, "rb");
+    if (!f)
+        return NULL;
+    fseek(f, 0, SEEK_END);
+    len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (len <= 0 || len > 1048576) {
+        fclose(f);
+        return NULL;
+    }
+    buf = (char *)malloc((size_t)len + 1);
+    if (!buf) {
+        fclose(f);
+        return NULL;
+    }
+    got = fread(buf, 1, (size_t)len, f);
+    fclose(f);
+    buf[got] = '\0';
+    if (!got) {
+        free(buf);
+        return NULL;
+    }
+    return buf;
+}
+
+static void chat_pending_drop(reasoning *r, const char *session_id) {
+    char fpath[700];
+
+    if (!r || !r->state_root)
+        return;
+    chat_file_path_ext(fpath, sizeof(fpath), r->state_root,
+                       session_id && *session_id ? session_id : "default", "last");
+    fs_remove(fpath);
 }
 
 static void clear_actions(reasoning *r) {
@@ -3241,11 +3327,11 @@ static void remember_tool_image(reasoning *r,struct run_step *step) {
  * action, so a write invalidates it. */
 static int probe_reuse_round(reasoning *r,int probe_only,const char *tool,
                              const char *args_json) {
-    if(!probe_only || !tool || (strcmp(tool,"shell") && strcmp(tool,"git")))return -1;
+    if(!probe_only || !tool || (strcmp(tool,"shell") && strcmp(tool,"git") && strcmp(tool,"ssh")))return -1;
     cJSON *args=cJSON_Parse(args_json?args_json:"{}");
-    const char *cmd=!strcmp(tool,"shell")
-        ? cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"command"))
-        : cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"args"));
+    const char *cmd=!strcmp(tool,"git")
+        ? cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"args"))
+        : cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"command"));
     int round=-1;
     if(cmd && *cmd) {
         uint64_t sig=hash64(args_json,strlen(args_json));
@@ -3262,11 +3348,11 @@ static int probe_reuse_round(reasoning *r,int probe_only,const char *tool,
  * this observation until a mutating action clears the table. */
 static void probe_mark_executed(reasoning *r,int probe_only,const char *tool,
                                 const char *args_json) {
-    if(!probe_only || !tool || (strcmp(tool,"shell") && strcmp(tool,"git")))return;
+    if(!probe_only || !tool || (strcmp(tool,"shell") && strcmp(tool,"git") && strcmp(tool,"ssh")))return;
     cJSON *args=cJSON_Parse(args_json?args_json:"{}");
-    const char *cmd=!strcmp(tool,"shell")
-        ? cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"command"))
-        : cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"args"));
+    const char *cmd=!strcmp(tool,"git")
+        ? cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"args"))
+        : cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"command"));
     if(cmd && *cmd) {
         uint64_t sig=hash64(args_json,strlen(args_json));
         int slot=-1;
@@ -3794,6 +3880,14 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
                 probe_only = git_action_read_only(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(sa,"args")));
                 if(cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(sa,"outputs")))probe_only=0;
                 cJSON_Delete(sa);
+            } else if (!strcmp(r->actions[i].tool, "ssh")) {
+                /* Issue #281: a read-only remote query (ssh cat/ls/git log)
+                 * cannot change the local files being searched. Classify it
+                 * like a shell probe instead of an opaque write that wipes
+                 * the read-dedup tables and trips the stall breaker. */
+                cJSON *sa = cJSON_Parse(r->actions[i].args_json);
+                probe_only = shell_command_read_only(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(sa,"command")));
+                cJSON_Delete(sa);
             }
             if (!probe_only) {
                 r->search_seen_n = 0;
@@ -3982,7 +4076,10 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
                 instruction_only = sk && !strcmp(sk->kind, "prompt");
                 cJSON_Delete(a);
             }
-            if (!is_search && !instruction_only) round_mutated = 1;
+            /* Read-only probes (shell/git/ssh, #272/#281) change nothing;
+             * counting them as mutations would demand delivery evidence at
+             * the completion gate for a purely observational run. */
+            if (!is_search && !instruction_only && !probe_only) round_mutated = 1;
             if (is_search) {
                 int versioned = !strcmp(r->actions[i].tool,"file_read") || !strcmp(r->actions[i].tool,"list_dir");
                 uint64_t *seen=versioned ? r->versioned_seen : r->search_seen;
@@ -4769,6 +4866,13 @@ char *reasoning_session_last_input(reasoning *r, const char *session_id) {
     if (s->hist_n > 0 && s->hist_q[s->hist_n - 1])
         out = xstrdup(s->hist_q[s->hist_n - 1]);
     mutex_unlock(&s->mtx);
+    /* An interrupted run's pending input is newer than the last completed
+     * turn; prefer it so resume re-runs the lost turn (issues #280/#281). */
+    char *pending = chat_pending_load(r, session_id);
+    if (pending) {
+        free(out);
+        out = pending;
+    }
     return out;
 }
 
@@ -4807,6 +4911,7 @@ int reasoning_session_clear(reasoning *r, const char *session_id) {
         char fpath[700];
         chat_file_path(fpath, sizeof(fpath), r->state_root, want);
         fs_remove(fpath);
+        chat_pending_drop(r, want);
         ssh_session_profiles_clear(r->state_root, want);
     }
     return 0;
@@ -4846,6 +4951,7 @@ int reasoning_session_delete(reasoning *r, const char *session_id) {
             char fpath[700];
             chat_file_path(fpath, sizeof(fpath), r->state_root, want);
             fs_remove(fpath);
+            chat_pending_drop(r, want);
             ssh_session_profiles_clear(r->state_root, want);
         }
         return removed ? 0 : -1;
@@ -4869,6 +4975,7 @@ int reasoning_session_delete(reasoning *r, const char *session_id) {
         char fpath[700];
         chat_file_path(fpath, sizeof(fpath), r->state_root, want);
         fs_remove(fpath);
+        chat_pending_drop(r, want);
         ssh_session_profiles_clear(r->state_root, want);
     }
     session_free(s);
@@ -5005,6 +5112,19 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
         return -1;
     }
     prompt = safe_prompt;
+
+    /* Issues #280/#281: durably remember this turn's input before the first
+     * LLM call so a mid-run restart still leaves resume with something to
+     * re-run. Dropped again once record_turn persists the completed turn. */
+    if (r->cur && !r->subagent) {
+        chat_pending_save(r, r->cur->id, prompt);
+        /* Register the session in the durable index now: a restart during
+         * the very first turn must still find the session for resume. */
+        mutex_lock(&r->ss->sess_mtx);
+        meta_upsert_locked(r, r->cur);
+        meta_save_locked(r);
+        mutex_unlock(&r->ss->sess_mtx);
+    }
 
     cJSON *o = r->run_task && r->run_task->llm_config ? cJSON_Parse(r->run_task->llm_config) : NULL;
     /* Gate mode (#271): "gate":"simple" runs a Claude-Code-like flow — no
@@ -5775,6 +5895,8 @@ restart_planning:
             }
         }
         record_turn(r, prompt, combined);
+        if (!r->subagent)
+            chat_pending_drop(r, r->cur->id);
         if (r->hooks) {
             cJSON *o = cJSON_CreateObject();
             if (o) {

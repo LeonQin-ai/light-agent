@@ -2612,6 +2612,9 @@ static int h_index(const http_request *req, http_response *resp, void *ud) {
     (void)req;
     (void)ud;
     snprintf(resp->content_type, sizeof(resp->content_type), "text/html; charset=utf-8");
+    /* Issue #279: the UI is embedded in the binary; a cached page from an
+     * older build keeps showing removed controls after an upgrade. */
+    snprintf(resp->cache_control, sizeof(resp->cache_control), "no-store");
     http_resp_append(resp, web_index_html);
     return 0;
 }

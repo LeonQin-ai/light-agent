@@ -144,6 +144,10 @@ int fs_remove(const char *path) {
     return remove(path) == 0 ? 0 : -1;
 }
 
+int fs_replace_file(const char *tmp, const char *path) {
+    return rename(tmp, path) == 0 ? 0 : -1;
+}
+
 int fs_list_dir(const char *path, dir_list *out) {
     struct dirent *de;
 

@@ -930,7 +930,12 @@ static int plan_with(llm *llm, char *sys_prompt, const char *prompt, planned_act
         req.reasoning_effort = effort;
         if (temperature < 0) req.temperature = -1;
     } else {
-        req.reasoning_effort = deepseek_v41 ? "low" : NULL;
+        /* Issue #278: gateways hosting this model ignore reasoning_effort
+         * ("low" still burned ~99% hidden reasoning, 130-200s rounds, 300s
+         * timeouts). "none" maps to thinking:{type:disabled}, which the
+         * gateways honor — measured 34.9s -> 5.3s per round, plan quality
+         * unchanged. */
+        req.reasoning_effort = deepseek_v41 ? "none" : NULL;
         /* A DeepSeek-looking id that matched no profile keeps provider
          * defaults; say so instead of silently losing the reasoning bound. */
         if (!deepseek_v41 && strstr(model_norm,"deepseek"))

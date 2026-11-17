@@ -2820,6 +2820,13 @@ static tool_result *fixture_retryable_failure(const tool *self, const tool_ctx *
     return tool_result_new(1,"fixture: corrected target verified");
 }
 
+/* Issue #281: stand-in for the ssh tool so the loop can exercise read-only
+ * remote probe classification without a real SSH endpoint. */
+static tool_result *fixture_ssh_read(const tool *self, const tool_ctx *ctx, const char *args) {
+    (void)self; (void)ctx; (void)args;
+    return tool_result_new(1,"fixture-remote-host\n");
+}
+
 static int utf8_step_fixture_chat(llm *self, const llm_request *req, llm_response *resp) {
     (void)req; int *calls=self->impl;
     resp->content=xstrdup((*calls)++==0 ? "[{\"tool\":\"fixture_utf8_output\",\"args\":{}}]" : "工具采样完成，诊断已汇总。");
@@ -3337,6 +3344,14 @@ static int progress_fixture_chat(llm *self,const llm_request *req,llm_response *
         resp->content=xstrdup("失败原因已核对并继续执行成功");
     } else if (f->mode==12) {
         resp->content=xstrdup("I'll investigate the build failure now.");
+    } else if (f->mode==48) {
+        /* Issue #281: a read-only ssh probe keeps the dedup tables and an
+         * identical repeat probe reuses the earlier observation. */
+        if (f->calls==1)
+            resp->content=xstrdup("[{\"tool\":\"file_read\",\"args\":{\"path\":\"same.txt\"}}]");
+        else if (f->calls==2 || f->calls==3)
+            resp->content=xstrdup("[{\"tool\":\"ssh\",\"args\":{\"host\":\"127.0.0.1\",\"command\":\"uname\"}}]");
+        else resp->content=xstrdup("ssh只读探查完成");
     } else {
         /* Alternate order and JSON key order; prompt folds after enough reads. */
         snprintf(plan,sizeof(plan),
@@ -3372,7 +3387,7 @@ static void test_cross_round_progress(void) {
     CHECK(fs_mkdirs("state-test/progress-loop/backend/src/storage") == 0);
     CHECK(fs_write_file("state-test/progress-loop/backend/src/memory/new.txt", "expected source", 15) == 0);
     CHECK(fs_write_file("state-test/progress-loop/backend/src/storage/new.txt", "unrelated source", 16) == 0);
-    for (int mode=0;mode<48;mode++) {
+    for (int mode=0;mode<49;mode++) {
         progress_fixture f={.mode=mode};
         static const llm_vtable vt={.chat=progress_fixture_chat};
         llm provider={.vt=&vt,.provider="fixture",.model="fixture",.impl=&f};
@@ -3386,18 +3401,21 @@ static void test_cross_round_progress(void) {
         CHECK(tool_register(reg,&failure)==0);
         tool retryable={"fixture_retryable","retryable fixture failure",NULL,0,fixture_retryable_failure,NULL};
         CHECK(tool_register(reg,&retryable)==0);
+        tool ssh_probe={"ssh","fixture read-only ssh probe",NULL,0,fixture_ssh_read,NULL};
+        CHECK(tool_register(reg,&ssh_probe)==0);
         if(mode==18) fixture_retryable_failures=0;
         reasoning_config cfg={0}; cfg.llm=&provider; cfg.tools=reg;
         cfg.workspace="state-test/progress-loop"; cfg.max_rounds=mode==5?120:-1;
         if(mode==5 || mode==6 || mode==15)cfg.acceptance_json="{\"requires_action\":true}";
         else if(mode==41 || mode==43)cfg.acceptance_json="{\"full_reads\":[\"paged.txt\",\"long.txt\"]}";
-        else if(mode==13 || mode==16 || mode==17 || mode>=36)cfg.acceptance_json="{\"full_reads\":[\"paged.txt\"]}";
+        else if(mode==13 || mode==16 || mode==17 || (mode>=36 && mode!=48))cfg.acceptance_json="{\"full_reads\":[\"paged.txt\"]}";
         trace *plan_trace=(mode==1 || (mode>=24 && mode<=31)) ? trace_new(32):NULL;
         cfg.trace=plan_trace;
         reasoning *r=reasoning_new(&cfg); CHECK(r!=NULL);
         if (r) {
             char *answer=NULL;
-            const char *prompt = mode>=46 ? "完整阅读文件paged.txt全文并分析" :
+            const char *prompt = mode==48 ? "查看远程主机状态" :
+                mode>=46 ? "完整阅读文件paged.txt全文并分析" :
                 mode>=44 ? "完整阅读全部源码，long.txt只需相关片段，不要求全文，再分析代码。" :
                 mode==39 ? "Read full source file paged.txt; long.txt: only relevant sections, not full source. Analyze code." :
                 mode==40 ? "完整阅读文件paged.txt，long.txt只需相关片段，不要求全文，再分析源码。" :
@@ -3427,7 +3445,15 @@ static void test_cross_round_progress(void) {
                 }
                 CHECK(plans>=2);cJSON_Delete(spans);free(json);
             }
-            if (mode >= 46) {
+            if (mode == 48) {
+                long long elapsed=0, in=0, out=0; int round=0, calls=0; const char *last_tool=NULL;
+                reasoning_progress(r,&elapsed,&round,&calls,&last_tool,&in,&out);
+                /* Issue #281: only the read and the first uname execute (2
+                 * tool calls); the identical repeat uname is reused instead
+                 * of clearing the dedup tables and running again. */
+                CHECK(rc==0 && answer && strstr(answer,"ssh只读探查完成"));
+                CHECK(f.calls==5 && calls==2);
+            } else if (mode >= 46) {
                 CHECK(rc==0 && f.calls==5 && answer && strstr(answer,"路径别名分页分析完成"));
             } else if (mode >= 36) {
                 if(mode==37 || mode==41 || mode==43 || mode==45) {
@@ -5402,6 +5428,65 @@ static void test_session_scale(const char *root,int count){
     char *js=cJSON_PrintUnformatted(manifest);if(js)fs_write_file(path,js,strlen(js));free(js);cJSON_Delete(manifest);
     printf("session-scale: created=%d enumerated=%zu create_ms=%lld\n",count,seen,created);
     free(first);free(middle);free(last);
+}
+
+/* Issues #280/#281: a restart mid-run must leave resume with the in-flight
+ * input. Turns only reach chat/<id>.jsonl at run end, so the pending input is
+ * persisted at run start (chat/<id>.last) and preferred by last_input. */
+static void test_resume_pending_input(void) {
+    section("resume recovers interrupted turn input (#280/#281)");
+    config cfg; memset(&cfg,0,sizeof cfg);
+    cfg.state_root="state-test/resume-pending";
+    cfg.workspace="state-test/loop-w";
+    cfg.provider="openai"; cfg.base_url="http://127.0.0.1:18239/v1";
+    cfg.model="resume-fixture"; cfg.api_key="fixture-key"; cfg.http_port=0;
+    fs_remove("state-test/resume-pending/chat/first-turn.jsonl");
+    fs_remove("state-test/resume-pending/chat/first-turn.last");
+    runtime_ctx ctx;
+    if(init(&ctx,&cfg)!=0){CHECK(0);return;}
+    char *a=NULL;
+    /* provider is down: the run fails before any turn is recorded — the
+     * same durable state a mid-run restart leaves behind. The session must
+     * already be in the persisted meta index (first turn, no transcript). */
+    CHECK(reasoning_run_ex(ctx.reasoning,"first-turn","中断前的输入",&a)!=0);
+    free(a); a=NULL;
+    runtime_shutdown(&ctx);
+    runtime_ctx ctx2;
+    if(init(&ctx2,&cfg)!=0){CHECK(0);return;}
+    char *li=reasoning_session_last_input(ctx2.reasoning,"first-turn");
+    CHECK(li && strstr(li,"中断前的输入"));
+    free(li);
+    runtime_shutdown(&ctx2);
+    /* a corrupt index must not lose sessions: self-heal re-admits transcripts
+     * and pending-input files (kill-mid-save regression, workspaces e2e) */
+    CHECK(fs_write_file("state-test/resume-pending/chat/sessions.json","{corrupt",strlen("{corrupt"))==0);
+    runtime_ctx ctx2b;
+    if(init(&ctx2b,&cfg)!=0){CHECK(0);return;}
+    li=reasoning_session_last_input(ctx2b.reasoning,"first-turn");
+    CHECK(li && strstr(li,"中断前的输入"));
+    free(li);
+    char *sj=reasoning_sessions_json(ctx2b.reasoning);
+    CHECK(sj && strstr(sj,"first-turn") && strstr(sj,"中断前的输入"));
+    free(sj);
+    runtime_shutdown(&ctx2b);
+    /* a completed turn drops the pending file: last_input falls back to the
+     * recorded history instead of re-running the old turn */
+    config ok=cfg; ok.provider="mock";
+    runtime_ctx ctx3;
+    if(init(&ctx3,&ok)!=0){CHECK(0);return;}
+    CHECK(reasoning_run_ex(ctx3.reasoning,"first-turn","完成的新输入",&a)==0);
+    free(a); a=NULL;
+    li=reasoning_session_last_input(ctx3.reasoning,"first-turn");
+    CHECK(li && strstr(li,"完成的新输入") && !strstr(li,"中断前的输入"));
+    free(li);
+    FILE *pf=fopen("state-test/resume-pending/chat/first-turn.last","rb");
+    CHECK(pf==NULL); if(pf)fclose(pf);
+    /* clearing a session drops a leftover pending input too */
+    CHECK(fs_write_file("state-test/resume-pending/chat/first-turn.last","残留输入",strlen("残留输入"))==0);
+    CHECK(reasoning_session_clear(ctx3.reasoning,"first-turn")==0);
+    pf=fopen("state-test/resume-pending/chat/first-turn.last","rb");
+    CHECK(pf==NULL); if(pf)fclose(pf);
+    runtime_shutdown(&ctx3);
 }
 
 /* ---------- chat history + upload RAG + self-evolution restart rebind ---------- */
@@ -8545,7 +8630,7 @@ static void test_llm_adapters_http(void) {
 /* ---------- HTTP API over the live server (exercises http_server + api_rest + os_socket) ---------- */
 /* Minimal HTTP/1.1 client over the raw socket primitives (avoids pulling in the
  * client-side http.h, whose http_response clashes with http_server.h's). */
-typedef struct { int status; char body[65536]; size_t body_len; } raw_http;
+typedef struct { int status; char headers[2048]; char body[65536]; size_t body_len; } raw_http;
 
 static int raw_http_request(uint16_t port, const char *method, const char *path,
                             const char *body, raw_http *out) {
@@ -8575,6 +8660,8 @@ static int raw_http_request(uint16_t port, const char *method, const char *path,
     }
     int status = 0;
     sscanf(hdr, "HTTP/1.1 %d", &status);
+    memcpy(out->headers, hdr, hn);
+    out->headers[hn] = '\0';
     size_t bl = 0;
     while (bl < sizeof out->body - 1) {
         int rr = sock_recv(c, out->body + bl, sizeof out->body - 1 - bl);
@@ -8623,13 +8710,18 @@ static int selected_model_http(const http_request *req,http_response *resp,void 
         atomic_fetch_add(&f->selected,1);
     else if (cJSON_IsString(m) && !strcmp(m->valuestring,"deepseek-ai/deepseek-v4.1-flash")) {
         atomic_fetch_add(&f->deepseek_calls,1);
+        /* Issue #278: DeepSeek-named models on ANY gateway must get
+         * thinking:{type:disabled} (gateways ignore reasoning_effort). */
         cJSON *effort=cJSON_GetObjectItemCaseSensitive(o,"reasoning_effort");
+        cJSON *thinking=cJSON_GetObjectItemCaseSensitive(o,"thinking");
+        cJSON *ttype=thinking?cJSON_GetObjectItemCaseSensitive(thinking,"type"):NULL;
+        int disabled=cJSON_IsString(ttype) && !strcmp(ttype->valuestring,"disabled") && !effort;
         cJSON *tokens=cJSON_GetObjectItemCaseSensitive(o,"max_tokens");
         cJSON *temperature=cJSON_GetObjectItemCaseSensitive(o,"temperature");
-        if(cJSON_IsString(effort) && !strcmp(effort->valuestring,"none") && cJSON_IsNumber(tokens) &&
+        if(disabled && cJSON_IsNumber(tokens) &&
            tokens->valueint==256 && cJSON_IsNumber(temperature) && temperature->valuedouble==1.0)
             atomic_store(&f->deepseek_probe_config,1);
-        if(cJSON_IsString(effort) && !strcmp(effort->valuestring,"low") && cJSON_IsNumber(tokens) &&
+        if(disabled && cJSON_IsNumber(tokens) &&
            tokens->valueint==32768 && cJSON_IsNumber(temperature) && temperature->valuedouble==1.0)
             atomic_store(&f->deepseek_plan_config,1);
     }
@@ -8792,6 +8884,13 @@ static void test_http_api_contracts(uint16_t port) {
     cJSON *j;
     char path[256], body[512];
     long long id;
+
+    /* Issue #279: the embedded UI must not be cached across binary upgrades,
+     * otherwise removed controls keep showing from a stale WebView cache. */
+    raw_http idx = {0};
+    CHECK(raw_http_request(port, "GET", "/", NULL, &idx) == 0);
+    CHECK(idx.status == 200);
+    CHECK(strstr(idx.headers, "Cache-Control: no-store") != NULL);
 
     /* State: write, read, export, delete and restore through real HTTP. */
     j = api_request_json(port, "PUT", "/v1/state/audit/item", "{\"value\":\"round-trip\"}", 200);
@@ -10586,6 +10685,7 @@ int main(int argc, char **argv) {
     test_agent_loop(); /* full-runtime init: keep after the sandbox seam test */
     test_information_answers();
     test_chat_upload_evolve();
+    test_resume_pending_input();
     test_orchestrate();
     test_flow();
     test_flow_decompose();

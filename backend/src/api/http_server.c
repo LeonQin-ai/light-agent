@@ -378,10 +378,14 @@ static int handle_conn_buf(http_server *s, sock *sock, char *buf, size_t hlen, s
     if (resp.status == 0)
         resp.status = status;
 
+    char cache[80];
+    cache[0] = '\0';
+    if (resp.cache_control[0])
+        snprintf(cache, sizeof(cache), "Cache-Control: %s\r\n", resp.cache_control);
     int n = snprintf(head, sizeof(head),
-                     "HTTP/1.1 %d %s\r\nContent-Type: %s\r\n"
+                     "HTTP/1.1 %d %s\r\nContent-Type: %s\r\n%s"
                      "Content-Length: %zu\r\nConnection: close\r\n\r\n",
-                     resp.status, status_reason(resp.status), resp.content_type, resp.body.len);
+                     resp.status, status_reason(resp.status), resp.content_type, cache, resp.body.len);
     if (n > 0)
         sock_send(sock, head, (size_t)n);
     if (resp.body.len > 0)

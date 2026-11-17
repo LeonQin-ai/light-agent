@@ -26,6 +26,7 @@ typedef struct http_response {
     int status;            /* default 200 */
     char content_type[64]; /* default "application/json" */
     strbuf body;       /* fill with http_resp_* helpers */
+    char cache_control[48]; /* optional Cache-Control value; "" omits the header */
 } http_response;
 
 /* Handler signature. Fills resp; returns 0 ok, -1 -> 500. */

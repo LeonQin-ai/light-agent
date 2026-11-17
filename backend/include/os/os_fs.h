@@ -39,6 +39,9 @@ int fs_files_equal(const char *left,const char *right,size_t max_bytes);
 int fs_mkdirs(const char *path);
 /* Remove a file. 0 ok, -1 if missing/error. */
 int fs_remove(const char *path);
+/* Atomically replace `path` with the already-written file `tmp` (rename over
+ * an existing destination). 0 ok, -1 on error. */
+int fs_replace_file(const char *tmp, const char *path);
 
 typedef struct dir_entry {
     char *name; /* base name only */
