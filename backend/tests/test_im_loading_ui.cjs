@@ -26,6 +26,11 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.goto('http://ui.test/');
   await page.evaluate(async()=>{switchPanel('im');await renderIm();IM_ACTIVE=1;});
   await page.evaluate(()=>renderImThread());assert.match(await page.locator('#im-thread').innerText(),/existing message/);
+  /* switchPanel('im') fire-and-forgets its own renderIm(); drain its trailing
+   * refresh before arming the gate, otherwise it lands gated and inflates reads. */
+  await page.waitForFunction(()=>IM_THREAD_LOADS.size===0&&$('im-thread').getAttribute('aria-busy')!=='true');
+  await page.waitForTimeout(300);
+  await page.waitForFunction(()=>IM_THREAD_LOADS.size===0&&$('im-thread').getAttribute('aria-busy')!=='true');
   let release;getGate=new Promise(r=>release=r);const baseline=reads.length;
   await page.evaluate(()=>{void renderImThread();void renderImThread();void renderImThread();});
   await page.waitForFunction(()=>$('im-thread').getAttribute('aria-busy')==='true');
