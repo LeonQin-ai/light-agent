@@ -319,6 +319,8 @@ struct reasoning {
     int acceptance_frozen;         /* oscillation breaker: the contract is final */
     int gate_mode;                 /* 1 = simple mode: evidence gates and reviews are skipped */
     int gate_auto;                 /* choose completion review from runtime evidence */
+    int gate_simple;               /* config forcing simple gate (fast-mode subagents) */
+    int subagent;                  /* delegated child run: delegation is refused */
 
     /* live run progress for status display (polled via reasoning_progress):
      * run start time, executed tool-call count, tool currently running.
@@ -2086,6 +2088,11 @@ static int required_pending_reads(reasoning *r);
 static void compact_observations(reasoning *r) {
     if (!r->llm || !r->workspace || r->round_log_len < 32768 ||
         r->round_idx < r->observation_compact_round + 4) return;
+    /* Summarization exists to shrink logs that overflow the model-facing
+     * observation partition. When the whole log still fits, an extra LLM
+     * call would only risk losing exact evidence (and it consumes provider
+     * turns that regression fixtures count). */
+    if (r->observation_budget_bytes && r->round_log_len <= r->observation_budget_bytes) return;
     r->observation_compact_round=r->round_idx;
     size_t split=observation_boundary(r,r->round_log,r->round_log_len-16384,r->round_log_len);
     if (!split || split==r->round_log_len) return;
@@ -2140,7 +2147,7 @@ static char *build_context(reasoning *r, const char *prompt) {
     /* Keep the evidence that can actually fit in the model-facing recent
      * observation partition; folding at a fixed 64KB caused reread loops
      * even when the selected model had ample available context. */
-    r->observation_budget_bytes = input_budget / 2;
+    r->observation_budget_bytes = input_budget / 4;
     /* Absolute ceiling regardless of the catalog window: large-context models
      * otherwise re-ship hundreds of KB of stale tool dumps every round, which
      * burns tokens and latency without adding new evidence. */
@@ -2365,14 +2372,19 @@ static char *build_context(reasoning *r, const char *prompt) {
     /* L1 page cache: recover older, still-version-valid source excerpts by
      * relevance when their original tool output falls outside the bounded
      * recent observation window. Scope is the active session only. */
-    size_t log_budget = input_budget / 2;
+    size_t log_budget = input_budget / 4;
+    /* The configured/absolute observation ceiling bounds the recent window
+     * too: a large catalog window must not re-ship evidence past the ceiling
+     * the operator selected (#275). */
+    if (log_budget > r->observation_budget_bytes)
+        log_budget = r->observation_budget_bytes;
     size_t log_start = r->round_log_len > log_budget ? r->round_log_len - log_budget : 0;
     if (log_start)
         log_start = observation_boundary(r, r->round_log, log_start, r->round_log_len);
     const char *recent = r->round_log ? r->round_log + log_start : "";
     size_t cache_budget = input_budget / 6;
-    if (cache_budget > r->observation_budget_bytes / 2)
-        cache_budget = r->observation_budget_bytes / 2;
+    if (cache_budget > r->observation_budget_bytes)
+        cache_budget = r->observation_budget_bytes;
     char *cached_pages = tool_file_cache_context_excluding(r->cur->id, prompt, cache_budget, recent);
     if (cached_pages) {
         strbuf_append(&b, "## Cached file excerpts (session/version validated)\n");
@@ -2520,20 +2532,72 @@ static char *build_context(reasoning *r, const char *prompt) {
 static uint64_t plan_action_signature(const planned_action *actions, int n_actions);
 static uint64_t observation_json_hash(const cJSON *item);
 
-static char *planning_images(reasoning *r) {
+/* Total base64 payload of one attachment item: the inline image plus any
+ * video/PDF frames. Counting bytes (not items) is what the gateway rejects
+ * on (#275: four full-size screenshots reached 4.4MB and earned a 413). */
+static size_t image_item_b64_bytes(const cJSON *item) {
+    size_t total=0;
+    const cJSON *b64=cJSON_GetObjectItemCaseSensitive(item,"image_b64");
+    if(cJSON_IsString(b64))total+=strlen(b64->valuestring);
+    const cJSON *frame;
+    cJSON_ArrayForEach(frame,cJSON_GetObjectItemCaseSensitive(item,"frames")) {
+        const cJSON *fb64=cJSON_GetObjectItemCaseSensitive(frame,"image_b64");
+        if(cJSON_IsString(fb64))total+=strlen(fb64->valuestring);
+    }
+    return total;
+}
+static size_t image_b64_budget(void) {
+    size_t budget=1600000; /* ~1.6MB base64 total, the proven gateway-safe zone */
+    const char *setting=getenv("COA_LLM_MAX_IMAGE_B64");
+    if(setting && *setting) {
+        char *end=NULL;long long value=strtoll(setting,&end,10);
+        if(end && !*end && value>=65536)budget=(size_t)value;
+    }
+    return budget;
+}
+/* Bounded visual selection: unsent tool observations first, then base
+ * attachments, at most 4 items AND a total base64 byte budget. Oldest
+ * observations are dropped first — the newest ones are what the model just
+ * asked to see. Dropped names/sizes go into *note_out for the prompt so the
+ * model crops/downscales instead of re-uploading the same full image (#275). */
+static char *planning_images(reasoning *r, char **note_out) {
+    *note_out=NULL;
     const char *original=r->run_task?r->run_task->attachments_json:NULL;
-    if(!cJSON_GetArraySize(r->tool_images))return original?xstrdup(original):NULL;
     cJSON *all=cJSON_CreateArray(),*base=original?cJSON_Parse(original):NULL,*item;
     cJSON_ArrayForEach(item,r->tool_images) {
         if (!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(item,"sent")))
             cJSON_AddItemToArray(all,cJSON_Duplicate(item,1));
     }
+    int image_count=cJSON_GetArraySize(all);
     cJSON_ArrayForEach(item,base) {
-        if(cJSON_GetArraySize(all)>=4)break;
+        /* The 4-item cap applies to visual observations; text attachments
+         * are context and keep flowing as before. */
+        if(image_item_b64_bytes(item)) {
+            if(image_count>=4)continue;
+            image_count++;
+        }
         cJSON_AddItemToArray(all,cJSON_Duplicate(item,1));
     }
+    cJSON_Delete(base);
+    size_t budget=image_b64_budget(),total=0;
+    cJSON_ArrayForEach(item,all)total+=image_item_b64_bytes(item);
+    if(total>budget) {
+        strbuf note;strbuf_init(&note);
+        strbuf_appendf(&note,"[system] 图片 base64 总量预算 %zu 字节（COA_LLM_MAX_IMAGE_B64 可调），本轮候选共 %zu 字节。以下图片从最旧开始被丢弃：",budget,total);
+        int dropped=0;
+        while(total>budget && cJSON_GetArraySize(all)) {
+            cJSON *oldest=cJSON_GetArrayItem(all,0);
+            size_t bytes=image_item_b64_bytes(oldest);
+            const char *name=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(oldest,"name"));
+            strbuf_appendf(&note,"%s%s（%zu 字节）",dropped?"、":"",name?name:"未命名图片",bytes);
+            total-=bytes;dropped=1;
+            cJSON_DeleteItemFromArray(all,0);
+        }
+        strbuf_append(&note,"。如需查看被丢弃的图片，请裁剪所需区域或降低分辨率后用 file_read 重读，不要重复上传同一张全尺寸截图。");
+        *note_out=strbuf_detach(&note);
+    }
     char *text=cJSON_GetArraySize(all)?cJSON_PrintUnformatted(all):NULL;
-    cJSON_Delete(base);cJSON_Delete(all);return text;
+    cJSON_Delete(all);return text;
 }
 /* REASON: ask the LLM for a plan (JSON array of actions, or plain text). */
 static int h_reason(state_machine *sm, void *ud, const char *input, char **out) {
@@ -2565,7 +2629,32 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
     planner_model_diagnostic diagnostic = {0};
     char *completion_json=NULL;
     int review_requested=r->completion_review_required;
-    char *images=planning_images(r);
+    char *image_note=NULL;
+    char *images=planning_images(r,&image_note);
+    if(image_note) {
+        /* Tell the model which images were dropped and why, in the prompt
+         * itself — a silent drop would just cause a re-read of the same file. */
+        size_t na=aug?strlen(aug):0,nn=strlen(image_note);
+        char *merged=malloc(na+nn+2);
+        if(merged) {
+            if(aug)memcpy(merged,aug,na);
+            merged[na]='\n';memcpy(merged+na+1,image_note,nn+1);
+            free(aug);aug=merged;
+        }
+        free(image_note);
+    }
+    if(r->gate_mode) {
+        /* Fast mode advertises its execution shape so the planner batches
+         * independent reads and delegates self-contained chunks. */
+        static const char fast_note[]="\n[system] 快速模式：同一轮里相互独立的只读动作（file_read/glob/grep/list_dir）会并发执行，请尽量合并到一批；自包含的独立子任务可用 delegate 委派给隔离子代理。完成即交付，不做额外验收复核。\n";
+        size_t na=aug?strlen(aug):0,nn=sizeof(fast_note)-1;
+        char *merged=malloc(na+nn+1);
+        if(merged) {
+            if(aug)memcpy(merged,aug,na);
+            memcpy(merged+na,fast_note,nn+1);
+            free(aug);aug=merged;
+        }
+    }
     int rc = planner_plan_turn_diagnostic(r->llm, r->tools, r->skills, r->policy,
                                  aug ? aug : input, &r->actions, &r->n_actions,
                                  &raw, &plan_err, images,
@@ -2613,6 +2702,8 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
         cJSON_AddBoolToObject(decision,"completion_review_required",review_requested);
         cJSON_AddStringToObject(decision,"completion_declaration",r->planner_native_end_turn==1?"complete":r->planner_native_end_turn==2?"blocked":r->planner_native_end_turn==3?"contract":r->planner_native_end_turn==4?"commentary":"none");
         cJSON_AddNumberToObject(decision,"planned_actions",r->n_actions);
+        cJSON_AddNumberToObject(decision,"visible_bytes",(double)diagnostic.visible_bytes);
+        cJSON_AddNumberToObject(decision,"reasoning_bytes",(double)diagnostic.reasoning_bytes);
         cJSON_AddStringToObject(decision,"stop_reason",diagnostic.stop_reason);
         cJSON_AddBoolToObject(decision,"truncated",r->planner_response_truncated);
         cJSON_AddBoolToObject(decision,"no_action_response",diagnostic.no_action_response);
@@ -3191,6 +3282,31 @@ static void probe_mark_executed(reasoning *r,int probe_only,const char *tool,
     }
     cJSON_Delete(args);
 }
+/* Fast-mode parallel read-only batch: workers only produce executor results
+ * into disjoint slots; every ledger/step/progress update stays sequential in
+ * h_act's main loop, so observation semantics are identical to serial runs. */
+typedef struct fast_job {
+    executor *exec;
+    planned_action *actions;
+    executor_result **results;
+    int *ercs; /* erc+1 per slot; 0 = not executed (main loop runs it serially) */
+    int n, stride, start;
+} fast_job;
+
+static void fast_read_worker(void *arg) {
+    fast_job *j = arg;
+    for (int i = j->start; i < j->n; i += j->stride) {
+        executor_result *er = NULL;
+        int erc = executor_execute(j->exec, j->actions[i].tool, j->actions[i].args_json, &er);
+        if (erc != 0 && er) {
+            executor_result_free(er);
+            er = NULL;
+        }
+        j->results[i] = er;
+        j->ercs[i] = erc + 1;
+    }
+}
+
 static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
     reasoning *r = ud;
     strbuf b;
@@ -3246,6 +3362,53 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
         executor *w = executor_new_remote(exec, r->exec_host);
         if (w)
             exec = w;
+    }
+
+    /* Fast mode (Claude-Code-style parallel tool use): when every action in
+     * the batch is a pure read-only lookup, the actions are independent and
+     * run on a small worker pool instead of one at a time. Anything that could
+     * mutate state, needs approval, hooks or policy refusal stays serial. */
+    executor_result **fast_results = NULL;
+    int *fast_ercs = NULL;
+    if (r->gate_mode && !tx && exec && r->n_actions >= 2 && !r->hooks &&
+        (!r->run_task || r->run_task->permission_mode == 0)) {
+        int eligible = 1;
+        for (int i = 0; i < r->n_actions && eligible; i++) {
+            const char *tn = r->actions[i].tool;
+            if (strcmp(tn, "file_read") && strcmp(tn, "glob") && strcmp(tn, "grep") && strcmp(tn, "list_dir"))
+                eligible = 0;
+            else if (r->policy && policy_check(r->policy, tn, r->actions[i].args_json, NULL) != POLICY_ALLOW)
+                eligible = 0;
+            else {
+                const tool *pt = tool_find(r->tools, tn);
+                char *ae = NULL;
+                if (!pt || tool_validate_args(pt, r->actions[i].args_json, &ae) != 0)
+                    eligible = 0;
+                free(ae);
+            }
+        }
+        if (eligible) {
+            fast_results = calloc((size_t)r->n_actions, sizeof(*fast_results));
+            fast_ercs = calloc((size_t)r->n_actions, sizeof(*fast_ercs));
+            if (fast_results && fast_ercs) {
+                int workers = r->n_actions < 4 ? r->n_actions : 4;
+                fast_job jobs[4];
+                thread_t *threads[4] = {0};
+                for (int k = 0; k < workers; k++) {
+                    jobs[k] = (fast_job){exec, r->actions, fast_results, fast_ercs, r->n_actions, workers, k};
+                    threads[k] = thread_create(fast_read_worker, &jobs[k]);
+                    if (!threads[k])
+                        fast_read_worker(&jobs[k]); /* spawn failed → inline */
+                }
+                for (int k = 0; k < workers; k++)
+                    if (threads[k])
+                        thread_join(threads[k]);
+                log_info("reasoning: fast mode ran %d read-only actions on %d workers", r->n_actions, workers);
+            } else {
+                free(fast_results); fast_results = NULL;
+                free(fast_ercs); fast_ercs = NULL;
+            }
+        }
     }
 
     for (int i = 0; i < r->n_actions; i++) {
@@ -3388,6 +3551,119 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
             }
         }
         free(arg_error);
+        /* #277: file_write already byte-verifies its content and returns a
+         * receipt. A same-path read-back from the start is redundant
+         * verification (100% of writes were read back in the 172-minute run);
+         * answer from the receipt and mark it verified so acceptance gates
+         * still count. Paged reads (offset>0) inspect content and run normally. */
+        if (!strcmp(r->actions[i].tool, "file_read")) {
+            cJSON *ra = cJSON_Parse(r->actions[i].args_json);
+            const char *rpath = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(ra, "path"));
+            cJSON *off = ra ? cJSON_GetObjectItemCaseSensitive(ra, "offset_bytes") : NULL;
+            int at_start = !off || (cJSON_IsNumber(off) && off->valuedouble <= 0);
+            int short_circuit = 0;
+            if (rpath && at_start) {
+                char canonical[2048];
+                normalized_evidence_path(r, rpath, canonical, sizeof(canonical));
+                uint64_t now = fs_file_version(canonical);
+                int ri = 0;
+                while (ri < r->file_receipts_n && strcmp(r->file_receipts[ri].path, canonical)) ri++;
+                if (ri < r->file_receipts_n && r->file_receipts[ri].written &&
+                    r->file_receipts[ri].written == now) {
+                    r->ok_actions++;
+                    r->prog_tool_calls++;
+                    r->round_cached_action_skips++;
+                    /* The receipt answers this read, so acceptance gates must
+                     * still count the artifact as verified at this version;
+                     * a later write changes the version and reopens review. */
+                    r->file_receipts[ri].verified = now;
+                    resolve_failed_tool(r, r->actions[i].tool, r->actions[i].args_json);
+                    /* #232: artifact delivery review must still see the actual
+                     * bytes. Echo a bounded content slice with the receipt so
+                     * read-back verification stays satisfiable without a real
+                     * tool call; large files keep the note-only form to protect
+                     * the observation budget (#275). */
+                    size_t got = 0; int more = 0;
+                    char *echo = fs_read_file_slice(canonical, 0, 4096, &got, &more);
+                    strbuf_appendf(&b, "[file_read] 写入已校验，内容见回执（%s，版本 %llu）。"
+                                     "file_write 的字节回执已证明内容一致，无需读回确认；请直接执行下一步。\n",
+                                     canonical, (unsigned long long)now);
+                    char step_out[4608];
+                    snprintf(step_out, sizeof(step_out),
+                             "write receipt already byte-verified; read-back skipped");
+                    if (echo) {
+                        strbuf_appendf(&b, "%s%s\n", echo, more ? "…（内容截断）\n" : "");
+                        snprintf(step_out, sizeof(step_out),
+                                 "write receipt already byte-verified; read-back skipped\n%s%s",
+                                 echo, more ? "\n...(truncated)" : "");
+                        free(echo);
+                    }
+                    run_step_add(r, r->actions[i].tool, r->actions[i].args_json,
+                                 step_out, 1, 0);
+                    short_circuit = 1;
+                }
+            }
+            cJSON_Delete(ra);
+            if (short_circuit) continue;
+        }
+        /* Fast mode: delegate a self-contained subtask to an isolated child
+         * run — fresh session, simple gate, bounded rounds. The child cannot
+         * see or pollute this conversation's history. Strict mode refuses. */
+        if (!strcmp(r->actions[i].tool, "delegate")) {
+            cJSON *da = cJSON_Parse(r->actions[i].args_json);
+            const char *dtask = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(da, "task"));
+            const char *dctx = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(da, "context"));
+            r->prog_tool_calls++;
+            long long t_del0 = time_now_ms();
+            char *dout = NULL;
+            int drc = -1;
+            if (!r->gate_mode) {
+                dout = xstrdup("delegate 仅在快速模式可用：当前为严格校验模式，请直接执行该步骤，或在会话设置中切换到快速模式。");
+            } else if (r->subagent) {
+                dout = xstrdup("子代理不支持再次委派：请直接完成当前子任务。");
+            } else if (!dtask || !*dtask) {
+                dout = xstrdup("delegate 缺少 task 参数。");
+            } else {
+                reasoning_config cc = {0};
+                cc.llm = r->llm; cc.tools = r->tools; cc.policy = r->policy;
+                cc.workspace = r->workspace; cc.state_root = r->state_root;
+                cc.skills = r->skills; cc.mcp = r->mcp;
+                cc.metrics = r->metrics; cc.usage_acc = r->usage_acc;
+                cc.trace = r->trace;
+                cc.exec_backend = r->exec_backend; cc.exec_host = r->exec_host;
+                cc.max_rounds = 16; cc.gate_simple = 1; cc.subagent = 1; cc.defer_session_load = 1;
+                reasoning *child = reasoning_new(&cc);
+                if (child) {
+                    char child_session[96];
+                    snprintf(child_session, sizeof(child_session), "delegate-%lld-%d",
+                             (long long)time_now_us(), i);
+                    strbuf dp; strbuf_init(&dp);
+                    if (dctx && *dctx) strbuf_appendf(&dp, "%s\n\n", dctx);
+                    strbuf_append(&dp, dtask);
+                    char *danswer = NULL;
+                    drc = reasoning_run_ex(child, child_session, dp.buf ? dp.buf : dtask, &danswer);
+                    strbuf_free(&dp);
+                    dout = danswer;
+                    reasoning_free(child);
+                }
+                if (!dout) dout = xstrdup("子代理启动失败。");
+            }
+            cJSON_Delete(da);
+            run_step_add(r, "delegate", r->actions[i].args_json, dout, drc == 0 ? 1 : 0,
+                         (int)(time_now_ms() - t_del0));
+            strbuf_appendf(&b, "[delegate] %s\n", dout);
+            if (drc == 0) {
+                r->ok_actions++;
+                r->run_successful_tools++;
+                resolve_failed_tool(r, "delegate", r->actions[i].args_json);
+            } else {
+                r->all_actions_ok = 0;
+                r->run_had_action_failure = 1;
+                note_failed_tool(r, "delegate", r->actions[i].args_json, dout);
+            }
+            free(dout);
+            continue;
+        }
         int is_search = strcmp(r->actions[i].tool, "glob") == 0 ||
                         strcmp(r->actions[i].tool, "grep") == 0 ||
                         strcmp(r->actions[i].tool, "file_read") == 0 ||
@@ -3507,7 +3783,15 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
             if (agg && strlen(agg) > out_before) full_step_out = str_head(agg+out_before,65536);
         } else if (exec) {
             executor_result *er = NULL;
-            int erc = executor_execute(exec, r->actions[i].tool, r->actions[i].args_json, &er);
+            int erc;
+            if (fast_ercs && fast_ercs[i]) {
+                /* Consume the parallel pre-pass result (ownership transfers). */
+                erc = fast_ercs[i] - 1;
+                er = fast_results[i];
+                fast_results[i] = NULL;
+            } else {
+                erc = executor_execute(exec, r->actions[i].tool, r->actions[i].args_json, &er);
+            }
             rc = (erc == 0 && er && er->ok) ? 0 : -1;
             if (er) {
                 output_hash=hash64(er->output ? er->output : "",er->output ? strlen(er->output) : 0);
@@ -3684,6 +3968,16 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
     if (r->n_actions > 0) {
         snprintf(r->cur->sn_state, sizeof(r->cur->sn_state), "%d/%d 个动作已执行%s", r->ok_actions, r->n_actions,
                  r->all_actions_ok ? "" : "，部分失败");
+    }
+
+    /* Pre-pass results skipped by dedup/short-circuit/abort are still owned
+     * here; free them so a consumed-elsewhere slot never double-frees. */
+    if (fast_results) {
+        for (int i = 0; i < r->n_actions; i++)
+            if (fast_results[i])
+                executor_result_free(fast_results[i]);
+        free(fast_results);
+        free(fast_ercs);
     }
 
     executor_free(exec);
@@ -3865,10 +4159,15 @@ reasoning *reasoning_new(const reasoning_config *cfg) {
     r->plugin_registry = cfg->plugin_registry;
     r->state_root = cfg->state_root ? xstrdup(cfg->state_root) : NULL;
     if(!cfg->defer_session_load)meta_load(r); /* runtime lanes load shared index once */
-    /* Negative settings preserve the explicitly unlimited compatibility mode. */
+    /* Negative settings keep the explicitly unlimited compatibility mode, but
+     * "unlimited" is no longer a million-round blank check: a real run reached
+     * 145 rounds / 172 minutes without converging (#277). The hard backstop
+     * still leaves 2x the default budget for genuinely large tasks. */
     r->max_rounds = cfg->max_rounds != 0 ? cfg->max_rounds : AGENT_LOOP_MAX_ROUNDS;
     if (r->max_rounds < 0)
-        r->max_rounds = 1000000;
+        r->max_rounds = 128;
+    r->gate_simple = cfg->gate_simple;
+    r->subagent = cfg->subagent;
     r->hooks = cfg->hooks;
     r->usage_acc = cfg->usage_acc; /* borrowed per-model token ledger */
     if (r->hooks)
@@ -4617,8 +4916,8 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
      * full structured-acceptance mode ("full", or absent). */
     {
         const char *gate = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o, "gate"));
-        r->gate_mode = (gate && strcmp(gate, "simple") == 0) ? 1 : 0;
-        r->gate_auto = !gate || strcmp(gate, "auto") == 0;
+        r->gate_mode = r->gate_simple || (gate && strcmp(gate, "simple") == 0) ? 1 : 0;
+        r->gate_auto = !r->gate_simple && (!gate || strcmp(gate, "auto") == 0);
     }
     cJSON *temperature = cJSON_GetObjectItemCaseSensitive(o, "temperature");
     r->planner_temperature = cJSON_IsNumber(temperature) ? temperature->valuedouble : -1;
@@ -4769,6 +5068,15 @@ restart_planning:
          (completion_grace && r->round_idx==r->max_rounds+1); r->round_idx++) {
         if (run_aborted(r)) { st = ST_FAILED; break; }
         r->completion_only=r->round_idx>r->max_rounds;
+        /* Convergence pressure before the budget runs out (#277): a long run
+         * must start wrapping up while it still has rounds to deliver, not
+         * discover the ceiling mid-exploration. */
+        if (!r->completion_only && r->round_idx > 1) {
+            if (r->max_rounds >= 128 && r->round_idx == 64)
+                round_log_append(r,"[system] 已执行 64 轮，达到 unlimited 兼容模式兜底上限（128 轮）的一半。请收敛并汇报剩余项：优先完成核心交付，把未完成项写入 complete_task 的 answer，不要继续扩散探索。");
+            else if (r->max_rounds >= 16 && r->round_idx == r->max_rounds - 4)
+                round_log_append(r,"[system] 接近本轮次预算上限（还剩 4 轮）。请收敛并汇报剩余项：停止新增探测，完成手头交付并用 complete_task 汇报进度与剩余工作。");
+        }
         char *messages = task_take_messages(r->run_task, &r->applied_updates);
         if (messages) {
             char *safe_messages = ssh_session_prepare_prompt(r->state_root, session_id, messages);

@@ -48,6 +48,7 @@ typedef struct llm_response {
     int http_status; /* 0 when no HTTP response was received */
     char stop_reason[64]; /* provider metadata only; never response text */
     size_t visible_content_bytes; /* before native-call validation */
+    size_t reasoning_content_bytes; /* hidden reasoning text bytes, when reported (#277) */
     int tool_call_count; /* received blocks, including rejected/truncated ones */
     char *tool_actions_json; /* normalized native tool calls, caller frees */
 } llm_response;

@@ -15,6 +15,7 @@ typedef struct planner_model_diagnostic {
     char commentary[1024]; /* Public assistant status, never hidden reasoning. */
     int http_status, max_tokens, truncated, has_content, has_tool_calls;
     int no_action_response; /* required decision absent; not malformed tool arguments */
+    size_t visible_bytes, reasoning_bytes; /* per-response output split (#277) */
     char stop_reason[64];
     char stage[24]; /* transport, http, response, protocol */
     /* Rejected operation identity for recovery, not an executed tool result.
@@ -23,6 +24,9 @@ typedef struct planner_model_diagnostic {
 } planner_model_diagnostic;
 /* Native protocol decisions must not be overridden by prose heuristics. */
 int planner_uses_native_tools(const llm *l);
+/* Normalized (lowercase, alnum-only) DeepSeek V4.1/V4 Flash profile match;
+ * shared by the planner and the REST connection probe (#277). */
+int planner_model_is_deepseek_v41_flash(const char *model);
 struct tool_registry;  /* action/tools.h */
 struct skill_registry; /* action/skill.h */
 struct policy_engine;  /* runtime/policy_engine.h */

@@ -14,6 +14,24 @@
 #include <ctype.h>
 #include "cJSON.h"
 
+/* Model ids arrive with provider prefixes, dots, dashes and mixed case
+ * ("nvidia/deepseek-ai/DeepSeek-V4.1-Flash", "deepseek_v4.1_flash"...).
+ * Normalize to lowercase alphanumerics before profile matching so a renamed
+ * deployment does not silently lose its reasoning/temperature defaults (#277). */
+static void model_name_normalized(const char *model, char *out, size_t cap) {
+    size_t n = 0;
+    if (model)
+        for (const unsigned char *p = (const unsigned char *)model; *p && n + 1 < cap; ++p)
+            if (isalnum(*p)) out[n++] = (char)tolower(*p);
+    out[n] = '\0';
+}
+
+int planner_model_is_deepseek_v41_flash(const char *model) {
+    char norm[256];
+    model_name_normalized(model, norm, sizeof(norm));
+    return strstr(norm, "deepseekv41flash") != NULL || strstr(norm, "deepseekv4flash") != NULL;
+}
+
 static const char *SYS_PROMPT =
     "You are the planner of a light-agent. Decide what tool actions to take "
     "for the user request. Respond with ONLY a JSON array of actions of the "
@@ -157,11 +175,22 @@ static char *build_catalog_prompt(const tool_registry *tools, struct skill_regis
             strbuf_append(&b,
                               "- skill:      args {\"name\": string}  # run a REGISTERED SKILL by name (list below)\n");
         } else {
-            strbuf_appendf(&b, "- %s: %s\n", t->name, t->description ? t->description : "");
+            int is_mcp = !strncmp(t->name, "mcp__", 5);
+            if (is_mcp && t->description)
+                strbuf_appendf(&b, "- %s: %.160s\n", t->name, t->description);
+            else
+                strbuf_appendf(&b, "- %s: %s\n", t->name, t->description ? t->description : "");
             if (t->json_schema && *t->json_schema) {
-                strbuf_append(&b, "  args schema: ");
-                strbuf_append(&b, t->json_schema);
-                strbuf_append(&b, "\n");
+                /* MCP schemas already ship in the native tool catalog; a second
+                 * full copy in the system prompt doubles the token cost (#275).
+                 * Legacy turns have no catalog, so they keep the full schema. */
+                if (native && is_mcp) {
+                    strbuf_append(&b, "  args schema: see the native tool definition; arguments are validated at runtime\n");
+                } else {
+                    strbuf_append(&b, "  args schema: ");
+                    strbuf_append(&b, t->json_schema);
+                    strbuf_append(&b, "\n");
+                }
             }
         }
     }
@@ -193,7 +222,8 @@ static char *build_catalog_prompt(const tool_registry *tools, struct skill_regis
             "content use file_read paging. Use a direct command for simple text processing. For complex reusable processing, write a python file with file_write then run "
             "`python script.py`. Redirect output with > file when a tool result needs to become an artifact.\n",
             shell_desc);
-        strbuf_append(&b,"A successful file_write verifies the written bytes. Run newly written helper scripts directly; reread source only to diagnose an error or inspect changed content. Validate their actual outputs.\n");
+        strbuf_append(&b,"A successful file_write verifies the written bytes. Run newly written helper scripts directly; never file_read a file you just wrote — the write receipt is the verification, and the runtime answers such read-backs from the receipt. Reread source only to diagnose an error or inspect changed content. Validate their actual outputs.\n");
+        strbuf_append(&b,"Script reuse: for a repeated operation class (batch sync, per-item checks, dumps) write ONE parameterized script and invoke it with different arguments per item. Do not create numbered copies (.cherry1.sh, .cherry2.sh, _r92.py, _r30.py...) that differ only in parameters; each copy costs a write round and bloats the next prompt.\n");
     }
     strbuf_append(&b,
         "Evidence parity: direct tool results (file_read, grep, glob, git, shell) and results produced by your own "
@@ -768,11 +798,22 @@ static char *native_tool_catalog(const tool_registry *tools, struct policy_engin
         cJSON_AddStringToObject(fn,"description",t->description?t->description:"");
         cJSON *schema=t->json_schema?cJSON_Parse(t->json_schema):NULL;
         if(!cJSON_IsObject(schema)) {cJSON_Delete(schema);schema=cJSON_CreateObject();cJSON_AddStringToObject(schema,"type","object");}
-        /* file-path is a local validation format, not a provider JSON-schema extension. */
-        cJSON *property;
-        cJSON_ArrayForEach(property,cJSON_GetObjectItemCaseSensitive(schema,"properties")) {
-            const char *format=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(property,"format"));
-            if(format && !strcmp(format,"file-path")) cJSON_DeleteItemFromObjectCaseSensitive(property,"format");
+        /* MCP schemas can be huge and a code task rarely calls them (#275-J).
+         * Ship a loose object here; the description carries usage and the
+         * runtime still validates every call against the REAL schema, feeding
+         * it back on argument errors. */
+        if(!strncmp(t->name,"mcp__",5)) {
+            cJSON_Delete(schema);
+            schema=cJSON_CreateObject();
+            cJSON_AddStringToObject(schema,"type","object");
+            cJSON_AddStringToObject(schema,"description","Arguments are validated at runtime against the tool's real schema; on a schema error the required schema is returned.");
+        } else {
+            /* file-path is a local validation format, not a provider JSON-schema extension. */
+            cJSON *property;
+            cJSON_ArrayForEach(property,cJSON_GetObjectItemCaseSensitive(schema,"properties")) {
+                const char *format=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(property,"format"));
+                if(format && !strcmp(format,"file-path")) cJSON_DeleteItemFromObjectCaseSensitive(property,"format");
+            }
         }
         cJSON_AddItemToObject(fn,"parameters",schema);cJSON_AddItemToArray(list,entry);
     }
@@ -828,6 +869,7 @@ static int plan_with(llm *llm, char *sys_prompt, const char *prompt, planned_act
     cJSON *file;
     char *owned[28] = {0};
     int count = 2;
+
     cJSON_ArrayForEach(file, files) {
         if (count == 30) break;
         cJSON *name = cJSON_GetObjectItemCaseSensitive(file, "name");
@@ -871,13 +913,15 @@ static int plan_with(llm *llm, char *sys_prompt, const char *prompt, planned_act
     }
     req.messages = msgs;
     req.num_messages = count;
-    int deepseek_v41 = llm->model && strstr(llm->model, "deepseek-v4.1-flash") != NULL;
+    int deepseek_v41 = planner_model_is_deepseek_v41_flash(llm->model);
     req.temperature = temperature >= 0 && temperature <= 1 ? temperature : (deepseek_v41 ? 1.0 : 0.2);
     /* Bound this model's hidden reasoning so it cannot consume the planner's
      * entire output budget before returning a parseable plan. */
+    char model_norm[256];
+    model_name_normalized(llm->model, model_norm, sizeof(model_norm));
     if (effort && *effort) {
-        int deepseek = deepseek_v41 || (llm->model &&
-            (!strcmp(llm->model,"deepseek-flash") || !strcmp(llm->model,"deepseek-v4-pro")));
+        int deepseek = deepseek_v41 ||
+            strstr(model_norm,"deepseekflash") != NULL || strstr(model_norm,"deepseekv4pro") != NULL;
         int glm = llm->model && llm->base_url && !strncmp(llm->base_url,"https://api.z.ai/",sizeof("https://api.z.ai/")-1) &&
             (!strcmp(llm->model,"glm-5.2") || !strcmp(llm->model,"glm-5.3") || !strcmp(llm->model,"glm-5.3-flash"));
         if ((deepseek || glm) && !strcmp(effort,"medium")) effort = "high";
@@ -887,6 +931,11 @@ static int plan_with(llm *llm, char *sys_prompt, const char *prompt, planned_act
         if (temperature < 0) req.temperature = -1;
     } else {
         req.reasoning_effort = deepseek_v41 ? "low" : NULL;
+        /* A DeepSeek-looking id that matched no profile keeps provider
+         * defaults; say so instead of silently losing the reasoning bound. */
+        if (!deepseek_v41 && strstr(model_norm,"deepseek"))
+            log_warn("planner: model '%s' looks like DeepSeek but matched no known profile; reasoning defaults unchanged",
+                llm->model ? llm->model : "unknown");
     }
     int visual = 0;
     for (int i=0;i<count;i++) if(msgs[i].image_b64 && *msgs[i].image_b64) visual=1;
@@ -945,9 +994,16 @@ static int plan_with(llm *llm, char *sys_prompt, const char *prompt, planned_act
     }
     rc = llm_chat(llm, &req, &resp);
     free(review_system);
+    /* Per-response output split: hidden reasoning vs visible deliverable.
+     * A response that spent its budget on reasoning shows up here (#277). */
+    log_info("planner: response model=%s visible_bytes=%zu reasoning_bytes=%zu stop=%s http=%d",
+        llm->model ? llm->model : "unknown", resp.visible_content_bytes,
+        resp.reasoning_content_bytes, resp.stop_reason, resp.http_status);
     if (diagnostic) {
         memset(diagnostic, 0, sizeof(*diagnostic));
         diagnostic->http_status = resp.http_status;
+        diagnostic->visible_bytes = resp.visible_content_bytes;
+        diagnostic->reasoning_bytes = resp.reasoning_content_bytes;
         diagnostic->max_tokens = req.max_tokens;
         diagnostic->truncated = resp.truncated;
         diagnostic->has_content = resp.visible_content_bytes > 0 || (resp.content && *resp.content);
@@ -977,6 +1033,13 @@ static int plan_with(llm *llm, char *sys_prompt, const char *prompt, planned_act
                 strbuf diagnostic; strbuf_init(&diagnostic);
                 strbuf_appendf(&diagnostic,"模型服务限流或账户配额不足（模型 %s，HTTP 429）：%s。请根据服务端返回的重置时间或限流说明恢复任务。",
                     llm->model ? llm->model:"unknown",resp.error ? resp.error:"rate limit exceeded");
+                *err_out=strbuf_detach(&diagnostic);
+            } else if(visual && resp.http_status==413) {
+                /* 413 is a payload-size rejection, not missing vision support.
+                 * Attribute it correctly so the fix is shrinking images (#275). */
+                strbuf diagnostic; strbuf_init(&diagnostic);
+                strbuf_appendf(&diagnostic,"图片/视频帧请求体过大被服务端拒绝（模型 %s，HTTP 413）：%s。这是体积问题而非接口不支持图片：请裁剪图片、降低分辨率或减少图片数量，也可调小 COA_LLM_MAX_IMAGE_B64 总量预算后重试。",
+                    llm->model ? llm->model:"unknown",resp.error ? resp.error:"payload too large");
                 *err_out=strbuf_detach(&diagnostic);
             } else if(visual) {
                 strbuf diagnostic; strbuf_init(&diagnostic);

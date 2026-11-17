@@ -17,6 +17,15 @@ for provider in ('openai','anthropic'):
             global count
             try:
                 body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                if body['messages'][0]['content'].startswith('Summarize these tool observations'):
+                    # Observation compaction is a maintenance call, not a
+                    # planning turn: answer with a valid summary and do not
+                    # count it against the 30-read retention sequence.
+                    summary=json.dumps({'facts':['paged reads of part files in progress'],'failures':[],'artifacts':[],'pending':['remaining parts']})
+                    if provider=='openai':response={'choices':[{'message':{'content':summary},'finish_reason':'stop'}]}
+                    else:response={'content':[{'type':'text','text':summary}],'stop_reason':'end_turn'}
+                    raw=json.dumps(response).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
+                    return
                 n=count;count+=1;assert n<35
                 assert body.get('tools')
                 message_bytes=sum(len(str(m.get('content','')).encode()) for m in body['messages'])

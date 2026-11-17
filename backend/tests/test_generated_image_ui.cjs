@@ -66,7 +66,7 @@ const data='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA
    assert.equal(await page.evaluate(()=>getComputedStyle(imageFixture.el.querySelector('.chat-answer')).maxHeight),'none','long answer must not clip its delivery image');
    await page.waitForFunction(()=>imageFixture.el.querySelector('.chat-image-button img')?.naturalWidth===1);
    await page.evaluate(()=>imageFixture.el.querySelector('.chat-image-button').click());
-   assert.equal(await page.locator('dialog[open] img').count(),1);await page.locator('dialog[open] button').click();
+   assert.equal(await page.locator('dialog[open] img').count(),1);await page.locator('dialog[open] button').first().click();await page.locator('dialog[open] button',{hasText:'关闭'}).click();
    await page.evaluate(()=>{imageFixture.images=undefined;imageFixture.progressEvents.push({steps:imageFixture.progress.steps});imageFixture.progress.steps=[];renderChatEntry(imageFixture);chatPersist();});
    await page.waitForFunction(()=>imageFixture.el.querySelector('.chat-answer .chat-image-button img')?.naturalWidth===1);
    assert.equal(await page.evaluate(()=>imageFixture.el.querySelector('.chat-answer').textContent),'D:/images/picture.png','plain path remains copyable');

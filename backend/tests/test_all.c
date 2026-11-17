@@ -822,7 +822,7 @@ static void test_snapshot_tx(void) {
 
     tool_registry *reg = tool_registry_new();
     tool_register_builtins(reg);
-    CHECK(tool_registry_count(reg) == 12); /* file_read/list_dir/write/edit, shell, ssh, git, mcp, skill, glob, grep */
+    CHECK(tool_registry_count(reg) == 13); /* delegate, file_read/list_dir/write/edit, shell, ssh, git, mcp, skill, skill_manage, glob, grep */
     CHECK(tool_find(reg, "file_read") != NULL);
     CHECK(tool_find(reg, "list_dir") != NULL);
     CHECK(fs_mkdirs("state-test/w") == 0);
@@ -3420,7 +3420,8 @@ static void test_cross_round_progress(void) {
                     const char *name=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(span,"name"));
                     if(!name || strcmp(name,"llm.plan"))continue;
                     cJSON *decision=cJSON_Parse(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(span,"result")));
-                    if(mode==1) CHECK(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(decision,"max_rounds"))==1000000);
+                    /* #277: unlimited compat now has a 128-round backstop. */
+                    if(mode==1) CHECK(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(decision,"max_rounds"))==128);
                     if(++plans==2) CHECK(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(decision,"completion_review_required")));
                     cJSON_Delete(decision);
                 }
@@ -3462,9 +3463,14 @@ static void test_cross_round_progress(void) {
                 CHECK(f.calls<=12);
             } else if (mode==5) {
                 CHECK(rc!=0 && answer && strstr(answer,"未完成"));
-                CHECK(f.calls>=89 && f.calls<=90);
+                /* #275: observation budget /2→/4 folds earlier, so the EOF
+                 * gate needs a couple more review rounds before giving up;
+                 * compact-skip-when-fits removes one maintenance call. */
+                CHECK(f.calls>=89 && f.calls<=91);
             } else if (mode==6) {
                 CHECK(rc==0 && answer && strstr(answer,"已生成并核对"));
+                /* #277: the round-64 convergence nudge adds one review call;
+                 * compact-skip-when-fits removes one maintenance call. */
                 CHECK(f.calls==84 && fs_exists("state-test/progress-loop/draft.ppt"));
             } else if (mode==7) {
                 long long elapsed=0, in=0, out=0; int round=0, calls=0; const char *last_tool=NULL;
@@ -4961,6 +4967,10 @@ static void test_agent_loop(void) {
         int reused=0; const char *p=steps;
         while(p && (p=strstr(p,"previous search result reused"))) { reused++; p++; }
         CHECK(reused==2);
+        /* #277: the final read-back of the just-written readme.txt is answered
+         * from the write receipt (no disk read, no extra LLM round). It still
+         * counts as a completed action so progress matches the step list. */
+        CHECK(steps && strstr(steps,"write receipt already byte-verified"));
         long long elapsed=0,tin=0,tout=0; int round=0,calls=0; const char *tool=NULL;
         reasoning_progress(ctx.reasoning,&elapsed,&round,&calls,&tool,&tin,&tout);
         CHECK(calls==7);
@@ -5105,6 +5115,93 @@ static void test_agent_loop(void) {
         fs_remove("state-test/loop-w/long-proof.txt");
         fs_remove("state-test/loop-w/proof-result.txt");
     }
+
+    /* #277: file_write byte-verifies its content; a same-path read-back from
+     * the start is answered from the receipt (no real read), and the receipt
+     * still counts as verified evidence. Paged reads keep running normally. */
+    {
+        fs_remove("state-test/loop-w/short-circuit.txt");
+        config cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.state_root = "state-test/loop-write-read-shortcircuit";
+        cfg.workspace = "state-test/loop-w";
+        cfg.provider = "mock";
+        cfg.http_port = 0;
+        runtime_ctx ctx;
+        if (init(&ctx, &cfg) != 0) { CHECK(0); return; }
+        char *ans = NULL;
+        CHECK(reasoning_run(ctx.reasoning, "写后读回短路回归：写入 short-circuit.txt 并确认内容", &ans) == 0);
+        free(ans);
+        char *content = fs_read_file("state-test/loop-w/short-circuit.txt");
+        CHECK(content && strcmp(content, "verified content") == 0);
+        free(content);
+        char *steps_json = reasoning_steps_json(ctx.reasoning);
+        CHECK(steps_json && strstr(steps_json, "write receipt already byte-verified") != NULL);
+        cJSON *steps = steps_json ? cJSON_Parse(steps_json) : NULL;
+        CHECK(steps && cJSON_IsArray(steps) && cJSON_GetArraySize(steps) == 2);
+        cJSON *read_step = steps ? cJSON_GetArrayItem(steps, 1) : NULL;
+        CHECK(read_step && strcmp(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(read_step, "tool")), "file_read") == 0);
+        CHECK(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(read_step, "ok")) == 1);
+        cJSON_Delete(steps); free(steps_json);
+        runtime_shutdown(&ctx);
+        fs_remove("state-test/loop-w/short-circuit.txt");
+    }
+
+    /* Fast mode: parallel read-only batches, subagent delegation with an
+     * isolated session, and strict mode refusing delegation. */
+    {
+        fs_mkdirs("state-test/fast-mode");
+        CHECK(fs_write_file("state-test/fast-mode/readme.txt", "fast mode evidence", 18) == 0);
+        llm *mock = llm_create("mock", NULL, NULL, "mock");
+        tool_registry *reg = tool_registry_new();
+        tool_register_builtins(reg);
+        reasoning_config cfg = {0};
+        cfg.llm = mock; cfg.tools = reg;
+        cfg.workspace = "state-test/fast-mode";
+        cfg.state_root = "state-test/fast-mode-state";
+        cfg.gate_simple = 1; cfg.max_rounds = 8;
+        reasoning *r = reasoning_new(&cfg);
+        CHECK(r != NULL);
+        char *ans = NULL;
+        CHECK(reasoning_run_ex(r, "fast-par", "快速模式并发回归测试：读取资料", &ans) == 0);
+        CHECK(ans && strstr(ans, "任务完成") != NULL);
+        free(ans); ans = NULL;
+        char *steps_json = reasoning_steps_json(r);
+        CHECK(steps_json && strstr(steps_json, "file_read") && strstr(steps_json, "list_dir") && strstr(steps_json, "glob"));
+        free(steps_json); steps_json = NULL;
+        CHECK(reasoning_run_ex(r, "fast-del", "委派子代理回归测试：交给子代理", &ans) == 0);
+        CHECK(ans && strstr(ans, "子代理已交付") != NULL);
+        free(ans); ans = NULL;
+        steps_json = reasoning_steps_json(r);
+        CHECK(steps_json && strstr(steps_json, "\"delegate\"") && strstr(steps_json, "子任务完成"));
+        free(steps_json); steps_json = NULL;
+        reasoning_free(r);
+        /* Strict gate: delegation is refused and the run cannot pass it off
+         * as a successful action. */
+        cfg.gate_simple = 0;
+        reasoning *sr = reasoning_new(&cfg);
+        CHECK(sr != NULL);
+        int src = reasoning_run_ex(sr, "strict-del", "委派子代理回归测试：交给子代理", &ans);
+        CHECK(src != 0);
+        free(ans); ans = NULL;
+        steps_json = reasoning_steps_json(sr);
+        CHECK(steps_json && strstr(steps_json, "仅在快速模式") != NULL);
+        free(steps_json);
+        reasoning_free(sr);
+        tool_registry_free(reg);
+        llm_destroy(mock);
+    }
+
+    /* #277: DeepSeek profile matching survives provider prefixes, case and
+     * version spelling; unrelated models must not match. */
+    CHECK(planner_model_is_deepseek_v41_flash("deepseek-v4.1-flash"));
+    CHECK(planner_model_is_deepseek_v41_flash("maas-DeepSeek-V4-Flash-volcengine-codeagent"));
+    CHECK(planner_model_is_deepseek_v41_flash("nvidia/deepseek-ai/DeepSeek_V4.1_Flash"));
+    CHECK(planner_model_is_deepseek_v41_flash("DEEPSEEK-V41-FLASH"));
+    CHECK(!planner_model_is_deepseek_v41_flash("deepseek-v3"));
+    CHECK(!planner_model_is_deepseek_v41_flash("deepseek-chat"));
+    CHECK(!planner_model_is_deepseek_v41_flash("glm-5.3-flash"));
+    CHECK(!planner_model_is_deepseek_v41_flash(NULL));
 
     /* Once the context log folds old observations, the agent must be able to
      * read an earlier file again instead of treating its stale cache as data. */
@@ -9137,6 +9234,14 @@ static void test_http_capacity(void) {
     CHECK(server != NULL);
     if (server) {
         raw_http r;
+        /* The serve thread may not have reached listen() yet (slower on
+         * Linux CI); poll until the socket answers before admitting. */
+        int ready = 0;
+        for (int i = 0; i < 300 && !ready; i++) {
+            ready = raw_http_request(18219, "GET", "/v1/scheduler", NULL, &r) == 0 && r.status == 200;
+            if (!ready) time_sleep_ms(10);
+        }
+        CHECK(ready);
         CHECK(raw_http_request(18219, "POST", "/v1/tasks", "{\"prompt\":\"hold\"}", &r) == 0 && r.status == 200);
         CHECK(strstr(r.body, "\"id\":0") != NULL);
         CHECK(raw_http_request(18219, "POST", "/v1/tasks", "{\"prompt\":\"excess\"}", &r) == 0 && r.status == 429);

@@ -238,6 +238,29 @@ static char *mock_respond(const char *msg,int *commentary) {
         return xstrdup("[{\"tool\":\"file_write\",\"args\":{\"path\":\"rollback-proof.txt\",\"content\":\"done\"}},"
                        "{\"tool\":\"shell\",\"args\":{\"command\":\"exit 1\"}}]");
     }
+    /* #277: a same-path read-back after a byte-verified write must be answered
+     * from the write receipt instead of executing a redundant read. */
+    if (has_substr(msg, "写后读回短路回归")) {
+        if (in_loop) return xstrdup("任务完成：写入已校验，无需读回。");
+        return xstrdup("[{\"tool\":\"file_write\",\"args\":{\"path\":\"short-circuit.txt\",\"content\":\"verified content\"}},"
+                       "{\"tool\":\"file_read\",\"args\":{\"path\":\"short-circuit.txt\"}}]");
+    }
+    /* Fast mode: a pure read-only batch runs on parallel workers; delegation
+     * spawns an isolated child run whose prompt carries only the subtask. */
+    if (has_substr(msg, "快速模式并发回归测试")) {
+        if (in_loop) return xstrdup("任务完成：三份资料已并发读取。");
+        return xstrdup("[{\"tool\":\"file_read\",\"args\":{\"path\":\"readme.txt\"}},"
+                       "{\"tool\":\"list_dir\",\"args\":{\"path\":\".\"}},"
+                       "{\"tool\":\"glob\",\"args\":{\"pattern\":\"*.txt\"}}]");
+    }
+    if (has_substr(msg, "委派子代理回归测试")) {
+        if (in_loop) return xstrdup("任务完成：子代理已交付。");
+        return xstrdup("[{\"tool\":\"delegate\",\"args\":{\"task\":\"子代理资料核对：读取 readme.txt 并总结\"}}]");
+    }
+    if (has_substr(msg, "子代理资料核对")) {
+        if (in_loop) return xstrdup("子任务完成：readme 已读取并总结。");
+        return xstrdup("[{\"tool\":\"file_read\",\"args\":{\"path\":\"readme.txt\"}}]");
+    }
     if (has_substr(msg, "脱敏解释回归测试"))
         return xstrdup("我需要说明脱敏原因：系统曾将普通 URL 路径误判为凭据。现在路径参数会保留。");
     /* #139: conditional examples in a complete explanation are not plans. */

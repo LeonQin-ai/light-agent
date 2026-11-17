@@ -83,13 +83,15 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   const boxes=await page.evaluate(()=>{
    const m=document.querySelector('.run-thought-meta').getBoundingClientRect();
    const b=document.querySelector('.run-thought-body').getBoundingClientRect();
-   return {metaBottom:m.bottom,bodyTop:b.top,scroll:document.querySelector('.run-thought-body').scrollTop};
+   return {metaTop:m.top,bodyBottom:b.bottom,scroll:document.querySelector('.run-thought-body').scrollTop};
   });
   assert.ok(boxes.scroll>0,'body actually scrolled');
-  assert.ok(boxes.metaBottom<=boxes.bodyTop+1,'meta sits above the scroll area');
+  /* #275: the meta line moved to the BOTTOM of the thinking block so it is
+     readable without scrolling back up; it stays visible while the body scrolls. */
+  assert.ok(boxes.metaTop>=boxes.bodyBottom-1,'meta sits below the scroll area');
   await page.evaluate(()=>{const e=window.testThoughtEntry;e.pending=true;e.progress.started_ms=Date.now()-463000;e.progress.llm_ms=25000;chatProgressClock(e);});
   assert.ok((await meta.innerText()).includes('thought for 25s'),'live clock refreshes the meta line');
   assert.deepEqual(errors,[]);
-  console.log('PASS: real session titles, bounded preload, agents entry during preload, tab menu, scrollable thinking with sticky meta');
+  console.log('PASS: real session titles, bounded preload, agents entry during preload, tab menu, scrollable thinking with bottom meta');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

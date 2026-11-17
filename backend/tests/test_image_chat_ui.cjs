@@ -96,7 +96,19 @@ const http=require('node:http');
     assert.deepEqual(posts[0].attachments,['a'.repeat(32)]);
     await page.locator('#chat-box .user img[alt="fixture.png"]').click();
     assert.equal(await page.locator('dialog[open] img').count(),1,'uploaded image opens in a zoom dialog');
-    await page.locator('dialog[open] button').click();
+    /* #276: zoom in/out buttons, plain wheel zoom, fit and close. */
+    const zoomLabel=page.locator('dialog[open] [aria-live]');
+    await page.locator('dialog[open] button',{hasText:'放大'}).click();
+    assert.equal(await zoomLabel.innerText(),'125%','zoom-in button enlarges the image');
+    await page.locator('dialog[open] button',{hasText:'缩小'}).click();
+    assert.equal(await zoomLabel.innerText(),'100%','zoom-out button shrinks the image back');
+    await page.locator('dialog[open] .chat-image-viewport').dispatchEvent('wheel',{deltaY:-100,clientX:40,clientY:40});
+    assert.equal(await zoomLabel.innerText(),'110%','scroll wheel zooms without Ctrl');
+    await page.locator('dialog[open] button',{hasText:'适应窗口'}).click();
+    assert.equal(await zoomLabel.innerText(),'100%','fit resets the zoom');
+    assert.ok((await page.locator('dialog[open]').innerText()).includes('拖动平移'),'pan hint is offered');
+    await page.locator('dialog[open] button',{hasText:'关闭'}).click();
+    assert.equal(await page.locator('dialog[open]').count(),0,'close button dismisses the lightbox');
     await page.evaluate(()=>chatRedraw());
     await page.locator('#chat-box .user img[alt="fixture.png"]').waitFor();
     await page.evaluate(()=>{

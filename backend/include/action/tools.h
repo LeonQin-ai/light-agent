@@ -137,6 +137,7 @@ const tool *tool_skill(void);
 const tool *tool_skill_manage(void);
 const tool *tool_glob(void);
 const tool *tool_grep(void);
+const tool *tool_delegate(void);
 
 /* Register the built-in tools (incl. the skill tool) into a registry. */
 void tool_register_builtins(tool_registry *reg);

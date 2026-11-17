@@ -687,8 +687,8 @@
 .run-plan>summary::before{content:'▸ ';color:var(--muted)}
 .run-plan[open]>summary::before{content:'▾ '}
 .run-plan>summary:hover{color:var(--fg)}
-.run-thought-meta{position:sticky;top:0;z-index:1;background:var(--card);color:var(--muted);font-size:12px;padding:6px 10px;border:1px solid var(--border);border-radius:8px 8px 0 0;font-variant-numeric:tabular-nums}
-.run-thought-body{max-height:280px;overflow-y:auto;border:1px solid var(--border);border-top:0;border-radius:0 0 8px 8px;padding:10px 12px;scroll-behavior:smooth}
+.run-thought-meta{background:var(--card);color:var(--muted);font-size:12px;padding:6px 10px;border:1px solid var(--border);border-top:0;border-radius:0 0 8px 8px;font-variant-numeric:tabular-nums}
+.run-thought-body{max-height:280px;overflow-y:auto;border:1px solid var(--border);border-bottom:0;border-radius:8px 8px 0 0;padding:10px 12px;scroll-behavior:smooth}
 .run-outline{list-style:none;padding:0;margin:0;display:grid;gap:0}
 .run-outline>li{position:relative;padding:0 0 15px 23px;min-width:0}
 .run-outline>li:last-child{padding-bottom:0}
@@ -743,6 +743,10 @@
 .composer-effort-slider input{flex:1;min-width:0;accent-color:#9d73ef}
 .composer-effort-panel output{text-align:center;color:#9d73ef;font-weight:700}
 .composer-effort-panel small{text-align:center;color:var(--muted)}
+.composer-mode{grid-column:1/-1;grid-row:3;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.composer-mode-label{white-space:nowrap}
+.composer-mode button{border:1px solid var(--border);background:transparent;color:var(--muted);border-radius:999px;padding:3px 12px;font-size:12px;cursor:pointer}
+.composer-mode button.active{background:var(--accent-soft);border-color:var(--accent-ring);color:var(--accent);font-weight:600}
 .composer-mic{grid-column:5;grid-row:2;border:0;background:none;color:var(--fg);font-size:23px;padding:5px}
 .pillbar #chat-send,.pillbar #chat-cancel{grid-column:5;grid-row:2;width:42px;height:42px;padding:0!important;border:0;border-radius:50%;background:#8953ef;color:white}
 #chat-resume{grid-column:1/-1;grid-row:3;justify-self:end}
@@ -1483,6 +1487,11 @@ panels.chat = `
           <small>由当前模型接口决定支持的档位</small>
         </div>
       </details>
+      <div class="composer-mode" id="chat-mode" role="group" aria-label="执行模式" data-mode="fast"
+        title="快速：并发执行只读命令、可委派子代理，免严格校验；严格：完整验收门禁。按会话保存，点击切换。">
+        <span class="composer-mode-label">执行模式</span>
+        <button type="button" data-mode="fast" aria-pressed="true" onclick="chatModeChange('fast')">快速</button><button type="button" data-mode="strict" aria-pressed="false" onclick="chatModeChange('strict')">严格</button>
+      </div>
       <button class="sec" id="chat-cancel" onclick="chatCancel()" style="display:none;padding:6px 10px" aria-label="停止执行" title="停止当前任务">■</button>
       <button class="sec" id="chat-resume" onclick="chatResume()" style="display:none;padding:6px 10px" title="恢复：重跑本会话上一条输入">恢复</button>
 
@@ -2846,7 +2855,7 @@ async function loadDashboard(){
     const tot = usg.obj && usg.obj.total ? usg.obj.total : {prompt:0, completion:0};
     const cells = st.querySelectorAll('.stat .num');
     if(cells.length >= 7){
-      cells[0].textContent = '3.1.3';
+      cells[0].textContent = '3.2.0';
       cells[1].textContent = provider;
       cells[2].textContent = agents;
       cells[3].textContent = wmem;
@@ -4041,6 +4050,18 @@ function chatApproval(t,session){let box=$('chat-approval');if(!box){box=documen
 function chatOptions(session=CHAT_SESSION){try{return JSON.parse(localStorage.getItem('coa.session-options:'+session)||'{}');}catch{return {};}}
 function chatOptionSet(name,value,session=CHAT_SESSION){const o=chatOptions(session);o[name]=value;localStorage.setItem('coa.session-options:'+session,JSON.stringify(o));}
 function chatPermissionChange(value){chatOptionSet('permission',value);}
+/* 执行模式按会话隔离：默认快速（并发只读执行+子代理委派，免严格校验），
+ * 点击才切换到之前的严格验收模式；未设置过的会话一律视为快速。 */
+function chatModeValue(session=CHAT_SESSION){return chatOptions(session).mode==='strict'?'strict':'fast';}
+function syncChatMode(){
+  const box=$('chat-mode');if(!box)return;
+  const mode=chatModeValue();box.dataset.mode=mode;
+  box.querySelectorAll('button').forEach(b=>{const on=b.dataset.mode===mode;b.classList.toggle('active',on);b.setAttribute('aria-pressed',on?'true':'false');});
+}
+function chatModeChange(mode){
+  chatOptionSet('mode',mode);syncChatMode();
+  toast(mode==='strict'?'本会话已切换到严格校验模式':'本会话已切换到快速模式');
+}
 const chatEfforts=[['','默认'],['low','轻度'],['medium','中等'],['high','高度'],['xhigh','极高']];
 function syncChatEffort(value){
   const slider=$('chat-effort');
@@ -4057,6 +4078,7 @@ function syncChatPermission(){
   const permission=$('chat-permission');
   if(permission)permission.value=settings.permission || 'auto';
   syncChatEffort(settings.reasoning_effort);
+  syncChatMode();
 }
 function chatEffortChange(){
   const effort=chatEfforts[Number($('chat-effort').value)][0];
@@ -4822,40 +4844,76 @@ function chatImageButton(src,name){
   button.append(image); button.title='点击放大图片';
   image.addEventListener('error',()=>button.replaceWith(document.createTextNode('图片暂不可预览：'+image.alt)),{once:true});
   button.onclick=()=>{
+    /* #276: output images support zoom in/out — buttons, plain scroll wheel,
+     * +/- keys, drag-to-pan when enlarged, double-click to fit, Esc/backdrop
+     * to close. */
     const dialog=document.createElement('dialog');
     dialog.style.cssText='max-width:95vw;width:90vw;padding:16px';
     dialog.setAttribute('aria-label','图片预览');
     const toolbar=document.createElement('div');
-    toolbar.style.cssText='display:flex;gap:8px;align-items:center;margin-bottom:12px';
-    const viewport=document.createElement('div');
-    viewport.style.cssText='overflow:auto;height:75vh';
+    toolbar.style.cssText='display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap';
+    const viewport=document.createElement('div'); viewport.className='chat-image-viewport';
+    viewport.style.cssText='overflow:auto;height:75vh;cursor:grab;touch-action:none';
     const full=document.createElement('img'); full.src=src; full.alt=image.alt;
-    full.style.cssText='display:block;max-width:none;max-height:none';
+    full.style.cssText='display:block;max-width:none;max-height:none;user-select:none;-webkit-user-drag:none';
     let scale=1, fittedWidth=0;
     const label=document.createElement('span'); label.setAttribute('aria-live','polite');
-    const resize=(next)=>{
+    const resize=(next,anchor)=>{
+      const prev=scale;
       scale=Math.max(0.1,Math.min(8,next));
       if(fittedWidth) full.style.width=(fittedWidth*scale)+'px';
       label.textContent=Math.round(scale*100)+'%';
+      viewport.style.cursor=scale>1?'grab':'default';
+      if(anchor && fittedWidth && scale!==prev){
+        /* Keep the point under the cursor stationary while zooming. */
+        const ratio=scale/prev;
+        viewport.scrollLeft=(viewport.scrollLeft+anchor.x)*ratio-anchor.x;
+        viewport.scrollTop=(viewport.scrollTop+anchor.y)*ratio-anchor.y;
+      }
     };
-    const control=(text,action)=>{
+    const fit=()=>{resize(1);viewport.scrollTo(0,0);};
+    const control=(text,action,title)=>{
       const button=document.createElement('button'); button.type='button';
-      button.textContent=text; button.onclick=action; toolbar.append(button);
+      button.textContent=text; button.onclick=action; if(title)button.title=title; toolbar.append(button);
     };
-    control('缩小',()=>resize(scale/1.25));
-    control('放大',()=>resize(scale*1.25));
-    control('适应窗口',()=>{resize(1);viewport.scrollTo(0,0);});
+    control('缩小',()=>resize(scale/1.25),'快捷键 -');
+    control('放大',()=>resize(scale*1.25),'快捷键 +');
+    control('适应窗口',fit,'快捷键 0 / 双击图片');
     toolbar.append(label);
-    control('关闭',()=>dialog.close());
+    const hint=document.createElement('span'); hint.className='muted'; hint.style.cssText='font-size:12px';
+    hint.textContent='滚轮缩放 · 拖动平移 · 双击复位'; toolbar.append(hint);
+    control('关闭',()=>dialog.close(),'快捷键 Esc');
     full.onload=()=>{
       fittedWidth=Math.min(full.naturalWidth,viewport.clientWidth,
         viewport.clientHeight*full.naturalWidth/full.naturalHeight);
       resize(1);
     };
     viewport.addEventListener('wheel',event=>{
-      if(!event.ctrlKey)return;
-      event.preventDefault();resize(scale*(event.deltaY<0?1.1:1/1.1));
+      event.preventDefault();
+      const rect=viewport.getBoundingClientRect();
+      resize(scale*(event.deltaY<0?1.1:1/1.1),{x:event.clientX-rect.left,y:event.clientY-rect.top});
     },{passive:false});
+    viewport.addEventListener('dblclick',fit);
+    let drag=null;
+    viewport.addEventListener('pointerdown',event=>{
+      if(scale<=1 || event.button!==0)return;
+      drag={x:event.clientX,y:event.clientY,left:viewport.scrollLeft,top:viewport.scrollTop};
+      viewport.setPointerCapture(event.pointerId);viewport.style.cursor='grabbing';
+    });
+    viewport.addEventListener('pointermove',event=>{
+      if(!drag)return;
+      viewport.scrollLeft=drag.left-(event.clientX-drag.x);
+      viewport.scrollTop=drag.top-(event.clientY-drag.y);
+    });
+    const endDrag=()=>{drag=null;viewport.style.cursor=scale>1?'grab':'default';};
+    viewport.addEventListener('pointerup',endDrag);
+    viewport.addEventListener('pointercancel',endDrag);
+    dialog.addEventListener('keydown',event=>{
+      if(event.key==='+'||event.key==='='){event.preventDefault();resize(scale*1.25);}
+      else if(event.key==='-'||event.key==='_'){event.preventDefault();resize(scale/1.25);}
+      else if(event.key==='0'){event.preventDefault();fit();}
+    });
+    dialog.addEventListener('click',event=>{if(event.target===dialog)dialog.close();});
     viewport.append(full);dialog.append(toolbar,viewport);document.body.append(dialog);
     dialog.addEventListener('close',()=>dialog.remove(),{once:true});dialog.showModal();
     resize(1);
@@ -6546,13 +6604,14 @@ function renderChatEntry(entry){
     }
     const plan = document.createElement('details'); plan.className = 'run-plan run-thought'; plan.open = wasOutlineOpen;
     const planSummary = document.createElement('summary'); planSummary.textContent = '思考过程';
-    /* Meta stays outside the scroll body so elapsed/tokens/thought time remain
-       visible while the thinking outline scrolls. */
+    /* #275: meta sits at the BOTTOM of the thinking block, outside the scroll
+       body — elapsed/tokens/thought time stay visible without scrolling back
+       up, and the outline scrolls above it. */
     const thoughtMeta = document.createElement('div'); thoughtMeta.className = 'run-thought-meta';
     thoughtMeta.textContent = thoughtMetaText(entry,p);
     const thoughtBody = document.createElement('div'); thoughtBody.className = 'run-thought-body';
     thoughtBody.append(outline);
-    plan.append(planSummary,thoughtMeta,thoughtBody);
+    plan.append(planSummary,thoughtBody,thoughtMeta);
     plan.addEventListener('toggle',() => { if(plan.isConnected){entry.outlineOpen = plan.open; chatPersist();} });
     chain.append(plan);
     const detailBody = document.createElement('details'); detailBody.className = 'run-details'; detailBody.open = wasOpen;
@@ -6864,6 +6923,7 @@ async function chatSubmit(resume = false){
   const permission=$('chat-permission')?.value || settings.permission || 'auto';
   const route=settings.route || undefined;
   const reasoning_effort=settings.reasoning_effort || undefined;
+  const gate=chatModeValue(session)==='strict'?'full':'simple';
   const destination=CHAT_MSGS;
   const attachments = resume ? [] : CHAT_ATTACH.slice();
   CHAT_SUBMITTING.add(session); chatBusyUI(true);
@@ -6888,7 +6948,7 @@ async function chatSubmit(resume = false){
   entry.pending = true; entry.progress = {stage:'submitting'};
   CHAT_CACHE[session] = CHAT_SESSION===session?CHAT_MSGS:destination; renderChatEntry(entry);
   const r = await call('POST',resume ? '/v1/chat/sessions/' + encodeURIComponent(session) + '/resume' : '/v1/chat',
-    resume ? {route,reasoning_effort,permission_mode:permission} : {message:full,session,route,reasoning_effort,workspace:executionWorkspace || undefined,permission_mode:permission,attachments:attachments.map(a=>a.id)});
+    resume ? {route,reasoning_effort,gate,permission_mode:permission} : {message:full,session,route,reasoning_effort,gate,workspace:executionWorkspace || undefined,permission_mode:permission,attachments:attachments.map(a=>a.id)});
   CHAT_SUBMITTING.delete(session);
   if(!Number.isInteger(r.obj?.id)){
     entry.pending = false; entry.progress.stage = 'failed';

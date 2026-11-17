@@ -40,7 +40,17 @@ def image_frame(image, prefix, frames, label, time_ms=None):
         else: converted.paste(image.convert('RGB'))
         image = converted
     path = f'{prefix}.frame{len(frames)}.jpg'
-    image.save(path, 'JPEG', quality=78)
+    from PIL import ImageOps
+    image = ImageOps.exif_transpose(image)
+    for quality in (78, 65, 50, 35):
+        image.save(path, 'JPEG', quality=quality, optimize=True)
+        if Path(path).stat().st_size <= 512 * 1024:
+            break
+    while Path(path).stat().st_size > 512 * 1024 and max(image.size) > 320:
+        image = image.resize((max(1, image.width // 2), max(1, image.height // 2)))
+        image.save(path, 'JPEG', quality=50, optimize=True)
+    if Path(path).stat().st_size > 512 * 1024:
+        raise ValueError('model image byte limit exceeded')
     frame = {'file': Path(path).name, 'label': label, 'mime': 'image/jpeg'}
     if time_ms is not None: frame['time_ms'] = time_ms
     frames.append(frame)

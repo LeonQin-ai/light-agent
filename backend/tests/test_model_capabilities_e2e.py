@@ -18,6 +18,12 @@ class Provider(BaseHTTPRequestHandler):
   encoded=json.dumps(data).encode();self.send_response(200);self.send_header('Content-Length',str(len(encoded)));self.end_headers();self.wfile.write(encoded)
  def do_POST(self):
   req=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if req['messages'][0]['content'].startswith('Summarize these tool observations'):
+   # Observation compaction is a maintenance call, not a planning turn.
+   # Answer with an unusable summary so the log stays intact and prompt
+   # sizes remain deterministic for the budget assertions below.
+   respond_json(self,json.dumps({'choices':[{'message':{'content':'{}'},'finish_reason':'stop'}]}).encode())
+   return
   prompt=req['messages'][-1]['content'].rsplit('## Current request',1)[-1]
   mode='big' if 'WINDOW_LARGE_CHECK' in prompt else 'small'
   turn=turns.setdefault(mode,[])
@@ -114,7 +120,12 @@ with tempfile.TemporaryDirectory(prefix='coa-capabilities-') as tmp:
      time.sleep(.05)
     assert task['status']=='DONE' and task['tool_calls']==144,(selected,task['status'],task['tool_calls'])
    big,small=turns['big'][6],turns['small'][6]
-   assert big[0]>2*262144 and big[1] and big[2]==32768,big
+   # #275: the recent-observation partition is input/4, so the large window
+   # still ships far more evidence than the small one, but early pages fold
+   # away instead of being re-shipped forever. First-page retention is
+   # asserted while it still fits the partition (turn 1).
+   assert big[0]>1048576//4 and big[2]==32768,big
+   assert turns['big'][1][1],'first page must be visible while it fits the partition'
    assert small[0]<2*65536 and not small[1] and small[2]==16384,small
    print('PASS: same-session route switch, request sizes',big[0],small[0],flush=True)
   finally:stop(p)

@@ -252,6 +252,8 @@ static int openai_chat(llm *llm, const llm_request *req, llm_response *resp) {
     cJSON *native=msg ? cJSON_GetObjectItemCaseSensitive(msg,"tool_calls") : NULL;
     content = msg ? cJSON_GetObjectItemCaseSensitive(msg, "content") : NULL;
     resp->visible_content_bytes = cJSON_IsString(content) ? strlen(content->valuestring) : 0;
+    cJSON *reasoning_text = msg ? cJSON_GetObjectItemCaseSensitive(msg, "reasoning_content") : NULL;
+    resp->reasoning_content_bytes = cJSON_IsString(reasoning_text) ? strlen(reasoning_text->valuestring) : 0;
     resp->tool_call_count = cJSON_IsArray(native) ? cJSON_GetArraySize(native) : 0;
     if (native && !cJSON_IsNull(native) && !cJSON_IsArray(native)) {
         set_error(resp,"openai: malformed or empty tool_calls");cJSON_Delete(root);return -1;

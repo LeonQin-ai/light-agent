@@ -264,6 +264,29 @@ char *attachment_snapshot(const char *root, const char *session, const cJSON *id
         char path[1200]; const char *id=field(o,"id");
         file_path(path,root,id,"raw"); cJSON_AddStringToObject(o,"original_path",path);
         cJSON *frames=cJSON_GetObjectItemCaseSensitive(o,"frames");
+        /* Prepare oversized legacy/raw images for model transport, preserving
+         * the original attachment used by the chat viewer. Small images keep
+         * their exact bytes and mime (#241): the request-level base64 budget
+         * already bounds the total payload, so lossy conversion is only worth
+         * it when a single image would blow the per-frame byte limit (#275). */
+        if (!strncmp(field(o,"mime"),"image/",6) && !cJSON_GetArraySize(frames) &&
+            fs_file_size(path) > 512 * 1024) {
+            char prefix[1200], *error=NULL;
+            snprintf(prefix,sizeof prefix,"%s",path);prefix[strlen(prefix)-4]=0;
+            cJSON *processed=extract_document(path,"png",prefix,&error);
+            free(error);
+            cJSON *prepared=processed ? cJSON_GetObjectItemCaseSensitive(processed,"frames"):NULL;
+            if (!cJSON_GetArraySize(prepared)) {
+                cJSON_Delete(processed);cJSON_Delete(o);cJSON_Delete(arr);return NULL;
+            }
+            cJSON_DeleteItemFromObjectCaseSensitive(o,"frames");
+            cJSON_AddItemToObject(o,"frames",cJSON_Duplicate(prepared,1));
+            cJSON_Delete(processed);
+            frames=cJSON_GetObjectItemCaseSensitive(o,"frames");
+            if (save_meta(root,o)) {
+                cJSON_Delete(o);cJSON_Delete(arr);return NULL;
+            }
+        }
         int has_frames=cJSON_IsArray(frames) && cJSON_GetArraySize(frames)>0;
         if(cJSON_GetArraySize(frames)>6) { cJSON_Delete(o); cJSON_Delete(arr); return NULL; }
         int raw_image=!strncmp(field(o,"mime"),"image/",6) && !has_frames;

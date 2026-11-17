@@ -5,6 +5,7 @@
 #include "api/web_ui.h"
 #include "api/market.h"
 #include "runtime/scheduler.h"
+#include "cognition/planner.h"
 #include "runtime/flow.h"
 #include "runtime/cron.h"
 #include "runtime/tasklog.h"
@@ -31,6 +32,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <time.h>
 #include <ctype.h>
 #ifdef _WIN32
@@ -381,7 +383,23 @@ static int h_task_create(const http_request *req, http_response *resp, void *ud)
     cJSON *acceptance_value=cJSON_GetObjectItemCaseSensitive(root,"acceptance");
     char *acceptance=acceptance_value?cJSON_PrintUnformatted(acceptance_value):NULL;
     if(acceptance_value && (!acceptance||reasoning_acceptance_validate(acceptance))){free(acceptance);free(directory);free(safe_prompt);cJSON_Delete(root);resp->status=400;http_resp_json(resp,"{\"error\":\"invalid structured acceptance\"}");return 0;}
-    id = scheduler_submit_configured_acceptance(ctx->scheduler,0,safe_prompt,NULL,0,NULL,0,NULL,directory,0,0,NULL,acceptance);free(acceptance);
+    /* One-shot tasks are semantically independent: each gets a fresh session
+     * instead of inheriting the shared "default" transcript (#275 family I —
+     * a first-round prompt dropped from 137KB to 68KB). An explicit "session"
+     * in the body keeps the old shared-history behavior for callers that want
+     * continuity. */
+    cJSON *session_value=cJSON_GetObjectItemCaseSensitive(root,"session");
+    char oneshot_tag[64];
+    const char *task_tag=NULL;
+    if(session_value && cJSON_IsString(session_value) && session_value->valuestring[0])
+        task_tag=session_value->valuestring;
+    else {
+        static _Atomic unsigned long oneshot_seq;
+        snprintf(oneshot_tag,sizeof(oneshot_tag),"oneshot-%lu",
+            (unsigned long)atomic_fetch_add(&oneshot_seq,1)+1);
+        task_tag=oneshot_tag;
+    }
+    id = scheduler_submit_configured_acceptance(ctx->scheduler,0,safe_prompt,NULL,0,task_tag,0,NULL,directory,0,0,NULL,acceptance);free(acceptance);
     if(id>=0)workspace_bind(ctx,NULL,directory,id);free(directory);
     snprintf(prompt_copy, sizeof(prompt_copy), "%s", safe_prompt);
     free(safe_prompt);
@@ -3075,7 +3093,7 @@ static void llm_probe_thread(void *arg) {
                                {.role = "user", .content = "Reply with exactly the word: ok"}};
         lreq.messages = msgs;
         lreq.num_messages = 2;
-        int deepseek_v41 = strstr(cfg->model, "deepseek-v4.1-flash") != NULL;
+        int deepseek_v41 = planner_model_is_deepseek_v41_flash(cfg->model);
         lreq.temperature = deepseek_v41 ? 1.0 : 0.2;
         /* NVIDIA's DeepSeek V4.1 Flash defaults to hidden reasoning. A short
          * connection probe must disable it and keep its output budget tiny,

@@ -12,6 +12,10 @@ backend/state*/
 /state/
 /state-*/
 
+# local runtime residue from ad-hoc serve runs
+backend/plan-cycle.err
+backend/workspaces.json
+
 # --- scratch / notes ---
 backend/test/
 __pycache__/

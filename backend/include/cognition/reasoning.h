@@ -52,7 +52,7 @@ typedef struct reasoning_config {
     struct ret_index *index;                  /* code index; touched files are indexed (may be NULL) */
     struct plugin_registry *plugin_registry; /* for missing-capability auto-generation */
     const char *state_root;                      /* state dir for plugin generation (may be NULL) */
-    int max_rounds;                              /* <0/default = unlimited; positive = explicit work budget; 1 = single-shot */
+    int max_rounds;                              /* 0 = default cap; <0 = unlimited compat (128-round backstop, #277); positive = explicit budget; 1 = single-shot */
     hook_registry *hooks;                    /* horizontal hook system (may be NULL) */
     /* Context MMU budgets (chars per prompt section; 0 = default). Over budget
      * a section degrades automatically: hot drops oldest turns to one line,
@@ -66,6 +66,9 @@ typedef struct reasoning_config {
     int hyde;        /* 1 = HyDE retrieval: one LLM call per run
                       * generates a hypothetical answer passage
                       * used as the cold-tier query (default off) */
+    int gate_simple; /* force the simple gate regardless of task llm_config
+                      * (fast-mode subagents run without strict verification) */
+    int subagent;    /* this run is a delegated child: no further delegation */
     /* Execution backend (non-tx actions): "local" (default) | "wsl" | "remote".
      * wsl/remote wrap the local executor and route shell commands through
      * `wsl.exe` / `ssh <exec_host>`; other tools run unchanged on the host. */
@@ -76,7 +79,8 @@ typedef struct reasoning_config {
 
 /* Default agent-loop round cap (#270). An unbounded default let one stuck
  * task spin for 291 rounds / ~60 minutes; the breaker now defaults to 64.
- * Config "reasoning.max_rounds" < 0 still restores unlimited. */
+ * Config "reasoning.max_rounds" < 0 keeps unlimited compat but with a
+ * 128-round hard backstop and a 64-round convergence nudge (#277). */
 #define AGENT_LOOP_MAX_ROUNDS 64
 
 /* HyDE (Hypothetical Document Embeddings) primitive: ask the LLM for a short

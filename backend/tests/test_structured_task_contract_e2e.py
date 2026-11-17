@@ -129,6 +129,12 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
         def do_POST(self):
             nonlocal calls
             request=self.rfile.read(int(self.headers['Content-Length']))
+            if b'Summarize these tool observations' in request:
+                # Observation compaction is a maintenance call: answer with a
+                # valid summary without consuming a scripted planning reply.
+                summary=json.dumps({'facts':['scripted fixture actions in progress'],'failures':[],'artifacts':[],'pending':['remaining steps']})
+                respond_json(self,json.dumps({'choices':[{'message':{'content':summary},'finish_reason':'stop'}]}).encode())
+                return
             if mode=='script_late_contract' and calls==3:
                 assert b'Previous completion was rejected:' not in request
             if mode=='script_budget_readback' and calls==4:

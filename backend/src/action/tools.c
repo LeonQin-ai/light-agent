@@ -99,7 +99,32 @@ const tool *tool_registry_get(const tool_registry *reg, size_t i) {
     return (reg && i < reg->count) ? reg->tools[i] : NULL;
 }
 
+/* Fast-mode subagent delegation. The agent loop (h_act) intercepts this tool
+ * and runs an isolated child reasoning run; the registry handler is only a
+ * fallback for execution contexts without an agent loop. */
+static tool_result *delegate_exec(const tool *self, const tool_ctx *ctx, const char *args_json) {
+    (void)self; (void)ctx; (void)args_json;
+    return tool_result_new(0, "delegate requires the agent loop; it is not available in this execution context.");
+}
+
+const tool *tool_delegate(void) {
+    static const tool t = {
+        "delegate",
+        "Fast mode only: delegate a self-contained subtask to an isolated subagent "
+        "(fresh session, simple gate, bounded rounds). Use for independent research or "
+        "verification chunks that do not need this conversation's history. The subagent "
+        "answer is returned as the tool result. Strict mode rejects this tool.",
+        "{\"type\":\"object\",\"properties\":{\"task\":{\"type\":\"string\"},"
+        "\"context\":{\"type\":\"string\"}},\"required\":[\"task\"]}",
+        0,
+        delegate_exec,
+        NULL,
+    };
+    return &t;
+}
+
 void tool_register_builtins(tool_registry *reg) {
+    tool_register(reg, tool_delegate());
     tool_register(reg, tool_file_read());
     tool_register(reg, tool_list_dir());
     tool_register(reg, tool_file_write());
@@ -283,7 +308,7 @@ static char *truncate_output(const char *out, size_t limit, const tool_ctx *ctx)
                 cJSON_AddNumberToObject(meta,"max_bytes",4000);
                 char *json=cJSON_PrintUnformatted(meta); cJSON_Delete(meta);
                 strbuf b; strbuf_init(&b);
-                strbuf_append(&b,"[full tool result saved] Use the preview if sufficient. Read only the needed ranges from the saved result with file_read; reach EOF only when required by the task. Reuse this result instead of repeating the tool.\n");
+                strbuf_append(&b,"[full tool result saved] Use the preview if sufficient. Read only the needed ranges from the saved result with file_read; reach EOF only when required by the task. Reuse this result instead of repeating the tool. Do not page through the saved result merely to confirm the command ran.\n");
                 strbuf_append(&b,json ? json : "");
                 strbuf_append(&b,"\nPreview (not the whole result):\n");
                 size_t preview=strlen(safe)<800 ? strlen(safe):800;
@@ -291,8 +316,11 @@ static char *truncate_output(const char *out, size_t limit, const tool_ctx *ctx)
                 while(preview && ((unsigned char)safe[preview]&0xc0)==0x80) preview--;
                 strbuf_append_n(&b,safe,preview);
                 const size_t size = strlen(safe);
-                if (size > preview + 800) {
-                    size_t start = size - 800;
+                /* git fetch/pull/log conclusions live at the END of the output;
+                 * a head-only preview cost 3-4 paging rounds (#275). Keep a
+                 * generous tail summary so the verdict is visible immediately. */
+                if (size > preview + 2000) {
+                    size_t start = size - 2000;
                     while (((unsigned char)safe[start] & 0xc0) == 0x80) start++;
                     strbuf_append(&b, "\nEnd of result:\n");
                     strbuf_append(&b, safe + start);
