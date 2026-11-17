@@ -91,6 +91,15 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.ok(boxes.metaTop>=boxes.bodyBottom-1,'meta sits below the scroll area');
   await page.evaluate(()=>{const e=window.testThoughtEntry;e.pending=true;e.progress.started_ms=Date.now()-463000;e.progress.llm_ms=25000;chatProgressClock(e);});
   assert.ok((await meta.innerText()).includes('thought for 25s'),'live clock refreshes the meta line');
+  /* The inline usage meta renders BELOW the reply so long answers are not
+     pushed down behind a metrics line the reader must scroll past. */
+  await page.evaluate(()=>{const e=window.testThoughtEntry;e.pending=false;e.text='答案正文';renderChatEntry(e);});
+  const order=await page.evaluate(()=>{
+    const kids=[...window.testThoughtEntry.el.children];
+    return {answer:kids.findIndex(c=>c.classList.contains('chat-answer')),
+            meta:kids.findIndex(c=>c.classList.contains('chat-execution-meta'))};
+  });
+  assert.ok(order.answer>=0&&order.meta>order.answer,'inline meta sits below the answer');
   assert.deepEqual(errors,[]);
   console.log('PASS: real session titles, bounded preload, agents entry during preload, tab menu, scrollable thinking with bottom meta');
  }finally{await browser.close();}

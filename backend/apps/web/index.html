@@ -6529,12 +6529,14 @@ function renderChatEntry(entry){
     if(d.open) expandedSteps.add(d.dataset.step); else expandedSteps.delete(d.dataset.step);
   }
   el.replaceChildren();
+  /* Thinking/usage stats render below the reply so long answers are not
+   * pushed down behind a metrics line the reader must scroll past. */
+  let inlineMeta=null;
   if(entry.progress){
-    const meta=document.createElement('div');
-    meta.className='chat-execution-meta muted';
-    meta.style.fontSize='12px';
-    meta.textContent=thoughtMetaText(entry,entry.progress);
-    el.append(meta);
+    inlineMeta=document.createElement('div');
+    inlineMeta.className='chat-execution-meta muted';
+    inlineMeta.style.fontSize='12px';
+    inlineMeta.textContent=thoughtMetaText(entry,entry.progress);
   }
   const updates=[...(entry.progressEvents||[]),entry.progress||{}].map(p=>p.commentary).filter(Boolean);
   if(updates.length && (entry.pending || entry.progress?.stage!=='completed')){
@@ -6793,6 +6795,7 @@ function renderChatEntry(entry){
     el.append(answer);
     chatAppendCopy(el, () => entry.text);
   }
+  if(inlineMeta)el.append(inlineMeta);
   chatRenderTimestamp(entry);
   if(merged.size){
     entry.images=[...merged.values()];
