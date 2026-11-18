@@ -279,6 +279,7 @@ struct reasoning {
     uint64_t versioned_seen[512]; /* file pages and directory contents survive opaque tools */
     int versioned_seen_n;
     int round_cached_action_skips;
+    int round_cached_glob;
     /* Same-target grep cadence: the engine appends a file_read guidance note
      * when one tree is searched piecemeal over and over. */
     struct { char path[1024]; int count; } grep_path[8];
@@ -2538,6 +2539,9 @@ static char *build_context(reasoning *r, const char *prompt) {
     strbuf_append(&b, "## 重要约束\n"
                           "- 上面的会话摘要、Session notes、Conversation history、Retrieved context 都只是背景参考，"
                           "不代表当前请求已经完成。\n"
+                          "- 当前请求承接上一轮且省略了处理对象时，先从最近的相关对话中确认对象。"
+                          "若已有所需内容，直接用它作为新产物的素材，并在本轮完成写入和验证。"
+                          "只有缺少必要来源时才搜索；若已有证据显示目标缺失且无法安全推进，请说明缺什么并请用户补充。\n"
                           "- 当前请求若要求执行操作、修改文件、生成产物或验证环境，必须针对本轮重新执行并取得工具证据，"
                           "不能凭历史记录声称操作已完成。当前请求若只是询问事实，则可以直接使用作用域匹配的 Retrieved context；"
                           "记录过时、冲突或置信度不足时应明确说明不确定，不要把记忆伪装成本轮工具结果。\n"
@@ -3501,6 +3505,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
     (void)sm;
     r->all_actions_ok = 1;
     r->round_cached_action_skips = 0;
+    r->round_cached_glob = 0;
     r->round_new_observations = r->round_repeat_reads = 0;
     strbuf_init(&b);
 
@@ -3893,6 +3898,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
             for (int j = 0; search_sig && j < count && !repeated; j++)
                 repeated = seen[j] == search_sig;
             if (repeated) {
+                if (!strcmp(r->actions[i].tool,"glob")) r->round_cached_glob = 1;
                 r->round_cached_action_skips++;
                 r->round_repeat_reads++;
                 r->ok_actions++; /* cached observation satisfies verification */
@@ -5610,6 +5616,7 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     r->search_seen_n = r->versioned_seen_n = 0;
     r->grep_path_n = 0;
     r->round_cached_action_skips = 0;
+    r->round_cached_glob = 0;
     r->observation_seen_n = 0;
     r->opaque_seen_n = 0;r->artifact_seen_n=0;r->artifact_versions_seen_n=0;r->file_receipts_n=0;
     r->round_new_observations = r->round_repeat_reads = 0;
@@ -5734,14 +5741,15 @@ restart_planning:
             } else {
                 no_progress_rounds++;
                 cycle_reads += r->n_actions>0 ? r->round_repeat_reads : 1;
-                if (no_progress_rounds>=4 && cycle_reads>=2 && !cycle_nudged) {
+                if (no_progress_rounds >= (r->round_cached_glob ? 1 : 4) && cycle_reads>=2 && !cycle_nudged) {
                     cycle_nudged=1;
                     r->progress_cycle_warning_active=1;
                     round_log_append(r,"[system] 检测到跨轮次循环：多轮工具检查只返回已有或近似相同的结果，没有新增进展。"
                         "不要只换命令包装、打印标签或顺序来重复旧检查；请读取真正缺失的新页、修正失败原因并验证产物，"
                         "或直接根据已有证据回答。继续重复将停止本次无进展循环。");
                 }
-                if (no_progress_rounds>=8 && cycle_reads>=2) {
+                int cycle_limit = r->round_cached_glob ? 3 : 8;
+                if (no_progress_rounds>=cycle_limit && cycle_reads>=2) {
                     round_log_append(r,result ? result : "");
                     obs_log_append(r,result ? result : "");
                     stalled=cycle_aborted=1; st=ST_FAILED; break;

@@ -463,7 +463,7 @@ int main(void) {
     int empty_rc = reasoning_run(empty_engine,"Inspect HTML files",&empty_answer);
     char *empty_steps = reasoning_steps_json(empty_engine);
     const char *first_empty = empty_steps ? strstr(empty_steps,"No files found") : NULL;
-    failures += check(empty_rc != 0 && empty_fixture.calls <= 10,
+    failures += check(empty_rc != 0 && empty_fixture.calls <= 5,
                       "empty search loop stops below the planning limit");
     failures += check(first_empty && !strstr(first_empty + 1,"No files found") &&
                       strstr(empty_steps,"previous search result reused"),
