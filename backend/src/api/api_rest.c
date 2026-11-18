@@ -1577,27 +1577,34 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     snprintf(video, sizeof(video), "%s/videos/ep%02d.mp4", epdir, episode);
     snprintf(manifest, sizeof(manifest), "%s/manifest.json", epdir);
     const char *ntitle = title && *title ? title : "导入小说";
-    char task1[2048], task2[2048], task3[2048], task4[2048];
+    char task1[12288], task2[12288], task3[12288], task4[24576];
+    char chapter_abs[2048], shots_abs[2048], frames_abs[2048], audio_abs[2048], video_abs[2048], manifest_abs[2048];
+    path_join(chapter_abs,sizeof(chapter_abs),directory,chapter_rel);
+    path_join(shots_abs,sizeof(shots_abs),directory,shots);
+    path_join(frames_abs,sizeof(frames_abs),directory,frames);
+    path_join(audio_abs,sizeof(audio_abs),directory,audio);
+    path_join(video_abs,sizeof(video_abs),directory,video);
+    path_join(manifest_abs,sizeof(manifest_abs),directory,manifest);
     snprintf(task1, sizeof(task1),
              "把小说《%s》第%d章改编成漫剧第%d集镜头脚本。章节文件：%s。"
-             "先运行 python tools/manju/manju_pipeline.py shots --chapter %s --out %s 生成基础镜头表，"
+             "先运行 python \"%s\" shots --chapter \"%s\" --out \"%s\" 生成基础镜头表，"
              "再按戏剧节奏审阅修订（对白独立成镜、每镜一句、突出冲突）。最终回复用反引号标出 %s 路径。",
-             ntitle, episode, episode, chapter_rel, chapter_rel, shots, shots);
+             ntitle, episode, episode, chapter_rel, pipe_abs, chapter_abs, shots_abs, shots_abs);
     snprintf(task2, sizeof(task2),
              "依据镜头脚本 %s 渲染漫剧第%d集全部画面："
-             "python tools/manju/manju_pipeline.py panels --shots %s --out %s --ep %d。"
+             "python \"%s\" panels --shots \"%s\" --out \"%s\" --ep %d。"
              "核对 panels.json 与每张 PNG、poster.png 均已生成。最终回复用反引号标出 %s 目录与 poster 路径。",
-             shots, episode, shots, frames, episode, frames);
+             shots_abs, episode, pipe_abs, shots_abs, frames_abs, episode, frames_abs);
     snprintf(task3, sizeof(task3),
              "为镜头脚本 %s 逐句合成漫剧第%d集配音："
-             "python tools/manju/manju_pipeline.py tts --shots %s --out %s。"
+             "python \"%s\" tts --shots \"%s\" --out \"%s\"。"
              "核对 audio.json 每句 wav 存在且时长合理。最终回复用反引号标出 %s 目录路径。",
-             shots, episode, shots, audio, audio);
+             shots_abs, episode, pipe_abs, shots_abs, audio_abs, audio_abs);
     snprintf(task4, sizeof(task4),
              "把画面与配音合成漫剧第%d集成片："
-             "python tools/manju/manju_pipeline.py compose --shots %s --panels %s --audio %s --out %s --ep %d --manifest %s。"
+             "python \"%s\" compose --shots \"%s\" --panels \"%s\" --audio \"%s\" --out \"%s\" --ep %d --manifest \"%s\"。"
              "脚本自带帧数/音轨/首尾帧校验，失败必须排查重渲。最终回复用反引号标出 %s 路径与时长、帧数。",
-             episode, shots, frames, audio, video, episode, manifest, video);
+             episode, pipe_abs, shots_abs, frames_abs, audio_abs, video_abs, episode, manifest_abs, video_abs);
 
     cJSON *dag = cJSON_CreateObject();
     cJSON *nodes = cJSON_CreateArray(), *edges = cJSON_CreateArray();
