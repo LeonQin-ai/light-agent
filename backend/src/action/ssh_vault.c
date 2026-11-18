@@ -440,12 +440,16 @@ static int ssh_ipv4_valid(const char *s, size_t n) {
 
 /* Scan redacted input only: an IP inside a password is never a target.
  * More than one distinct address (or malformed numeric address) is ambiguous. */
-static char *ssh_prompt_ipv4(const char *text, int *invalid) {
+static char *ssh_prompt_ipv4(const char *text, int *invalid, int infer_intent) {
     char *host = NULL;
     const char *cursor = text;
     int n = 0, pos;
     while ((pos = re_match("\\d+\\.\\d+\\.\\d+\\.\\d+", cursor, &n)) >= 0) {
         const char *p = cursor + pos;
+        if (infer_intent && p > text && strchr("/@", p[-1])) {
+            cursor = p + n;
+            continue;
+        }
         if ((p > text && (isalnum((unsigned char)p[-1]) || strchr("._-", p[-1]))) ||
             isalnum((unsigned char)p[n]) || (p[n] && strchr("._-", p[n]))) {
             cursor = p + n; continue;
@@ -494,31 +498,25 @@ char *ssh_session_prepare_prompt(const char *state_root, const char *session_id,
     const char *ssh_word = ssh_find_ascii(prompt, "ssh");
     int ssh_intent = ssh_word || strstr(prompt, "远程登录") || strstr(prompt, "登录服务器") ||
                      strstr(prompt, "连接服务器") || strstr(prompt, "登录环境") ||
-                     strstr(prompt, "连接环境") || strstr(prompt, "链接环境") ||
-                     ((strstr(prompt, "登录") || strstr(prompt, "连接")) &&
-                      ssh_field_value(prompt, "password", "密码", 1));
-    if (!ssh_intent && ssh_field_value(prompt, "password", "密码", 1) &&
-        (ssh_field_value(prompt, "host", "主机", 0) ||
-         ssh_field_value(prompt, "ip", "地址", 0) ||
-         ssh_field_value(prompt, "server", "服务器", 0) ||
-         ssh_field_value(prompt, "username", "用户名", 0) ||
-         ssh_field_value(prompt, "user", "用户", 0) ||
-         ssh_field_value(prompt, "account", "账号", 0))) ssh_intent = 1;
-    /* After a failed login, a short follow-up often says only "用户名/密码是…".
-     * Treat it as an SSH correction when this chat already has an endpoint. */
-    if (!ssh_intent && state_root && *state_root &&
-        (ssh_field_value(prompt, "password", "密码", 1) ||
-         ssh_field_value(prompt, "username", "用户名", 0) ||
-         ssh_field_value(prompt, "account", "账号", 0))) {
-        char *saved = ssh_session_profile_get(state_root,
-            session_id && *session_id ? session_id : "default", NULL);
-        ssh_intent = saved != NULL;
-        free(saved);
-    }
-    if (!ssh_intent) return xstrdup(prompt);
+                     strstr(prompt, "连接环境") || strstr(prompt, "链接环境");
     const char *password_at = ssh_field_value(prompt, "password", "密码", 1);
     const char *password_end = NULL;
     char *password = ssh_field_token(password_at, 1024, &password_end);
+    if (!ssh_intent) {
+        /* Only infer SSH from a credential and a real IPv4 target in this
+         * message. A stored profile cannot classify an unrelated request. */
+        int invalid = 0;
+        char *candidate = password
+            ? ssh_replace_secret(prompt, password, password_at, password_end) : NULL;
+        char *ip = candidate ? ssh_prompt_ipv4(candidate, &invalid, 1) : NULL;
+        ssh_intent = ip != NULL;
+        free(ip);
+        free(candidate);
+        if (!ssh_intent) {
+            ssh_vault_secret_free(password);
+            return xstrdup(prompt);
+        }
+    }
     /* Explicit but malformed/oversized credentials must never fall through
      * as unmodified model input. The vault accepts up to 1024 bytes. */
     if (password_at && !password) return NULL;
@@ -574,7 +572,7 @@ char *ssh_session_prepare_prompt(const char *state_root, const char *session_id,
         environment = NULL;
     }
     int invalid_target = 0;
-    char *bare_ip = ssh_prompt_ipv4(safe, &invalid_target);
+    char *bare_ip = ssh_prompt_ipv4(safe, &invalid_target, 0);
     p = ssh_field_value(safe, "port", "端口", 0);
     if (!p && ssh_word) {
         const char *flag = strstr(safe, "-p ");

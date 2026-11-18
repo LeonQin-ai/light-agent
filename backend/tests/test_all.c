@@ -1290,7 +1290,7 @@ static void test_ssh_prompt_regex(void) {
         {"ssh admin@127.0.0.1 -p 2222 password is 'ends!()^%'", "127.0.0.1", "admin", "ends!()^%", 2222},
         {"SSH -l test-user 127.0.0.1 用户名是：test-user 口令为：'Quoted#9!'", "127.0.0.1", "test-user", "Quoted#9!", 22},
         {"地址：127.0.0.1\n账户：root\n密码：'Mixed#8!'", "127.0.0.1", "root", "Mixed#8!", 22},
-        {"127.0.0.1 user=root pwd='NoSSH#7!'", "127.0.0.1", "root", "NoSSH#7!", 22},
+        {"hostip 127.0.0.1 user=root pwd='NoSSH#7!'", "127.0.0.1", "root", "NoSSH#7!", 22},
         {"SSH root@127.0.0.1 密码='keep -p 3333 user=other 10.0.0.7'", "127.0.0.1", "root", "keep -p 3333 user=other 10.0.0.7", 22},
     };
     for (size_t i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
@@ -1315,6 +1315,19 @@ static void test_ssh_prompt_regex(void) {
         char *secret = ssh_vault_get(root, pending);
         CHECK_STR(secret, cases[i].password);
         ssh_vault_secret_free(secret);
+    }
+    /* The previous positive case left a profile. It must not affect intent. */
+    const char *ordinary[] = {
+        "分析 config 结构体里的 username 和 password 字段",
+        "优化账号表：account 与 password 的存储",
+        "git clone https://192.0.2.1/project.git username=git password=Fixture9!",
+        "hostip 999.1.2.3 user=root pwd=Fixture9!",
+        "username=root password='Pass@192.0.2.1'"
+    };
+    for (size_t i = 0; i < sizeof(ordinary)/sizeof(ordinary[0]); i++) {
+        char *safe = ssh_session_prepare_prompt(root, sid, ordinary[i]);
+        CHECK_STR(safe, ordinary[i]);
+        free(safe);
     }
     const char *bad[] = {
         "SSH 999.1.2.3 用户名=root pwd=Secret123!",
