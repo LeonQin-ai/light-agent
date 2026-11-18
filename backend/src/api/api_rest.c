@@ -939,6 +939,58 @@ static int h_chat_session_post(const http_request *req, http_response *resp, voi
 
     /* /v1/chat/sessions/<id>/<action> */
     const char *rest = path + plen + 1;
+
+    /* POST /v1/chat/sessions/import — adopt an exported bundle as a NEW
+     * session bound to the importer's workspace (never the exporter's). */
+    if (!strcmp(rest, "import")) {
+        char *text = body_str(req);
+        if (!text || strlen(text) > 16u * 1048576u) {
+            free(text);
+            resp->status = 400;
+            http_resp_json(resp, "{\"error\":\"bundle must be JSON of at most 16 MiB\"}");
+            return 0;
+        }
+        cJSON *body = cJSON_Parse(text);
+        char *id = reasoning_session_import_json(ctx->reasoning, text);
+        free(text);
+        if (!id) {
+            cJSON_Delete(body);
+            resp->status = 400;
+            http_resp_json(resp, "{\"error\":\"invalid session bundle (kind/version/turns)\"}");
+            return 0;
+        }
+        cJSON *turns = cJSON_GetObjectItemCaseSensitive(body, "turns");
+        int nturns = cJSON_IsArray(turns) ? cJSON_GetArraySize(turns) : 0;
+        char *directory = workspace_pick(ctx, body, NULL);
+        cJSON_Delete(body);
+        if (!directory) {
+            reasoning_session_delete(ctx->reasoning, id);
+            free(id);
+            resp->status = 400;
+            http_resp_json(resp, "{\"error\":\"workspace must be registered and available\"}");
+            return 0;
+        }
+        if (workspace_bind(ctx, id, directory, -1)) {
+            reasoning_session_delete(ctx->reasoning, id);
+            free(id);
+            free(directory);
+            resp->status = 500;
+            http_resp_json(resp, "{\"error\":\"cannot save workspace selection\"}");
+            return 0;
+        }
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "id", id);
+        cJSON_AddStringToObject(result, "workspace", directory);
+        cJSON_AddNumberToObject(result, "turns", nturns);
+        char *json = cJSON_PrintUnformatted(result);
+        http_resp_json(resp, json ? json : "{}");
+        free(json);
+        cJSON_Delete(result);
+        free(id);
+        free(directory);
+        return 0;
+    }
+
     char sid[128];
     const char *slash = strchr(rest, '/');
     if (!slash || (size_t)(slash - rest) >= sizeof(sid)) {
@@ -1034,8 +1086,69 @@ static int h_chat_session_post(const http_request *req, http_response *resp, voi
         return 0;
     }
 
+    if (strcmp(action, "export") == 0) {
+        char *bundle = reasoning_session_export_json(ctx->reasoning, sid);
+        if (!bundle) {
+            resp->status = 404;
+            http_resp_json(resp, "{\"error\":\"session not found\"}");
+            return 0;
+        }
+        http_resp_json(resp, bundle);
+        free(bundle);
+        return 0;
+    }
+
+    if (strcmp(action, "rewind") == 0) {
+        char *text = body_str(req);
+        cJSON *body = text ? cJSON_Parse(text) : NULL;
+        free(text);
+        cJSON *turnv = body ? cJSON_GetObjectItemCaseSensitive(body, "turn") : NULL;
+        int files = body && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(body, "files"));
+        if (!cJSON_IsNumber(turnv) || turnv->valuedouble < 0 ||
+            turnv->valuedouble != (double)(int)turnv->valuedouble) {
+            cJSON_Delete(body);
+            resp->status = 400;
+            http_resp_json(resp, "{\"error\":\"turn must be a non-negative integer\"}");
+            return 0;
+        }
+        int turn = (int)turnv->valuedouble;
+        char *prompt = NULL;
+        int restored = 0;
+        int rc = reasoning_session_rewind(ctx->reasoning, sid, turn, files, &prompt, &restored);
+        cJSON_Delete(body);
+        if (rc == -1) {
+            resp->status = 404;
+            http_resp_json(resp, "{\"error\":\"session not found\"}");
+            free(prompt);
+            return 0;
+        }
+        if (rc == -2) {
+            resp->status = 409;
+            http_resp_json(resp, "{\"error\":\"session is running; cancel or wait for the task\"}");
+            free(prompt);
+            return 0;
+        }
+        if (rc != 0) {
+            resp->status = 400;
+            http_resp_json(resp, "{\"error\":\"invalid rewind point\"}");
+            free(prompt);
+            return 0;
+        }
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddBoolToObject(result, "ok", 1);
+        cJSON_AddNumberToObject(result, "turns", turn);
+        cJSON_AddStringToObject(result, "prompt", prompt ? prompt : "");
+        cJSON_AddNumberToObject(result, "files_restored", restored);
+        char *json = cJSON_PrintUnformatted(result);
+        http_resp_json(resp, json ? json : "{}");
+        free(json);
+        cJSON_Delete(result);
+        free(prompt);
+        return 0;
+    }
+
     resp->status = 404;
-    http_resp_json(resp, "{\"error\":\"unknown action (shared|resume|delete)\"}");
+    http_resp_json(resp, "{\"error\":\"unknown action (title|workspace|shared|resume|delete|export|rewind)\"}");
     return 0;
 }
 

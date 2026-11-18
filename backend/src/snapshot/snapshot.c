@@ -180,6 +180,12 @@ void snapshot_close(snapshot *s) {
 
 int snapshot_capture(snapshot *s, const char *path) {
     captured cap;
+    /* Keep the FIRST capture of a path within one pending checkpoint: the
+     * baseline is the pre-run state. A file written twice in one run would
+     * otherwise restore to its mid-run content (entries apply in order). */
+    for (size_t i = 0; i < s->pending_count; i++)
+        if (strcmp(s->pending[i].path, path) == 0)
+            return 0;
     memset(&cap, 0, sizeof(cap));
     cap.path = xstrdup(path);
     cap.existed = fs_exists(path);

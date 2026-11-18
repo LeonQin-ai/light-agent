@@ -4377,6 +4377,7 @@ function sideRecent(list){
   box.querySelectorAll('.workspace-group').forEach(d=>WORKSPACE_FOLDS.set(d.dataset.path,d.open));
   box.innerHTML = '';
   const add=document.createElement('button');add.className='sec sm';add.textContent='＋ 添加工作区';add.onclick=workspaceDialog;box.append(add);
+  const imp=document.createElement('button');imp.className='sec sm';imp.id='side-import-session';imp.textContent='⬆ 导入会话';imp.title='导入他人导出的会话文件，带着对方的对话记忆继续执行';imp.onclick=chatImportSession;box.append(imp);
   const groups=new Map();
   function group(path){
     path=path || WORKSPACE_DEFAULT || '';
@@ -4585,7 +4586,17 @@ function chatSessionMenu(e,id,title){
   const menu=document.createElement('div');menu.id='session-menu';menu.setAttribute('role','menu');
   menu.style.cssText='position:fixed;z-index:200;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:6px;box-shadow:0 8px 24px #0003';
   const edit=document.createElement('button');edit.textContent='修改会话标题 / 简介';edit.setAttribute('role','menuitem');
-  edit.onclick=()=>{menu.remove();chatRenameSession(id,title);};menu.append(edit);document.body.append(menu);
+  edit.onclick=()=>{menu.remove();chatRenameSession(id,title);};menu.append(edit);
+  const exp=document.createElement('button');exp.textContent='导出会话';exp.setAttribute('role','menuitem');
+  exp.onclick=async()=>{menu.remove();
+    const r=await call('POST','/v1/chat/sessions/'+encodeURIComponent(id)+'/export',{});
+    if(r.status!==200){toast('导出失败：'+(r.obj?.error||r.status));return;}
+    const blob=new Blob([JSON.stringify(r.obj,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);const a=document.createElement('a');
+    a.href=url;a.download='coa-session-'+String(title||id).replace(/[\\/:*?"<>|]/g,'_')+'.json';
+    document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);
+    toast('已导出会话，可分享给他人导入');};
+  menu.append(exp);document.body.append(menu);
   menu.style.left=Math.min(e.clientX,innerWidth-menu.offsetWidth-8)+'px';menu.style.top=Math.min(e.clientY,innerHeight-menu.offsetHeight-8)+'px';edit.focus();
   const close=event=>{if(!menu.contains(event.target)){menu.remove();document.removeEventListener('pointerdown',close);}};
   document.addEventListener('pointerdown',close);menu.onkeydown=event=>{if(event.key==='Escape'){menu.remove();document.removeEventListener('pointerdown',close);}};
@@ -4599,6 +4610,61 @@ function chatRenameSession(id,title){
     if(r.status!==200){d.querySelector('p').textContent=r.obj?.error || '保存失败';return;}
     CHAT_TABS_CACHE.forEach(s=>{if(s.id===id)s.title=value;});if(CHAT_SELECTED_INFO?.id===id)CHAT_SELECTED_INFO.title=value;sideRecent(CHAT_TABS_CACHE);d.close();};
   d.onclose=()=>d.remove();document.body.append(d);d.showModal();input.select();
+}
+/* 导入他人分享的会话文件：新建会话并带着对方的对话记忆继续执行。 */
+function chatImportSession(){
+  const picker=document.createElement('input');
+  picker.type='file';picker.accept='.json,application/json';picker.style.display='none';
+  picker.onchange=async()=>{
+    const file=picker.files && picker.files[0];picker.remove();
+    if(!file)return;
+    let bundle;
+    try{bundle=JSON.parse(await file.text());}
+    catch(e){toast('导入失败：文件不是有效的 JSON');return;}
+    const r=await call('POST','/v1/chat/sessions/import',bundle,60000);
+    if(r.status!==200){toast('导入失败：'+(r.obj?.error||r.status));return;}
+    toast('已导入会话（'+(r.obj.turns||0)+' 轮对话记忆）');
+    await loadChatSessions();
+    await chatSwitchSession(r.obj.id);
+  };
+  document.body.append(picker);picker.click();
+}
+/* 回滚到某条用户提问之前（参考 Claude Code rewind）：删除此后对话，
+ * 可选恢复文件快照，被回滚的提问填回输入框供修改重发。 */
+function chatRewindSession(id,entry){
+  document.getElementById('session-rewind')?.remove();
+  const d=document.createElement('dialog');d.id='session-rewind';
+  const after=CHAT_MSGS.filter(m=>m.role==='user' && m.turnIndex!=null && m.turnIndex>=entry.turnIndex).length;
+  const canFiles=Array.isArray(entry.snaps) && entry.snaps.length>0;
+  d.innerHTML='<form><h3>回滚会话</h3>'
+    +'<p>回滚将删除此后的 '+after+' 轮对话，并把该条提问填回输入框。</p>'
+    +'<p class="hint" style="opacity:.75;font-size:12px">'
+    +(canFiles?'文件恢复基于本机快照；部分改动（git 管理 / 超大文件 / 子代理写入）可能无法恢复。'
+              :'git 工作区或无文件改动，仅可回滚对话。')
+    +'</p><p role="alert"></p>'
+    +'<button type="button" data-act="cancel">取消</button> '
+    +'<button type="button" data-act="chat">仅回滚对话</button> '
+    +'<button type="button" data-act="both"'+(canFiles?'':' disabled')+'>回滚对话和文件</button></form>';
+  const err=d.querySelector('[role=alert]');
+  d.querySelector('[data-act=cancel]').onclick=()=>d.close();
+  const go=async files=>{
+    const r=await call('POST','/v1/chat/sessions/'+encodeURIComponent(id)+'/rewind',
+      {turn:entry.turnIndex,files:!!files},30000);
+    if(r.status===409){err.textContent='任务执行中，请先取消或等待完成';return;}
+    if(r.status!==200){err.textContent=r.obj?.error||('回滚失败：'+r.status);return;}
+    d.close();
+    CHAT_HISTORY_READY.delete(id);
+    await chatLoadHistory(true);
+    void loadChatSessions();
+    const input=$('chat-input');
+    if(input){input.value=r.obj.prompt||'';input.dispatchEvent(new Event('input'));}
+    chatFocusComposer(id);
+    toast(files?('已回滚对话并恢复 '+(r.obj.files_restored||0)+' 个文件快照，提问已填回输入框')
+               :'已回滚对话，提问已填回输入框');
+  };
+  d.querySelector('[data-act=chat]').onclick=()=>go(false);
+  d.querySelector('[data-act=both]').onclick=()=>go(true);
+  d.onclose=()=>d.remove();document.body.append(d);d.showModal();
 }
 /* 全局共享记忆开关，兼容旧的会话设置 API。 */
 async function chatSharedToggle(shared){
@@ -4712,7 +4778,9 @@ function chatLatestRuns(runs){
 }
 
 function chatHistoryEntries(turns, runs){
-  const rows = turns.filter(t => t.q).map(t => ({q:t.q, a:t.a || '', run:null}));
+  /* idx = jsonl 行号（rewind 目标），snaps = 该轮文件快照 id 列表 */
+  const rows = turns.map((t,i) => ({...t, idx:i})).filter(t => t.q)
+    .map(t => ({q:t.q, a:t.a || '', run:null, idx:t.idx, snaps:Array.isArray(t.snaps)?t.snaps:null}));
   const failures = [];
   let next = 0;
   for(const run of chatLatestRuns(runs)){
@@ -4743,7 +4811,8 @@ function chatHistoryEntries(turns, runs){
   for(const row of rows){
     const events = Array.isArray(row.run?.trace) ? row.run.trace : [];
     const started = events.find(p => Number(p.started_ms)>0)?.started_ms;
-    messages.push({role:'user',text:row.q,pending:false,el:null,timestamp_ms:started || row.run?.ts || 0});
+    messages.push({role:'user',text:row.q,pending:false,el:null,timestamp_ms:started || row.run?.ts || 0,
+      turnIndex:row.idx, snaps:row.snaps});
     if(!row.a && !row.run) continue;
     const run = row.run;
     const trace = Array.isArray(run?.trace) ? run.trace : [];
@@ -6570,7 +6639,18 @@ let chatExecutionEntry=null;
 function renderChatEntry(entry){
   const el = entry.el;
   if(!el?.isConnected)return;
-  if(entry.role !== 'bot'){chatRenderTimestamp(entry);return;}
+  if(entry.role !== 'bot'){
+    chatRenderTimestamp(entry);
+    if(entry.turnIndex != null && !entry.pending && !chatIsBusy(CHAT_SESSION)
+       && !el.querySelector('.chat-rewind')){
+      const rw=document.createElement('button');
+      rw.className='chat-copy chat-rewind';rw.textContent='回滚到此';
+      rw.title='回滚到这条提问之前（可选恢复文件），提问填回输入框';
+      rw.onclick=()=>chatRewindSession(CHAT_SESSION,entry);
+      el.append(rw);
+    }
+    return;
+  }
   const follow = CHAT_FOLLOW || chatNearBottom();
   const rail=$('chat-execution-rail');
   const wasSelected=chatExecutionEntry===entry && rail && !rail.hidden;
@@ -6909,6 +6989,19 @@ function chatFinish(session,id,entry,text,stage){
     const status = $('chat-status'); if(status) status.textContent = '';
   }
   chatPersist(); sideRecent(CHAT_TABS_CACHE); void loadChatSessions();
+  /* 本轮入库后，就地给对应的 user 消息补 turnIndex/snaps（回滚按钮），
+   * 不整体重绘——避免detach正在交互的复制按钮/时间戳。 */
+  if(CHAT_SESSION === session) void chatIndexLastTurn(session);
+}
+async function chatIndexLastTurn(session){
+  const r=await chatFetchHistory(session);
+  if(session!==CHAT_SESSION || r.status!==200 || !Array.isArray(r.obj?.turns) || !r.obj.turns.length)return;
+  const turns=r.obj.turns, last=turns[turns.length-1];
+  const u=[...CHAT_MSGS].reverse().find(m=>m.role==='user' && m.text===last.q && m.turnIndex==null);
+  if(!u)return;
+  u.turnIndex=turns.length-1;
+  u.snaps=Array.isArray(last.snaps)?last.snaps:null;
+  renderChatEntry(u);
 }
 async function chatPollTask(session,id,entry){
   if(CHAT_POLLERS.has(id)) return;

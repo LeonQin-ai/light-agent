@@ -28,6 +28,7 @@
 #include "os/os_thread.h"
 #include "os/os_time.h"
 #include "tx/tx.h"
+#include "snapshot/snapshot.h"
 #include "execution/executor.h"
 #include "infra/util.h"
 #include "infra/logging.h"
@@ -183,6 +184,11 @@ struct reasoning {
     char *workspace;
     char *default_workspace;
     int use_transaction;
+    /* Snapshot ids committed by this run's action rounds (per lane). Recorded
+     * into the turn's transcript entry so rewind can restore the pre-turn
+     * file baseline. Reset at run start; freed at run end/instance free. */
+    char **run_snaps;
+    size_t n_run_snaps, cap_run_snaps;
 
     /* Context MMU budgets (chars per prompt section, auto-degrading) */
     int budget_hot, budget_warm, budget_cold;
@@ -1704,7 +1710,8 @@ static void session_load_persisted(reasoning *r, struct session *s) {
     free(buf);
 }
 
-static void chat_persist_append(reasoning *r, const char *session_id, const char *q, const char *a) {
+static void chat_persist_append(reasoning *r, const char *session_id, const char *q, const char *a,
+                                const char *const *snaps, size_t n_snaps) {
     char fpath[700];
     FILE *f;
     cJSON *t;
@@ -1718,6 +1725,13 @@ static void chat_persist_append(reasoning *r, const char *session_id, const char
         return;
     cJSON_AddStringToObject(t, "q", q);
     cJSON_AddStringToObject(t, "a", a);
+    if (snaps && n_snaps) {
+        /* per-round file baselines committed during this turn; rewind
+         * restores them in reverse to undo the turn's file changes */
+        cJSON *arr = cJSON_AddArrayToObject(t, "snaps");
+        for (size_t i = 0; i < n_snaps; i++)
+            if (snaps[i]) cJSON_AddItemToArray(arr, cJSON_CreateString(snaps[i]));
+    }
     line = cJSON_PrintUnformatted(t);
     cJSON_Delete(t);
     if (!line)
@@ -4178,7 +4192,18 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
 
     if (tx) {
         if (r->all_actions_ok && tx_validate(tx)) {
-            tx_commit(tx);
+            const char *snap_id = tx_commit(tx);
+            if (snap_id) {
+                /* duplicate now: lanes share the snapshot store and the
+                 * borrowed id is overwritten by the next commit */
+                if (r->n_run_snaps == r->cap_run_snaps) {
+                    size_t ncap = r->cap_run_snaps ? r->cap_run_snaps * 2 : 8;
+                    char **ns = realloc(r->run_snaps, ncap * sizeof(char *));
+                    if (ns) { r->run_snaps = ns; r->cap_run_snaps = ncap; }
+                }
+                if (r->n_run_snaps < r->cap_run_snaps)
+                    r->run_snaps[r->n_run_snaps++] = xstrdup(snap_id);
+            }
             if (round_mutated) r->run_mutated = 1;
             log_info("reasoning: transaction committed");
         } else {
@@ -4384,6 +4409,8 @@ void reasoning_free(reasoning *r) {
     if (!r)
         return;
     clear_actions(r);
+    for (size_t i = 0; i < r->n_run_snaps; i++) free(r->run_snaps[i]);
+    free(r->run_snaps);
     free(r->last_prompt);
     free(r->workspace);
     free(r->default_workspace);
@@ -4627,7 +4654,8 @@ static void record_turn(reasoning *r, const char *q, const char *a) {
     mutex_unlock(&r->cur->mtx);
     /* durable copy (after unlock — file I/O off the hot path; private copies
      * survive compaction touching the ring) */
-    chat_persist_append(r, r->cur->id, stored_q, stored_a);
+    chat_persist_append(r, r->cur->id, stored_q, stored_a,
+                        (const char *const *)r->run_snaps, r->n_run_snaps);
     free(stored_q);
     free(stored_a);
     /* refresh the metadata index (title on first turn) */
@@ -4982,6 +5010,314 @@ int reasoning_session_delete(reasoning *r, const char *session_id) {
     return 0;
 }
 
+/* ---- session sharing: portable export/import bundles + per-turn rewind ---- */
+
+#define SESSION_BUNDLE_MAX_TURNS 2000
+
+/* Portable conversation bundle (no local snapshot ids: the block store does
+ * not travel). NULL when the session is unknown/deleted. */
+char *reasoning_session_export_json(reasoning *r, const char *session_id) {
+    const char *want = (session_id && *session_id) ? session_id : "default";
+    char title[128], fpath[700];
+    long long created = 0;
+    char *saved, *line;
+    cJSON *root, *turns;
+    size_t total = 0, skip, line_no = 0;
+
+    if (!r || !r->state_root)
+        return NULL;
+    mutex_lock(&r->ss->sess_mtx);
+    struct sess_meta *m = meta_find(r->ss, want);
+    if (!m || m->deleted) {
+        mutex_unlock(&r->ss->sess_mtx);
+        return NULL;
+    }
+    snprintf(title, sizeof(title), "%s", m->title);
+    created = m->created_ms;
+    mutex_unlock(&r->ss->sess_mtx);
+
+    root = cJSON_CreateObject();
+    turns = cJSON_CreateArray();
+    if (!root || !turns) {
+        cJSON_Delete(root);
+        cJSON_Delete(turns);
+        return NULL;
+    }
+    cJSON_AddNumberToObject(root, "version", 1);
+    cJSON_AddStringToObject(root, "kind", "coa-session");
+    cJSON_AddNumberToObject(root, "exported_ms", (double)time_now_ms());
+    cJSON_AddStringToObject(root, "title", title);
+    cJSON_AddNumberToObject(root, "created_ms", (double)created);
+    cJSON_AddItemToObject(root, "turns", turns);
+
+    chat_file_path(fpath, sizeof(fpath), r->state_root, want);
+    saved = fs_read_file(fpath);
+    if (saved) {
+        for (const char *p = saved; *p; p++)
+            if (*p == '\n') total++;
+        if (*saved && saved[strlen(saved) - 1] != '\n') total++;
+        skip = total > SESSION_BUNDLE_MAX_TURNS ? total - SESSION_BUNDLE_MAX_TURNS : 0;
+        line = saved;
+        while (line && *line) {
+            char *nl = strchr(line, '\n');
+            if (nl) *nl = '\0';
+            if (line_no++ >= skip) {
+                cJSON *t = cJSON_Parse(line);
+                cJSON *q = t ? cJSON_GetObjectItemCaseSensitive(t, "q") : NULL;
+                cJSON *a = t ? cJSON_GetObjectItemCaseSensitive(t, "a") : NULL;
+                if (cJSON_IsString(q) && q->valuestring && *q->valuestring) {
+                    cJSON *o = cJSON_CreateObject();
+                    if (o) {
+                        cJSON_AddStringToObject(o, "q", q->valuestring);
+                        cJSON_AddStringToObject(o, "a", cJSON_IsString(a) && a->valuestring ? a->valuestring : "");
+                        cJSON_AddItemToArray(turns, o);
+                    }
+                }
+                cJSON_Delete(t);
+            }
+            line = nl ? nl + 1 : NULL;
+        }
+        free(saved);
+    }
+    char *js = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    return js;
+}
+
+/* Import a bundle as a NEW session (never overwrites). Returns a malloc'd id
+ * or NULL on invalid input/OOM. Workspace binding is the caller's job. */
+char *reasoning_session_import_json(reasoning *r, const char *bundle_json) {
+    if (!r || !r->state_root || !bundle_json)
+        return NULL;
+    cJSON *root = cJSON_Parse(bundle_json);
+    if (!root)
+        return NULL;
+    cJSON *kind = cJSON_GetObjectItemCaseSensitive(root, "kind");
+    cJSON *version = cJSON_GetObjectItemCaseSensitive(root, "version");
+    cJSON *turns = cJSON_GetObjectItemCaseSensitive(root, "turns");
+    int ok = cJSON_IsString(kind) && kind->valuestring && !strcmp(kind->valuestring, "coa-session")
+          && cJSON_IsNumber(version) && version->valuedouble == 1
+          && cJSON_IsArray(turns)
+          && cJSON_GetArraySize(turns) <= SESSION_BUNDLE_MAX_TURNS;
+    cJSON *it;
+    for (it = (ok && turns) ? turns->child : NULL; ok && it; it = it->next) {
+        cJSON *q = cJSON_GetObjectItemCaseSensitive(it, "q");
+        cJSON *a = cJSON_GetObjectItemCaseSensitive(it, "a");
+        ok = cJSON_IsString(q) && q->valuestring && *q->valuestring
+          && strlen(q->valuestring) <= 1048576
+          && (!a || (cJSON_IsString(a) && a->valuestring && strlen(a->valuestring) <= 4194304));
+    }
+    if (!ok) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+    char *id = reasoning_session_new(r);
+    if (!id) {
+        cJSON_Delete(root);
+        return NULL;
+    }
+    int n = cJSON_GetArraySize(turns);
+    if (n > 0) {
+        strbuf sb;
+        strbuf_init(&sb);
+        cJSON_ArrayForEach(it, turns) {
+            cJSON *q = cJSON_GetObjectItemCaseSensitive(it, "q");
+            cJSON *a = cJSON_GetObjectItemCaseSensitive(it, "a");
+            cJSON *o = cJSON_CreateObject();
+            if (!o) continue;
+            cJSON_AddStringToObject(o, "q", q->valuestring);
+            cJSON_AddStringToObject(o, "a", cJSON_IsString(a) && a->valuestring ? a->valuestring : "");
+            char *l = cJSON_PrintUnformatted(o);
+            cJSON_Delete(o);
+            if (l) {
+                strbuf_append(&sb, l);
+                strbuf_append(&sb, "\n");
+                free(l);
+            }
+        }
+        char fpath[700], tmp[720];
+        chat_file_path(fpath, sizeof(fpath), r->state_root, id);
+        snprintf(tmp, sizeof(tmp), "%s.tmp", fpath);
+        int failed = !sb.buf || fs_write_file(tmp, sb.buf, sb.len) != 0
+                  || fs_replace_file(tmp, fpath) != 0;
+        if (failed) fs_remove(tmp);
+        strbuf_free(&sb);
+        if (failed) {
+            reasoning_session_delete(r, id);
+            free(id);
+            cJSON_Delete(root);
+            return NULL;
+        }
+    }
+    cJSON *title = cJSON_GetObjectItemCaseSensitive(root, "title");
+    char tbuf[128];
+    if (cJSON_IsString(title) && title->valuestring && *title->valuestring && strlen(title->valuestring) < 128) {
+        snprintf(tbuf, sizeof(tbuf), "%s", title->valuestring);
+    } else {
+        cJSON *first = cJSON_GetArrayItem(turns, 0);
+        cJSON *q = first ? cJSON_GetObjectItemCaseSensitive(first, "q") : NULL;
+        char *h = cJSON_IsString(q) && q->valuestring ? str_head(q->valuestring, 60) : NULL;
+        snprintf(tbuf, sizeof(tbuf), "%s", h ? h : "导入的会话");
+        free(h);
+    }
+    reasoning_session_set_title(r, id, tbuf);
+    cJSON_Delete(root);
+    return id;
+}
+
+/* Rewind a session to BEFORE turn `turn` (0-based transcript line): keep the
+ * first `turn` turns, optionally restore the file baselines of the discarded
+ * turns (reverse order so the earliest baseline wins; created files are
+ * deleted). The discarded suffix is kept locally as <id>.rewind.bak and the
+ * target turn's question is returned for input refill.
+ * 0 ok / -1 unknown / -2 busy / -3 invalid turn or state. */
+int reasoning_session_rewind(reasoning *r, const char *session_id, int turn,
+                             int restore_files, char **prompt_out, int *files_restored) {
+    const char *want = (session_id && *session_id) ? session_id : "default";
+    struct session *s = NULL;
+    char fpath[700];
+    char *saved = NULL, **lines = NULL, *target_q = NULL;
+    size_t total = 0, cap = 0;
+    int rc = -3, restored = 0;
+
+    if (prompt_out) *prompt_out = NULL;
+    if (files_restored) *files_restored = 0;
+    if (!r || !r->state_root || turn < 0)
+        return -3;
+
+    mutex_lock(&r->ss->sess_mtx);
+    for (size_t i = 0; i < r->ss->nsessions; i++)
+        if (strcmp(r->ss->sessions[i]->id, want) == 0) {
+            s = r->ss->sessions[i];
+            break;
+        }
+    if (!s) {
+        struct sess_meta *m = meta_find(r->ss, want);
+        if (m && !m->deleted) s = session_get_locked(r, want);
+    }
+    if (!s) {
+        mutex_unlock(&r->ss->sess_mtx);
+        return -1;
+    }
+    if (s->in_run) {
+        mutex_unlock(&r->ss->sess_mtx);
+        return -2;
+    }
+    mutex_unlock(&r->ss->sess_mtx);
+
+    chat_file_path(fpath, sizeof(fpath), r->state_root, want);
+    saved = fs_read_file(fpath);
+    if (!saved || !*saved) {
+        free(saved);
+        return -3;
+    }
+    char *p = saved;
+    while (p && *p) {
+        char *nl = strchr(p, '\n');
+        if (nl) *nl = '\0';
+        if (total == cap) {
+            size_t ncap = cap ? cap * 2 : 16;
+            char **nl2 = realloc(lines, ncap * sizeof(char *));
+            if (!nl2) goto done;
+            lines = nl2;
+            cap = ncap;
+        }
+        lines[total++] = p;
+        p = nl ? nl + 1 : NULL;
+    }
+    if ((size_t)turn >= total) {
+        rc = -3;
+        goto done;
+    }
+    {
+        cJSON *t = cJSON_Parse(lines[turn]);
+        cJSON *q = t ? cJSON_GetObjectItemCaseSensitive(t, "q") : NULL;
+        if (!cJSON_IsString(q) || !q->valuestring || !*q->valuestring) {
+            cJSON_Delete(t);
+            rc = -3;
+            goto done;
+        }
+        target_q = xstrdup(q->valuestring);
+        cJSON_Delete(t);
+    }
+
+    if (restore_files && r->snap) {
+        for (size_t i = total; i-- > (size_t)turn;) {
+            cJSON *t = cJSON_Parse(lines[i]);
+            cJSON *snaps = t ? cJSON_GetObjectItemCaseSensitive(t, "snaps") : NULL;
+            int n = cJSON_IsArray(snaps) ? cJSON_GetArraySize(snaps) : 0;
+            for (int j = n; j-- > 0;) {
+                cJSON *idv = cJSON_GetArrayItem(snaps, j);
+                if (cJSON_IsString(idv) && idv->valuestring &&
+                    snapshot_restore(r->snap, idv->valuestring) == 0)
+                    restored++;
+            }
+            cJSON_Delete(t);
+        }
+    }
+
+    {
+        char bak[720];
+        chat_file_path_ext(bak, sizeof(bak), r->state_root, want, "rewind.bak");
+        FILE *bf = fopen(bak, "wb");
+        if (bf) {
+            for (size_t i = (size_t)turn; i < total; i++) {
+                fputs(lines[i], bf);
+                fputc('\n', bf);
+            }
+            fclose(bf);
+        }
+    }
+    {
+        strbuf keep;
+        strbuf_init(&keep);
+        for (size_t i = 0; i < (size_t)turn; i++) {
+            strbuf_append(&keep, lines[i]);
+            strbuf_append(&keep, "\n");
+        }
+        char tmp[720];
+        snprintf(tmp, sizeof(tmp), "%s.tmp", fpath);
+        int failed = fs_write_file(tmp, keep.buf ? keep.buf : "", keep.len) != 0
+                  || fs_replace_file(tmp, fpath) != 0;
+        if (failed) fs_remove(tmp);
+        strbuf_free(&keep);
+        if (failed) {
+            rc = -3;
+            goto done;
+        }
+    }
+
+    /* reset the live ring; the truncated transcript replays lazily */
+    mutex_lock(&s->mtx);
+    for (size_t i = 0; i < s->hist_n; i++) {
+        free(s->hist_q[i]);
+        free(s->hist_a[i]);
+    }
+    s->hist_n = 0;
+    free(s->summary);
+    s->summary = NULL;
+    s->sn_state[0] = s->sn_task[0] = s->sn_files[0] = 0;
+    s->sn_errors[0] = s->sn_worklog[0] = 0;
+    s->loaded = 0;
+    mutex_unlock(&s->mtx);
+    chat_pending_drop(r, want);
+    mutex_lock(&r->ss->sess_mtx);
+    meta_upsert_locked(r, s);
+    meta_save_locked(r);
+    mutex_unlock(&r->ss->sess_mtx);
+    if (prompt_out) {
+        *prompt_out = target_q;
+        target_q = NULL;
+    }
+    rc = 0;
+done:
+    free(target_q);
+    free(lines);
+    free(saved);
+    if (files_restored) *files_restored = restored;
+    return rc;
+}
+
 int reasoning_run(reasoning *r, const char *prompt, char **answer) {
     return reasoning_run_ex(r, NULL, prompt, answer);
 }
@@ -5112,6 +5448,10 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
         return -1;
     }
     prompt = safe_prompt;
+
+    /* fresh per-turn snapshot ledger (ids are duplicated at commit time) */
+    for (size_t i = 0; i < r->n_run_snaps; i++) free(r->run_snaps[i]);
+    r->n_run_snaps = 0;
 
     /* Issues #280/#281: durably remember this turn's input before the first
      * LLM call so a mid-run restart still leaves resume with something to

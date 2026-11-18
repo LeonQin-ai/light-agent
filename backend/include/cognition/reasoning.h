@@ -195,6 +195,20 @@ int reasoning_shared_memory_enabled(reasoning *r);
  * string or NULL when the session is unknown or has no turns. */
 char *reasoning_session_last_input(reasoning *r, const char *session_id);
 
+/* ---- session sharing + per-turn rewind ---- */
+/* Portable conversation bundle {version,kind:"coa-session",exported_ms,title,
+ * created_ms,turns:[{q,a}]} (malloc'd JSON; NULL = unknown/deleted session). */
+char *reasoning_session_export_json(reasoning *r, const char *session_id);
+/* Import a bundle as a NEW session; returns its malloc'd id (NULL = invalid
+ * bundle or failure). The caller binds the importer's workspace. */
+char *reasoning_session_import_json(reasoning *r, const char *bundle_json);
+/* Rewind to BEFORE turn `turn` (0-based transcript line). Optionally restore
+ * the discarded turns' file baselines. *prompt_out receives the target turn's
+ * question (malloc'd) for input refill; *files_restored the restore count.
+ * 0 ok / -1 unknown / -2 busy / -3 invalid turn or state. */
+int reasoning_session_rewind(reasoning *r, const char *session_id, int turn,
+                             int restore_files, char **prompt_out, int *files_restored);
+
 /* ---- shared session registry + parallel lanes ----
  * A sess_store holds the chat-session registry and metadata index. Attach ONE
  * store to every reasoning lane so concurrent lanes see the same sessions and

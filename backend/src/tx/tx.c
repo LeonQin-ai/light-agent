@@ -191,12 +191,10 @@ const char *tx_output(tx *tx) {
     return tx ? tx->output : NULL;
 }
 
-int tx_commit(tx *tx) {
-    if (!tx)
-        return -1;
-    if (tx->snap)
-        snapshot_commit(tx->snap);
-    return 0;
+const char *tx_commit(tx *tx) {
+    if (!tx || !tx->snap)
+        return NULL;
+    return snapshot_commit(tx->snap);
 }
 
 int tx_rollback(tx *tx) {

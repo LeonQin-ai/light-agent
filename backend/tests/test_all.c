@@ -1225,11 +1225,26 @@ static void test_snapshot_tx(void) {
     struct tx *tx2 = tx_begin(tm, snap, reg, &ctx);
     rc = tx_run(tx2, "file_write", args);
     CHECK(rc == 0);
-    CHECK(tx_commit(tx2) == 0);
+    CHECK(tx_commit(tx2) != NULL);
     CHECK(fs_read_file("state-test/w/f.txt") != NULL);
     char *data2 = fs_read_file("state-test/w/f.txt");
     CHECK_STR(data2, "hello");
     free(data2);
+
+    /* Rewind baseline: a path written twice in one checkpoint keeps its
+     * FIRST (pre-run) capture, so restore returns the original content. */
+    struct tx *tx3 = tx_begin(tm, snap, reg, &ctx);
+    CHECK(tx_run(tx3, "file_write", "{\"path\":\"f.txt\",\"content\":\"v1\"}") == 0);
+    CHECK(tx_run(tx3, "file_write", "{\"path\":\"f.txt\",\"content\":\"v2\"}") == 0);
+    const char *dup_id = tx_commit(tx3);
+    CHECK(dup_id != NULL);
+    char dup_copy[64];
+    snprintf(dup_copy, sizeof dup_copy, "%s", dup_id ? dup_id : "");
+    CHECK(snapshot_restore(snap, dup_copy) == 0);
+    char *data3 = fs_read_file("state-test/w/f.txt");
+    CHECK_STR(data3, "hello");
+    free(data3);
+    tx_free(tx3);
 
     char *list = snapshot_list(snap);
     CHECK(list && strstr(list, "f.txt") != NULL);
@@ -5487,6 +5502,180 @@ static void test_resume_pending_input(void) {
     pf=fopen("state-test/resume-pending/chat/first-turn.last","rb");
     CHECK(pf==NULL); if(pf)fclose(pf);
     runtime_shutdown(&ctx3);
+}
+
+/* ---------- session export/import sharing + per-turn rewind ---------- */
+typedef struct share_files_fixture { int calls, round; } share_files_fixture;
+static int share_files_chat(llm *self, const llm_request *req, llm_response *resp) {
+    share_files_fixture *f = (share_files_fixture *)self->impl;
+    ++f->calls;
+    if (f->calls == 1) {
+        if (f->round == 1)
+            resp->content = xstrdup("[{\"tool\":\"file_write\",\"args\":{\"path\":\"share.txt\",\"content\":\"round1\"}}]");
+        else
+            resp->content = xstrdup("[{\"tool\":\"file_write\",\"args\":{\"path\":\"share.txt\",\"content\":\"round2\"}},"
+                                    "{\"tool\":\"file_write\",\"args\":{\"path\":\"created.txt\",\"content\":\"new file\"}}]");
+    } else {
+        resp->content = xstrdup("文件写入任务已完成。");
+    }
+    fixture_final_decision(req, resp, f->calls > 1);
+    return resp->content ? 0 : -1;
+}
+
+static void test_session_share_rewind(void) {
+    section("session export/import sharing + per-turn rewind");
+    /* ---- conversation bundle: export -> import -> continue -> rewind ---- */
+    config cfg; memset(&cfg, 0, sizeof cfg);
+    cfg.state_root = "state-test/session-share";
+    cfg.workspace = "state-test/loop-w";
+    cfg.provider = "mock"; cfg.http_port = 0;
+    fs_remove("state-test/session-share/chat/share-src.jsonl");
+    fs_remove("state-test/session-share/chat/share-src.last");
+    fs_remove("state-test/session-share/chat/share-src.rewind.bak");
+    runtime_ctx ctx;
+    if (init(&ctx, &cfg) != 0) { CHECK(0); return; }
+    reasoning *r = ctx.reasoning;
+    char *a = NULL;
+    CHECK(reasoning_run_ex(r, "share-src", "分享第一问", &a) == 0); free(a); a = NULL;
+    CHECK(reasoning_run_ex(r, "share-src", "分享第二问", &a) == 0); free(a); a = NULL;
+    CHECK(reasoning_run_ex(r, "share-src", "分享第三问", &a) == 0); free(a); a = NULL;
+    CHECK(reasoning_session_set_title(r, "share-src", "分享源会话") == 0);
+    char *bundle = reasoning_session_export_json(r, "share-src");
+    CHECK(bundle != NULL);
+    cJSON *b = bundle ? cJSON_Parse(bundle) : NULL;
+    CHECK(b != NULL);
+    if (b) {
+        cJSON *kind = cJSON_GetObjectItem(b, "kind"), *ver = cJSON_GetObjectItem(b, "version");
+        cJSON *title = cJSON_GetObjectItem(b, "title"), *turns = cJSON_GetObjectItem(b, "turns");
+        CHECK(kind && cJSON_IsString(kind)); CHECK_STR(kind ? kind->valuestring : NULL, "coa-session");
+        CHECK(ver && ver->valuedouble == 1);
+        CHECK(title && cJSON_IsString(title)); CHECK_STR(title ? title->valuestring : NULL, "分享源会话");
+        CHECK(turns && cJSON_IsArray(turns) && cJSON_GetArraySize(turns) == 3);
+        cJSON *t0 = turns ? cJSON_GetArrayItem(turns, 0) : NULL;
+        cJSON *q0 = t0 ? cJSON_GetObjectItem(t0, "q") : NULL;
+        CHECK(q0 && strstr(q0->valuestring, "分享第一问"));
+        CHECK(t0 && cJSON_GetObjectItem(t0, "snaps") == NULL); /* block store stays local */
+        cJSON_Delete(b);
+    }
+    char *none = reasoning_session_export_json(r, "no-such-session");
+    CHECK(none == NULL); free(none);
+    /* import creates a NEW session carrying the same conversation memory */
+    char *imp = reasoning_session_import_json(r, bundle);
+    CHECK(imp != NULL);
+    CHECK(imp && strcmp(imp, "share-src") != 0);
+    if (imp) {
+        char *h = reasoning_history_json_ex(r, imp, 2147483647);
+        cJSON *ha = h ? cJSON_Parse(h) : NULL;
+        CHECK(ha && cJSON_IsArray(ha) && cJSON_GetArraySize(ha) == 3);
+        cJSON_Delete(ha); free(h);
+        char *sj = reasoning_sessions_json(r);
+        cJSON *sa = sj ? cJSON_Parse(sj) : NULL;
+        int titled = 0;
+        if (sa) {
+            cJSON *s;
+            cJSON_ArrayForEach(s, sa) {
+                cJSON *sid = cJSON_GetObjectItem(s, "id"), *st = cJSON_GetObjectItem(s, "title");
+                if (sid && cJSON_IsString(sid) && !strcmp(sid->valuestring, imp)
+                    && st && cJSON_IsString(st) && !strcmp(st->valuestring, "分享源会话"))
+                    titled = 1;
+            }
+            cJSON_Delete(sa);
+        }
+        CHECK(titled == 1); free(sj);
+        /* the importer continues executing with the imported memory */
+        CHECK(reasoning_run_ex(r, imp, "导入后继续提问", &a) == 0); free(a); a = NULL;
+        h = reasoning_history_json_ex(r, imp, 2147483647);
+        CHECK(h && strstr(h, "分享第一问") && strstr(h, "导入后继续提问"));
+        free(h);
+        CHECK(reasoning_session_delete(r, imp) == 0);
+        free(imp);
+    }
+    free(bundle);
+    /* invalid bundles are rejected without creating sessions */
+    CHECK(reasoning_session_import_json(r, "{bad") == NULL);
+    CHECK(reasoning_session_import_json(r, "{\"kind\":\"other\",\"version\":1,\"turns\":[]}") == NULL);
+    CHECK(reasoning_session_import_json(r, "{\"kind\":\"coa-session\",\"version\":1}") == NULL);
+    CHECK(reasoning_session_import_json(r,
+        "{\"kind\":\"coa-session\",\"version\":1,\"turns\":[{\"q\":\"\",\"a\":\"x\"}]}") == NULL);
+    /* rewind to before turn 1: keep turn 0, refill turn 1's question */
+    CHECK(fs_write_file("state-test/session-share/chat/share-src.last", "残留输入", strlen("残留输入")) == 0);
+    char *prompt = NULL; int restored = -1;
+    CHECK(reasoning_session_rewind(r, "share-src", 1, 0, &prompt, &restored) == 0);
+    CHECK_STR(prompt, "分享第二问");
+    CHECK(restored == 0);
+    free(prompt); prompt = NULL;
+    char *h = reasoning_history_json_ex(r, "share-src", 2147483647);
+    cJSON *ha = h ? cJSON_Parse(h) : NULL;
+    CHECK(ha && cJSON_IsArray(ha) && cJSON_GetArraySize(ha) == 1);
+    cJSON_Delete(ha); free(h);
+    CHECK(fs_exists("state-test/session-share/chat/share-src.rewind.bak") == 1);
+    FILE *lf = fopen("state-test/session-share/chat/share-src.last", "rb");
+    CHECK(lf == NULL); if (lf) fclose(lf);
+    /* invalid rewind points / unknown sessions */
+    CHECK(reasoning_session_rewind(r, "share-src", 1, 0, &prompt, &restored) == -3); /* turn==total */
+    CHECK(reasoning_session_rewind(r, "share-src", -1, 0, &prompt, &restored) == -3);
+    CHECK(reasoning_session_rewind(r, "no-such-session", 0, 0, &prompt, &restored) == -1);
+    runtime_shutdown(&ctx);
+
+    /* ---- file-restore variant: fixture writes go through the tx layer ---- */
+    fs_mkdirs("state-test/share-files-w");
+    fs_remove("state-test/share-files-w/share.txt");
+    fs_remove("state-test/share-files-w/created.txt");
+    CHECK(fs_write_file("state-test/share-files-w/share.txt", "original", 8) == 0);
+    fs_remove("state-test/session-share-files/chat/files-sess.jsonl");
+    snapshot *snap = snapshot_open("state-test/session-share-files/snapshot");
+    CHECK(snap != NULL);
+    if (snap) {
+        share_files_fixture f = {0};
+        static const llm_vtable vt = {.chat = share_files_chat};
+        llm provider = {.vt = &vt, .provider = "fixture", .model = "fixture", .impl = &f};
+        tool_registry *reg = tool_registry_new();
+        CHECK(reg && tool_register(reg, tool_file_write()) == 0);
+        reasoning_config rcfg = {0};
+        rcfg.llm = &provider; rcfg.tools = reg; rcfg.snapshot = snap; rcfg.use_transaction = 1;
+        rcfg.workspace = "state-test/share-files-w"; /* relative: outside any git repo */
+        rcfg.state_root = "state-test/session-share-files";
+        rcfg.max_rounds = 4;
+        reasoning *fr = reasoning_new(&rcfg);
+        CHECK(fr != NULL);
+        if (fr) {
+            f.round = 1; f.calls = 0;
+            CHECK(reasoning_run_ex(fr, "files-sess", "写入第一版", &a) == 0); free(a); a = NULL;
+            f.round = 2; f.calls = 0;
+            CHECK(reasoning_run_ex(fr, "files-sess", "写入第二版并新建文件", &a) == 0); free(a); a = NULL;
+            char *d = fs_read_file("state-test/share-files-w/share.txt");
+            CHECK_STR(d, "round2"); free(d);
+            CHECK(fs_exists("state-test/share-files-w/created.txt") == 1);
+            /* the transcript carries per-round committed snapshot ids */
+            h = reasoning_history_json_ex(fr, "files-sess", 2147483647);
+            ha = h ? cJSON_Parse(h) : NULL;
+            CHECK(ha && cJSON_IsArray(ha) && cJSON_GetArraySize(ha) == 2);
+            if (ha) {
+                for (int i = 0; i < 2; i++) {
+                    cJSON *sn = cJSON_GetObjectItem(cJSON_GetArrayItem(ha, i), "snaps");
+                    CHECK(sn && cJSON_IsArray(sn) && cJSON_GetArraySize(sn) >= 1);
+                }
+                cJSON_Delete(ha);
+            }
+            free(h);
+            /* rewind to before turn 0 with files: original content returns,
+             * the created file is deleted (earliest baseline wins) */
+            CHECK(reasoning_session_rewind(fr, "files-sess", 0, 1, &prompt, &restored) == 0);
+            CHECK_STR(prompt, "写入第一版");
+            CHECK(restored == 2);
+            free(prompt); prompt = NULL;
+            d = fs_read_file("state-test/share-files-w/share.txt");
+            CHECK_STR(d, "original"); free(d);
+            CHECK(fs_exists("state-test/share-files-w/created.txt") == 0);
+            h = reasoning_history_json_ex(fr, "files-sess", 2147483647);
+            ha = h ? cJSON_Parse(h) : NULL;
+            CHECK(ha && cJSON_IsArray(ha) && cJSON_GetArraySize(ha) == 0);
+            cJSON_Delete(ha); free(h);
+            reasoning_free(fr);
+        }
+        tool_registry_free(reg);
+        snapshot_close(snap);
+    }
 }
 
 /* ---------- chat history + upload RAG + self-evolution restart rebind ---------- */
@@ -10686,6 +10875,7 @@ int main(int argc, char **argv) {
     test_information_answers();
     test_chat_upload_evolve();
     test_resume_pending_input();
+    test_session_share_rewind();
     test_orchestrate();
     test_flow();
     test_flow_decompose();

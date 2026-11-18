@@ -31,8 +31,10 @@ int tx_validate(tx *tx);
  * (borrowed; valid until tx_free). NULL/"" if no action ran yet. */
 const char *tx_output(tx *tx);
 
-/* Commit: persist snapshot checkpoint; keep file changes. Returns 0 ok. */
-int tx_commit(tx *tx);
+/* Commit: persist snapshot checkpoint; keep file changes. Returns the
+ * committed snapshot id (borrowed; valid until the next commit on the same
+ * snapshot store) or NULL when nothing was captured. */
+const char *tx_commit(tx *tx);
 /* Rollback: restore captured originals; discard snapshot. Returns 0 ok. */
 int tx_rollback(tx *tx);
 
