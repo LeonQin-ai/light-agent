@@ -82,6 +82,18 @@ Choose execution and state directories explicitly for CLI deployments:
 
 **Workspace support:** The main branch includes saved workspace folders, per-chat workspace selection, and task-local execution directories. These changes are now integrated into `main`. Workspace selection chooses the execution root; it is not a security sandbox.
 
+### Authorize credentials in strict mode
+
+In the chat composer, select **严格 → 凭据授权** (Strict → Credential authorization). Choose an operation and destination, enter the password or API key in the password field, then insert the generated `cred_…` reference into your request. For example, choose Git HTTPS clone and ask the agent to clone the repository using that reference. Only strict-mode tasks in the issuing chat can use it. To revoke access, reopen the dialog in that chat and select **撤销授权** with the reference.
+
+| Credential | Operation authorized by one grant |
+| --- | --- |
+| Git HTTPS | List remote refs or clone the specified repository into a new workspace subdirectory |
+| PostgreSQL | Verify the TLS certificate and hostname, then run the read-only SELECT specified in the grant; an empty query returns the database name |
+| API key | Send a Bearer GET to one HTTPS URL without following redirects |
+
+The adapter requires Python 3 and `keyring`. Cloning also requires Git, and PostgreSQL queries require `psycopg`. Windows end-to-end tests cloned a repository over local HTTPS and verified its file contents, then queried a temporary PostgreSQL instance using TLS and SCRAM password authentication. [Setup and dependencies](backend/docs/credential-grants.md) · [End-to-end test](backend/tests/test_credential_grant_e2e.py)
+
 ## See the work as it happens
 **Terminal client:** run `light-agent chat` to connect to the
 desktop/server Runtime, continue durable conversations, inspect tool execution,
