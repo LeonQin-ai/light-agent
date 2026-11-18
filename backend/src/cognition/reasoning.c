@@ -3188,6 +3188,30 @@ static int opaque_observation_is_new(reasoning *r,const char *tool,const char *a
     r->opaque_seen[r->opaque_seen_n++]=current;return 1;
 }
 
+/* Glob resolves an omitted or empty root against the workspace. Give all
+ * equivalent spellings the same cache key while preserving pattern/options. */
+static uint64_t glob_search_signature(reasoning *r, const char *json, uint64_t fallback) {
+    cJSON *args = cJSON_Parse(json);
+    if (!cJSON_IsObject(args)) {
+        cJSON_Delete(args);
+        return fallback;
+    }
+    const char *path = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(args,"path"));
+    char root[2048];
+    path_resolve(root,sizeof(root),r->workspace,path && *path ? path : ".");
+    char *absolute = fs_absolute_path(root);
+    cJSON_DeleteItemFromObjectCaseSensitive(args,"path");
+    cJSON *entry = cJSON_AddStringToObject(args,"path",absolute ? absolute : root);
+    free(absolute);
+    if (!entry) {
+        cJSON_Delete(args);
+        return fallback;
+    }
+    uint64_t signature = observation_json_hash(args) ^ hash64("glob",4);
+    cJSON_Delete(args);
+    return signature;
+}
+
 static void observe_action_progress(reasoning *r,const planned_action *action,uint64_t output_hash,int is_search,const char *observed) {
     /* A write that found the exact bytes already on disk changed nothing. Its
      * "rewrite skipped" receipt is not new evidence; counting it as progress
@@ -3856,12 +3880,14 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
                         strcmp(r->actions[i].tool, "grep") == 0 ||
                         strcmp(r->actions[i].tool, "file_read") == 0 ||
                         strcmp(r->actions[i].tool, "list_dir") == 0;
+        uint64_t search_action_sig = !strcmp(r->actions[i].tool,"glob")
+            ? glob_search_signature(r,r->actions[i].args_json,action_sig) : action_sig;
         if (is_search) {
             int repeated = 0;
             int versioned = !strcmp(r->actions[i].tool,"file_read") || !strcmp(r->actions[i].tool,"list_dir");
             uint64_t search_sig = !strcmp(r->actions[i].tool,"file_read")
                 ? file_read_signature(r,r->actions[i].args_json)
-                : !strcmp(r->actions[i].tool,"list_dir") ? directory_signature(r,r->actions[i].args_json) : action_sig;
+                : !strcmp(r->actions[i].tool,"list_dir") ? directory_signature(r,r->actions[i].args_json) : search_action_sig;
             uint64_t *seen=versioned ? r->versioned_seen : r->search_seen;
             int count=versioned ? r->versioned_seen_n : r->search_seen_n;
             for (int j = 0; search_sig && j < count && !repeated; j++)
@@ -3874,7 +3900,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
                 for(int k=0;k<r->invalid_args_n;k++)
                     if(!strcmp(r->invalid_args[k].tool,r->actions[i].tool)) r->invalid_args[k].attempts=0;
                 strbuf_appendf(&b, "[%s] identical read/search already completed; use its earlier observation, "
-                                 "continue with unread files or the next offset_bytes; this is not task completion\n", r->actions[i].tool);
+                                 "continue with unread evidence, change the query, or explain the missing input if the earlier result was empty\n", r->actions[i].tool);
                 run_step_add(r, r->actions[i].tool, r->actions[i].args_json,
                              "previous search result reused", 1, 0);
                 continue;
@@ -4101,7 +4127,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
                 if (*count == 512) { memmove(seen,seen+1,511*sizeof(*seen)); --*count; }
                 seen[(*count)++] = !strcmp(r->actions[i].tool,"file_read")
                     ? file_read_signature(r,r->actions[i].args_json)
-                    : !strcmp(r->actions[i].tool,"list_dir") ? directory_signature(r,r->actions[i].args_json) : action_sig;
+                    : !strcmp(r->actions[i].tool,"list_dir") ? directory_signature(r,r->actions[i].args_json) : search_action_sig;
                 if (!strcmp(r->actions[i].tool, "grep")) {
                     /* Same-tree grep cadence: piecemeal searching of one tree
                      * usually means the model should page through the file. */

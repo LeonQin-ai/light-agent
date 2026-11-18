@@ -189,6 +189,17 @@ static tool_result *fixture_failure(const tool *self, const tool_ctx *ctx, const
     return tool_result_new(0, "fixture failure: command exited with status 1");
 }
 
+static int empty_glob_chat(llm *self, const llm_request *req, llm_response *resp) {
+    (void)req;
+    cycle_fixture *fixture = self->impl;
+    const char *path = fixture->calls++ % 2 ? ",\"path\":\".\"" : "";
+    char plan[256];
+    snprintf(plan,sizeof(plan),
+             "[{\"tool\":\"glob\",\"args\":{\"pattern\":\"**/*.html\"%s}}]",path);
+    resp->content = copy_text(plan);
+    return resp->content ? 0 : -1;
+}
+
 static int check(int condition, const char *label) {
     if (condition) {
         printf("PASS %s\n", label);
@@ -426,6 +437,43 @@ int main(void) {
     reasoning_free(timeout_engine);
     tool_registry_free(timeout_registry);
     fs_remove(timeout_workspace);
+    const char *empty_workspace = "build/test-plan-empty-glob";
+    fs_mkdirs(empty_workspace);
+    cycle_fixture empty_fixture = {0};
+    llm empty_provider = {
+        .vt = &(const llm_vtable){.chat = empty_glob_chat},
+        .provider = "fixture", .model = "fixture", .impl = &empty_fixture
+    };
+    tool_registry *empty_registry = tool_registry_new();
+    if (!empty_registry || tool_register(empty_registry,tool_glob()) != 0) {
+        tool_registry_free(empty_registry);
+        return 2;
+    }
+    reasoning_config empty_cfg = {0};
+    empty_cfg.llm = &empty_provider;
+    empty_cfg.tools = empty_registry;
+    empty_cfg.workspace = empty_workspace;
+    empty_cfg.max_rounds = 17;
+    reasoning *empty_engine = reasoning_new(&empty_cfg);
+    if (!empty_engine) {
+        tool_registry_free(empty_registry);
+        return 2;
+    }
+    char *empty_answer = NULL;
+    int empty_rc = reasoning_run(empty_engine,"Inspect HTML files",&empty_answer);
+    char *empty_steps = reasoning_steps_json(empty_engine);
+    const char *first_empty = empty_steps ? strstr(empty_steps,"No files found") : NULL;
+    failures += check(empty_rc != 0 && empty_fixture.calls <= 10,
+                      "empty search loop stops below the planning limit");
+    failures += check(first_empty && !strstr(first_empty + 1,"No files found") &&
+                      strstr(empty_steps,"previous search result reused"),
+                      "equivalent empty glob searches execute only once");
+    free(empty_steps);
+    free(empty_answer);
+    reasoning_free(empty_engine);
+    tool_registry_free(empty_registry);
+    fs_remove(empty_workspace);
+
     printf("plan cycle regression: %s\n", failures ? "FAIL" : "PASS");
     return failures ? 1 : 0;
 }

@@ -240,7 +240,7 @@ static tool_result *glob_exec(const tool *self, const tool_ctx *ctx, const char 
     truncated = fl.count > LIMIT;
     strbuf_init(&sb);
     if (fl.count == 0)
-        strbuf_append(&sb, "No files found");
+        strbuf_append(&sb, "No files found for this pattern in the resolved search scope. "                           "Use a different scope or pattern, or ask for the missing input.");
     shown = fl.count < LIMIT ? fl.count : LIMIT;
     for (size_t i = 0; i < shown; i++) {
         char full[2048]; path_join(full, sizeof(full), root, fl.items[i].path);

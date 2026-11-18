@@ -657,7 +657,7 @@
 </style>
 <style>
 /* Quiet, spacious conversation surfaces, shared with the native macOS shell. */
-.chat-wrap{max-width:1200px;box-sizing:border-box;padding:10px 24px 6px;min-height:0}
+.chat-wrap{max-width:none;box-sizing:border-box;padding:10px 24px 6px;min-height:0}
 #chat-hero{flex:0 0 auto;gap:18px;min-height:176px!important;padding:28px 0 22px}
 #chat-hero .hero-title{font-size:clamp(26px,3vw,36px);font-weight:550;letter-spacing:-1px;line-height:1.35}
 #chat-hero::before{content:'LIGHT-AGENT';font-size:11px;letter-spacing:3px;color:var(--muted)}
@@ -760,7 +760,7 @@
 #workspace-dialog input{width:100%;margin:7px 0 15px}#workspace-dialog::backdrop{background:#0006}
 @media(max-width:640px){.pillbar{grid-template-columns:auto minmax(0,1fr) auto auto!important;gap:4px;padding:12px!important}.composer-policy{display:block;grid-column:1/-1;grid-row:3;max-width:100%;justify-self:start}.pillbar #chat-model{grid-column:2}.composer-effort{grid-column:3}.composer-effort-panel{width:210px}
 .composer-mic,.pillbar #chat-send,.pillbar #chat-cancel{grid-column:4}#chat-workspace{max-width:55vw}}
-.content.chat-content{display:flex;flex-direction:column;min-height:0;overflow-y:hidden}
+.content.chat-content{display:flex;flex-direction:column;min-height:0;overflow-y:hidden;padding-inline:0}
 .chat-content .chat-wrap{min-height:0;flex:1;overflow:hidden}
 .chat-content #chat-hero{min-height:0}
 .chat-content #chat-box{min-height:0;overflow-y:auto}
@@ -1168,11 +1168,32 @@ if(new URLSearchParams(location.search).has('desktop')) document.body.classList.
 
 /* ================= 基础工具 ================= */
 
+let apiToken = '';
+let apiAuthAttempt = 0;
+async function apiFetch(path, options) {
+  const url = new URL(path, location.href);
+  if (url.origin !== location.origin) throw new Error('API 请求必须使用当前站点');
+  const sentToken = apiToken;
+  const sentAttempt = apiAuthAttempt;
+  const send = token => {
+    const headers = new Headers(options.headers);
+    if (token) headers.set('Authorization', 'Bearer ' + token);
+    return fetch(url, {...options, headers, redirect: 'error'});
+  };
+  const response = await send(sentToken);
+  if (response.status !== 401) return response;
+  if (apiAuthAttempt === sentAttempt && !options.signal?.aborted) {
+    apiAuthAttempt++;
+    apiToken = (window.prompt('请输入服务端配置的 auth.key', '') || '').trim();
+  }
+  return apiToken ? send(apiToken) : response;
+}
+
 async function call(method, path, body, timeoutMs = 20000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, Math.min(300000, Number(timeoutMs) || 20000)));
   try {
-    const r = await fetch(path, {method, signal: controller.signal, headers:{'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined});
+    const r = await apiFetch(path, {method, signal: controller.signal, headers:{'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined});
     const text = await r.text();
     let obj; try { obj = JSON.parse(text); } catch { obj = {raw: text}; }
     return {status: r.status, obj, text};
@@ -5344,7 +5365,7 @@ async function uploadBlob(name, blob){
     const controller = new AbortController();
     const timer = setTimeout(()=>controller.abort(),90000);
     try {
-      const resp = await fetch('/v1/upload?name=' + encodeURIComponent(name) + '&session=' + encodeURIComponent(session),
+      const resp = await apiFetch('/v1/upload?name=' + encodeURIComponent(name) + '&session=' + encodeURIComponent(session),
         {method:'POST',body:blob,signal:controller.signal});
       const obj = await resp.json().catch(()=>({}));
       if(!resp.ok || !obj.ok) throw new Error(obj.error || ('HTTP ' + resp.status));

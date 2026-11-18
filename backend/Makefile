@@ -35,7 +35,7 @@ $(SRCS): | include/api/web_ui.h include/api/manju_pipeline.h
 
 all: build/light-agent build/light-agent-test build/light-agent-scenario build/mock-llm-server build/test-adapters build/light-agent-e2e build/light-agent-bench build/bench-runtime
 
-build/light-agent: $(SRCS) cli/main.c cli/client.h src/terminal_screen.h src/llm/native_preview.h
+build/light-agent: $(SRCS) include/api/web_ui.h cli/main.c cli/client.h src/terminal_screen.h src/llm/native_preview.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) -o $@ $(SRCS) cli/main.c $(LDLIBS)
 
