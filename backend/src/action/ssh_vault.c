@@ -440,20 +440,30 @@ static int ssh_ipv4_valid(const char *s, size_t n) {
 
 /* Scan redacted input only: an IP inside a password is never a target.
  * More than one distinct address (or malformed numeric address) is ambiguous. */
-static char *ssh_prompt_ipv4(const char *text, int *invalid, int infer_intent) {
+static char *ssh_prompt_ipv4(const char *text, int *invalid, int require_hostip) {
+    static const char ipv4[] = "\\d+\\.\\d+\\.\\d+\\.\\d+";
+    static const char label[] = "[hH][oO][sS][tT][iI][pP][\\s:=]+";
     char *host = NULL;
     const char *cursor = text;
     int n = 0, pos;
-    while ((pos = re_match("\\d+\\.\\d+\\.\\d+\\.\\d+", cursor, &n)) >= 0) {
-        const char *p = cursor + pos;
-        if (infer_intent && p > text && strchr("/@", p[-1])) {
-            cursor = p + n;
+    while ((pos = re_match(require_hostip ? label : ipv4, cursor, &n)) >= 0) {
+        const char *start = cursor + pos;
+        if (start > text && (isalnum((unsigned char)start[-1]) ||
+                             strchr("._-", start[-1]))) {
+            cursor = start + n;
             continue;
         }
-        if ((p > text && (isalnum((unsigned char)p[-1]) || strchr("._-", p[-1]))) ||
-            isalnum((unsigned char)p[n]) || (p[n] && strchr("._-", p[n]))) {
-            cursor = p + n; continue;
+        const char *p = start;
+        if (require_hostip) {
+            p += n;
+            if (re_match(ipv4, p, &n) != 0) {
+                cursor = p;
+                continue;
+            }
         }
+        cursor = p + n;
+        if (isalnum((unsigned char)p[n]) || (p[n] && strchr("._-", p[n])))
+            continue;
         if (!ssh_ipv4_valid(p, (size_t)n)) { *invalid = 1; break; }
         if (host && (strlen(host) != (size_t)n || strncmp(host, p, (size_t)n))) {
             *invalid = 1; break;
@@ -502,9 +512,9 @@ char *ssh_session_prepare_prompt(const char *state_root, const char *session_id,
     const char *password_at = ssh_field_value(prompt, "password", "密码", 1);
     const char *password_end = NULL;
     char *password = ssh_field_token(password_at, 1024, &password_end);
-    if (!ssh_intent) {
-        /* Only infer SSH from a credential and a real IPv4 target in this
-         * message. A stored profile cannot classify an unrelated request. */
+    const int require_hostip = !ssh_intent;
+    if (require_hostip) {
+        /* Implicit credentials require a hostip field in this message. */
         int invalid = 0;
         char *candidate = password
             ? ssh_replace_secret(prompt, password, password_at, password_end) : NULL;
@@ -572,7 +582,7 @@ char *ssh_session_prepare_prompt(const char *state_root, const char *session_id,
         environment = NULL;
     }
     int invalid_target = 0;
-    char *bare_ip = ssh_prompt_ipv4(safe, &invalid_target, 0);
+    char *bare_ip = ssh_prompt_ipv4(safe, &invalid_target, require_hostip);
     p = ssh_field_value(safe, "port", "端口", 0);
     if (!p && ssh_word) {
         const char *flag = strstr(safe, "-p ");
@@ -611,7 +621,11 @@ char *ssh_session_prepare_prompt(const char *state_root, const char *session_id,
             free(candidate_user); free(candidate_host);
         }
     }
-    if (!host && bare_ip) { host = bare_ip; bare_ip = NULL; }
+    if (bare_ip && (require_hostip || !host)) {
+        free(host);
+        host = bare_ip;
+        bare_ip = NULL;
+    }
     free(bare_ip);
     if (host && !ssh_endpoint_token_valid(host, 0)) { free(host); host = NULL; invalid_target = 1; }
     if (user && !ssh_endpoint_token_valid(user, 1)) { free(user); user = NULL; invalid_target = 1; }

@@ -1282,15 +1282,15 @@ static void test_ssh_prompt_regex(void) {
     const char *root = "state-test/ssh-regex";
     const char *sid = "regex-chat";
     const struct { const char *prompt, *host, *user, *password; int port; } cases[] = {
-        {"请登录 127.0.0.1，账户为 deploy，口令为 P@!#$%^&*()!，查看CPU", "127.0.0.1", "deploy", "P@!#$%^&*()!", 22},
+        {"请 SSH 登录 127.0.0.1，账户为 deploy，口令为 P@!#$%^&*()!，查看CPU", "127.0.0.1", "deploy", "P@!#$%^&*()!", 22},
         {"SSH\nIP：127.0.0.1\n用户名是root\n密码：\n'A b,;@!123'\n端口为2222", "127.0.0.1", "root", "A b,;@!123", 2222},
         {"SSH PWD = 'keep\\slashes!@#' ; USERNAME IS test-user ; HOST IS 127.0.0.1", "127.0.0.1", "test-user", "keep\\slashes!@#", 22},
         {"连接服务器 127.0.0.1；帐号：root；passwd=Abc123!", "127.0.0.1", "root", "Abc123!", 22},
         {"SSH 密码=Pass@10.0.0.7 用户名=admin 主机=127.0.0.1", "127.0.0.1", "admin", "Pass@10.0.0.7", 22},
         {"ssh admin@127.0.0.1 -p 2222 password is 'ends!()^%'", "127.0.0.1", "admin", "ends!()^%", 2222},
         {"SSH -l test-user 127.0.0.1 用户名是：test-user 口令为：'Quoted#9!'", "127.0.0.1", "test-user", "Quoted#9!", 22},
-        {"地址：127.0.0.1\n账户：root\n密码：'Mixed#8!'", "127.0.0.1", "root", "Mixed#8!", 22},
-        {"hostip 127.0.0.1 user=root pwd='NoSSH#7!'", "127.0.0.1", "root", "NoSSH#7!", 22},
+        {"SSH 地址：127.0.0.1\n账户：root\n密码：'Mixed#8!'", "127.0.0.1", "root", "Mixed#8!", 22},
+        {"HostIP=127.0.0.1 user=root pwd='NoSSH#7!'", "127.0.0.1", "root", "NoSSH#7!", 22},
         {"SSH root@127.0.0.1 密码='keep -p 3333 user=other 10.0.0.7'", "127.0.0.1", "root", "keep -p 3333 user=other 10.0.0.7", 22},
     };
     for (size_t i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
@@ -1322,6 +1322,8 @@ static void test_ssh_prompt_regex(void) {
         "优化账号表：account 与 password 的存储",
         "git clone https://192.0.2.1/project.git username=git password=Fixture9!",
         "hostip 999.1.2.3 user=root pwd=Fixture9!",
+        "127.0.0.1 user=root pwd=Fixture9!",
+        "myhostip=127.0.0.1 user=root pwd=Fixture9!",
         "username=root password='Pass@192.0.2.1'"
     };
     for (size_t i = 0; i < sizeof(ordinary)/sizeof(ordinary[0]); i++) {
@@ -10662,7 +10664,7 @@ int main(int argc, char **argv) {
         cJSON_AddStringToObject(profile,"known_hosts",known); cJSON_AddItemToObject(envs,"fixture",profile);
         cJSON_AddItemToObject(envroot,"environments",envs); char *envjson=cJSON_PrintUnformatted(envroot);
         fs_write_file("state-test/issue70/ssh/environments.json",envjson,strlen(envjson)); free(envjson); cJSON_Delete(envroot);
-        char intro[400]; snprintf(intro,sizeof(intro),"请登录 127.0.0.1\n账户为testuser\n端口为%s\n口令：'%s'\n查看CPU",port,password);
+        char intro[400]; snprintf(intro,sizeof(intro),"请 SSH 登录 127.0.0.1\n账户为testuser\n端口为%s\n口令：'%s'\n查看CPU",port,password);
         char *safe=ssh_session_prepare_prompt(ctx.state_root,ctx.session_id,intro);
         CHECK(safe && !strstr(safe,password)); free(safe);
         char args[300]; snprintf(args,sizeof(args),"{\"environment\":\"fixture\",\"command\":\"nproc | wc -l\",\"timeout_ms\":10000}");
