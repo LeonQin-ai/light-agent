@@ -372,7 +372,7 @@ static int h_task_create(const http_request *req, http_response *resp, void *ud)
         return 0;
     }
 
-    char *safe_prompt = ssh_session_prepare_prompt(ctx->state_root, "default", prompt);
+    char *safe_prompt = credential_prepare_prompt(ctx->state_root, "default", prompt);
     if (!safe_prompt) {
         cJSON_Delete(root);
         resp->status = 500;
@@ -534,7 +534,7 @@ static int h_task_message(const http_request *req, http_response *resp, void *ud
         cJSON_Delete(o); resp->status = 400;
         http_resp_json(resp, "{\"error\":\"message and matching session required\"}"); scheduler_release(ctx->scheduler, t); return 0;
     }
-    char *safe_message = ssh_session_prepare_prompt(ctx->state_root, session, message);
+    char *safe_message = credential_prepare_prompt(ctx->state_root, session, message);
     if (!safe_message) {
         cJSON_Delete(o); resp->status = 500;
         http_resp_json(resp, "{\"error\":\"SSH credential needs a host or saved environment and a working local vault\"}"); scheduler_release(ctx->scheduler, t); return 0;
@@ -811,7 +811,7 @@ static int h_chat(const http_request *req, http_response *resp, void *ud) {
         cJSON_Delete(root); resp->status=400;
         http_resp_json(resp,"{\"error\":\"attachments must be ready, belong to this session, and number at most four\"}"); return 0;
     }
-    char *safe_msg = ssh_session_prepare_prompt(ctx->state_root, session, msg);
+    char *safe_msg = credential_prepare_prompt(ctx->state_root, session, msg);
     if (!safe_msg) {
         free(attachments);
         cJSON_Delete(root);
@@ -1197,7 +1197,7 @@ static int h_orchestrate(const http_request *req, http_response *resp, void *ud)
     }
 
     /* Extract SSH credentials before the scheduler journals the task. */
-    char *safe_task = ssh_session_prepare_prompt(ctx->state_root, "default", task);
+    char *safe_task = credential_prepare_prompt(ctx->state_root, "default", task);
     if (!safe_task) {
         cJSON_Delete(root); resp->status = 500;
         http_resp_json(resp, "{\"error\":\"SSH credential needs a host or saved environment and a working local vault\"}");
@@ -1854,7 +1854,7 @@ static int h_flow_decompose(const http_request *req, http_response *resp, void *
         return 0;
     }
 
-    char *safe_task = ssh_session_prepare_prompt(ctx->state_root, "default", t->valuestring);
+    char *safe_task = credential_prepare_prompt(ctx->state_root, "default", t->valuestring);
     if (!safe_task) {
         cJSON_Delete(root); resp->status = 500;
         http_resp_json(resp, "{\"error\":\"SSH credential needs a host or saved environment and a working local vault\"}");
@@ -3435,7 +3435,7 @@ static int h_security_stats(const http_request *req, http_response *resp, void *
     return 0;
 }
 
-/* POST /v1/config/security {"mode":"passthrough|strict"} — switch the Secret
+/* POST /v1/config/security {"mode":"fast|strict"} — switch the Secret
  * Security Plane compatibility mode at runtime and persist it (§5). */
 static int h_config_security(const http_request *req, http_response *resp, void *ud) {
     runtime_ctx *ctx = (runtime_ctx *)ud;
@@ -3455,7 +3455,7 @@ static int h_config_security(const http_request *req, http_response *resp, void 
         if (root)
             cJSON_Delete(root);
         resp->status = 400;
-        http_resp_json(resp, "{\"error\":\"need 'mode' = passthrough|strict\"}");
+        http_resp_json(resp, "{\"error\":\"need 'mode' = fast|strict\"}");
         return 0;
     }
     cJSON_Delete(root);

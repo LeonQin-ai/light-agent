@@ -68,7 +68,7 @@ static int llm_guard_input(const llm_request *req) {
         return 0;
     contents = (const char **)calloc(req->num_messages, sizeof(char *));
     if (!contents)
-        return 0; /* fail open on OOM */
+        return -1; /* Never dispatch an uninspected request. */
     for (i = 0; i < req->num_messages; i++)
         contents[i] = req->messages[i].content;
     rc = secret_guard_llm_input(contents, req->num_messages);

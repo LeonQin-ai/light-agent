@@ -5469,7 +5469,7 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     safe_prompt = str_utf8_sanitize(prompt);
     if (safe_prompt)
         prompt = safe_prompt;
-    char *vault_safe_prompt = ssh_session_prepare_prompt(r->state_root, session_id, prompt);
+    char *vault_safe_prompt = credential_prepare_prompt(r->state_root, session_id, prompt);
     free(safe_prompt);
     safe_prompt = vault_safe_prompt;
     if (!safe_prompt) {
@@ -5669,7 +5669,7 @@ restart_planning:
         }
         char *messages = task_take_messages(r->run_task, &r->applied_updates);
         if (messages) {
-            char *safe_messages = ssh_session_prepare_prompt(r->state_root, session_id, messages);
+            char *safe_messages = credential_prepare_prompt(r->state_root, session_id, messages);
             free(messages);
             if (!safe_messages) { st = ST_FAILED; break; }
             messages = safe_messages;

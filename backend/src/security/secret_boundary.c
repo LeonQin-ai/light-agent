@@ -24,7 +24,8 @@
 
 static mutex_t g_mtx;
 static _Atomic int g_mtx_init = 0;
-static int g_mode_strict = 0;     /* 0 = passthrough (default), 1 = strict */
+#include <stdatomic.h>
+static atomic_int g_mode_strict = 0;     /* 0 = passthrough (default), 1 = strict */
 static audit *g_audit = NULL;     /* owned (secret_audit_open) */
 static metrics *g_metrics = NULL; /* borrowed */
 
@@ -94,7 +95,7 @@ static secret_severity_t strongest(const secret_match *ms, int n) {
 /* --- public: mode + sinks -------------------------------------------------- */
 
 int secret_set_mode(const char *mode) {
-    if (!mode || !*mode || strcmp(mode, "passthrough") == 0) {
+    if (!mode || !*mode || strcmp(mode, "fast") == 0 || strcmp(mode, "passthrough") == 0) {
         g_mode_strict = 0;
         return 0;
     }
@@ -106,7 +107,7 @@ int secret_set_mode(const char *mode) {
 }
 
 const char *secret_mode(void) {
-    return g_mode_strict ? "strict" : "passthrough";
+    return g_mode_strict ? "strict" : "fast";
 }
 
 void secret_audit_open(const char *path) {
@@ -138,6 +139,15 @@ int secret_guard_llm_input(const char *const *contents, size_t n) {
         const char *c = contents && contents[i] ? contents[i] : NULL;
         if (!c || !*c)
             continue;
+        if (g_mode_strict) {
+            cnt = secret_scan_text(c, strlen(c), &ms);
+            if (cnt > 0) {
+                worst = strongest(ms, cnt) > worst ? strongest(ms, cnt) : worst;
+                audit_scan("llm_input", ms, cnt);
+            }
+            secret_matches_free(ms);
+            ms = NULL;
+        }
         cnt = secret_scan_ssh_passwords(c, strlen(c), &ms);
         if (cnt > 0) {
             secret_severity_t s = strongest(ms, cnt);

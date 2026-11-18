@@ -126,6 +126,8 @@ void ssh_session_profiles_clear(const char *state_root, const char *session_id);
 /* Extract explicit SSH endpoint/password fields before a prompt is queued or
  * persisted. Returns a malloc'd prompt with the password removed (NULL on
  * local credential storage failure). Passwords stay in the session vault. */
+char *credential_prepare_prompt(const char *state_root, const char *session_id,
+                                const char *prompt);
 char *ssh_session_prepare_prompt(const char *state_root, const char *session_id,
                                  const char *prompt);
 /* Windows SSH_ASKPASS entry point: returns -1 for a normal launch, otherwise

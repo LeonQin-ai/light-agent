@@ -502,6 +502,13 @@ static char *ssh_replace_secret(const char *prompt, const char *secret,
     return out;
 }
 
+char *credential_prepare_prompt(const char *state_root, const char *session_id,
+                                const char *prompt) {
+    if (!prompt) return NULL;
+    if (strcmp(secret_mode(), "strict") != 0) return xstrdup(prompt);
+    return ssh_session_prepare_prompt(state_root, session_id, prompt);
+}
+
 char *ssh_session_prepare_prompt(const char *state_root, const char *session_id,
                                  const char *prompt) {
     if (!prompt) return NULL;

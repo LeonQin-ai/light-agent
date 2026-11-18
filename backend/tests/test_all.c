@@ -7621,7 +7621,11 @@ static void test_security(void) {
 
     /* passthrough mode: input never blocked */
     secret_set_mode("passthrough");
-    CHECK_STR(secret_mode(), "passthrough");
+    CHECK_STR(secret_mode(), "fast");
+    const char *sample = "SSH password=Example123!";
+    char *unchanged = credential_prepare_prompt(NULL, "test", sample);
+    CHECK(unchanged && !strcmp(unchanged, sample));
+    free(unchanged);
     CHECK(secret_guard_llm_input(blocked_input, 1) == 0);
     CHECK(secret_guard_llm_input(clean_input, 1) == 0);
 
@@ -7651,7 +7655,7 @@ static void test_security(void) {
     /* strict mode: HIGH-confidence input blocked, clean passes */
     CHECK(secret_set_mode("strict") == 0);
     CHECK_STR(secret_mode(), "strict");
-    CHECK(secret_guard_llm_input(blocked_input, 1) == 0);
+    CHECK(secret_guard_llm_input(blocked_input, 1) == -1);
     CHECK(secret_guard_llm_input(clean_input, 1) == 0);
     CHECK(secret_set_mode("passthrough") == 0);
     CHECK(secret_set_mode("bogus") == -1);
@@ -7729,7 +7733,7 @@ static void test_security(void) {
     /* stats shape */
     stats = secret_stats_json();
     CHECK(stats != NULL && strstr(stats, "\"scans\"") != NULL &&
-          strstr(stats, "\"mode\":\"passthrough\"") != NULL);
+          strstr(stats, "\"mode\":\"fast\"") != NULL);
     free(stats);
 }
 
