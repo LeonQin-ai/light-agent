@@ -324,6 +324,7 @@ struct reasoning {
     int completion_candidate_seen; /* a complete_task decision already appeared this run (#271) */
     int acceptance_declares;       /* contract-growing declarations this run (#270) */
     int acceptance_frozen;         /* oscillation breaker: the contract is final */
+    int credential_strict;
     int gate_mode;                 /* 1 = simple mode: evidence gates and reviews are skipped */
     int gate_auto;                 /* choose completion review from runtime evidence */
     int gate_simple;               /* config forcing simple gate (fast-mode subagents) */
@@ -3528,6 +3529,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
     tctx.workspace = r->workspace;
     tctx.state_root = r->state_root;
     tctx.session_id = r->cur ? r->cur->id : "default";
+    tctx.credential_strict = r->credential_strict;
     tctx.task_input = r->last_prompt;
     tctx.should_abort = tool_abort_requested;
     tctx.abort_ud = r;
@@ -3795,7 +3797,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
             cJSON *off = ra ? cJSON_GetObjectItemCaseSensitive(ra, "offset_bytes") : NULL;
             int at_start = !off || (cJSON_IsNumber(off) && off->valuedouble <= 0);
             int short_circuit = 0;
-            if (rpath && at_start) {
+            if (rpath && at_start && (!path_requires_full_read(r,rpath) || full_read_verified(r,rpath))) {
                 char canonical[2048];
                 normalized_evidence_path(r, rpath, canonical, sizeof(canonical));
                 uint64_t now = fs_file_version(canonical);
@@ -5469,11 +5471,15 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     safe_prompt = str_utf8_sanitize(prompt);
     if (safe_prompt)
         prompt = safe_prompt;
-    char *vault_safe_prompt = credential_prepare_prompt(r->state_root, session_id, prompt);
+    cJSON *o = r->run_task && r->run_task->llm_config ? cJSON_Parse(r->run_task->llm_config) : NULL;
+    const char *credential_gate=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"gate"));
+    r->credential_strict = !r->subagent && credential_strict_for_gate(credential_gate);
+    char *vault_safe_prompt = credential_prepare_for_gate(r->state_root,session_id,prompt,r->credential_strict?"full":"simple");
     free(safe_prompt);
     safe_prompt = vault_safe_prompt;
     if (!safe_prompt) {
-        if (answer) *answer = xstrdup("(local SSH credential storage failed)");
+        cJSON_Delete(o);
+        if (answer) *answer = xstrdup("(credential authorization required)");
         mutex_lock(&r->ss->sess_mtx);
         if (r->cur) r->cur->in_run = 0;
         mutex_unlock(&r->ss->sess_mtx);
@@ -5498,7 +5504,7 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
         mutex_unlock(&r->ss->sess_mtx);
     }
 
-    cJSON *o = r->run_task && r->run_task->llm_config ? cJSON_Parse(r->run_task->llm_config) : NULL;
+
     /* Gate mode (#271): "gate":"simple" runs a Claude-Code-like flow — no
      * acceptance-contract governance, no artifact verification, no completion
      * review, failures become notes instead of blocking DONE. Default is the
@@ -5669,7 +5675,7 @@ restart_planning:
         }
         char *messages = task_take_messages(r->run_task, &r->applied_updates);
         if (messages) {
-            char *safe_messages = credential_prepare_prompt(r->state_root, session_id, messages);
+            char *safe_messages = credential_prepare_for_gate(r->state_root,session_id,messages,r->credential_strict?"full":"simple");
             free(messages);
             if (!safe_messages) { st = ST_FAILED; break; }
             messages = safe_messages;

@@ -822,7 +822,7 @@ static void test_snapshot_tx(void) {
 
     tool_registry *reg = tool_registry_new();
     tool_register_builtins(reg);
-    CHECK(tool_registry_count(reg) == 13); /* delegate, file_read/list_dir/write/edit, shell, ssh, git, mcp, skill, skill_manage, glob, grep */
+    CHECK(tool_registry_count(reg) == 14); /* delegate, file_read/list_dir/write/edit, shell, ssh, git, mcp, skill, skill_manage, glob, grep */
     CHECK(tool_find(reg, "file_read") != NULL);
     CHECK(tool_find(reg, "list_dir") != NULL);
     CHECK(fs_mkdirs("state-test/w") == 0);
@@ -9871,6 +9871,7 @@ static void test_http_api(void) {
 
     /* The API must remove SSH passwords before scheduler input, task journal,
      * session history and the model can observe the user message. */
+    CHECK(secret_set_mode("strict")==0);
     CHECK(raw_http_request(18211, "POST", "/v1/tasks",
                            "{\"prompt\":\"只回答准备状态：SSH deploy@127.0.0.1 密码: HttpSecret9!，暂不执行\"}",
                            &r) == 0 && r.status == 200);
@@ -9885,6 +9886,7 @@ static void test_http_api(void) {
     char *ssh_journal = tasklog_json(ctx.tasklog, 100);
     CHECK(ssh_journal && !strstr(ssh_journal, "HttpSecret9!"));
     free(ssh_journal);
+    CHECK(secret_set_mode("fast")==0);
 
     /* POST a task -> runs the full reasoning pipeline via the mock provider */
     CHECK(raw_http_request(18211, "POST", "/v1/tasks",

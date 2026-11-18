@@ -502,11 +502,33 @@ static char *ssh_replace_secret(const char *prompt, const char *secret,
     return out;
 }
 
-char *credential_prepare_prompt(const char *state_root, const char *session_id,
-                                const char *prompt) {
+int credential_strict_for_gate(const char *gate) {
+    if (gate && !strcmp(gate,"simple")) return 0;
+    if (gate && !strcmp(gate,"full")) return 1;
+    return !strcmp(secret_mode(),"strict");
+}
+
+char *credential_prepare_for_gate(const char *root,const char *sid,const char *prompt,const char *gate) {
     if (!prompt) return NULL;
-    if (strcmp(secret_mode(), "strict") != 0) return xstrdup(prompt);
-    return ssh_session_prepare_prompt(state_root, session_id, prompt);
+    if (!credential_strict_for_gate(gate)) return xstrdup(prompt);
+    char *safe=ssh_session_prepare_prompt(root,sid,prompt);
+    if (!safe) return NULL;
+    secret_match *matches=NULL;
+    int count=secret_scan_text(safe,strlen(safe),&matches);
+    for (int i=0;i<count;i++) {
+        if (matches[i].severity==SECRET_SEV_HIGH && strcmp(matches[i].kind,"entropy") &&
+            !(matches[i].end-matches[i].start==20 && !strncmp(safe+matches[i].start,"[LOCAL_SSH_PASSWORD]",20))) {
+            ssh_vault_secret_free(safe);
+            safe=NULL;
+            break;
+        }
+    }
+    secret_matches_free(matches);
+    return safe;
+}
+
+char *credential_prepare_prompt(const char *root,const char *sid,const char *prompt) {
+    return credential_prepare_for_gate(root,sid,prompt,NULL);
 }
 
 char *ssh_session_prepare_prompt(const char *state_root, const char *session_id,

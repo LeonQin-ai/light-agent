@@ -1513,6 +1513,7 @@ panels.chat = `
         <span class="composer-mode-label">执行模式</span>
         <button type="button" data-mode="fast" aria-pressed="true" onclick="chatModeChange('fast')">快速</button><button type="button" data-mode="strict" aria-pressed="false" onclick="chatModeChange('strict')">严格</button>
       </div>
+      <button class="sec" id="chat-grant" hidden onclick="chatCredentialDialog()">凭据授权</button>
       <button class="sec" id="chat-cancel" onclick="chatCancel()" style="display:none;padding:6px 10px" aria-label="停止执行" title="停止当前任务">■</button>
       <button class="sec" id="chat-resume" onclick="chatResume()" style="display:none;padding:6px 10px" title="恢复：重跑本会话上一条输入">恢复</button>
 
@@ -4133,7 +4134,37 @@ function chatModeValue(session=CHAT_SESSION){return chatOptions(session).mode===
 function syncChatMode(){
   const box=$('chat-mode');if(!box)return;
   const mode=chatModeValue();box.dataset.mode=mode;
+  if($('chat-grant')) $('chat-grant').hidden=mode!=='strict';
   box.querySelectorAll('button').forEach(b=>{const on=b.dataset.mode===mode;b.classList.toggle('active',on);b.setAttribute('aria-pressed',on?'true':'false');});
+}
+function chatCredentialDialog(){
+  const session=CHAT_SESSION;
+  if(chatModeValue(session)!=='strict')return;
+  const dialog=document.createElement('dialog');
+  dialog.innerHTML='<form><h3>当前会话的凭据授权</h3><p><select name="kind"><option value="git">Git HTTPS · 查看仓库引用</option><option value="clone">Git HTTPS · 克隆到工作区</option><option value="postgres">PostgreSQL · 只读查询</option><option value="api">API Key · 访问指定 HTTPS 地址</option></select></p><p><label>目标地址 <input name="target" type="url" required></label></p><p><label>用户名 <input name="user" autocomplete="off"></label></p><p><label data-query hidden>授权 SQL <input name="query" placeholder="SELECT current_database()"></label></p><p><label>密码或 API Key <input name="secret" type="password" autocomplete="new-password" required></label></p><button>授权并插入引用</button> <button type="button" data-close>关闭</button><hr><label>已有引用 <input name="reference"></label> <button type="button" data-revoke>撤销授权</button><p role="status"></p></form>';
+  document.body.append(dialog);dialog.showModal();
+  const form=dialog.querySelector('form'),status=dialog.querySelector('[role=status]');
+  form.elements.kind.onchange=()=>{const pg=form.elements.kind.value==='postgres';form.querySelector('[data-query]').hidden=!pg;if(!pg)form.elements.query.value='';};
+  dialog.onclose=()=>{form.reset();dialog.remove();};
+  dialog.querySelector('[data-close]').onclick=()=>dialog.close();
+  dialog.querySelector('[data-revoke]').onclick=async()=>{
+    const r=await call('DELETE','/v1/credential-grants',{session,reference:form.elements.reference.value.trim()});
+    status.textContent=r.obj?.revoked?'已撤销':'撤销失败，请核对引用和会话';
+  };
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    if(CHAT_SESSION!==session || chatModeValue(session)!=='strict')return dialog.close();
+    const data=Object.fromEntries(new FormData(form));delete data.reference;
+    form.querySelector('button').disabled=true;
+    const pending=call('POST','/v1/credential-grants',{...data,session,mode:'strict'});
+    form.elements.secret.value='';const r=await pending;
+    form.querySelector('button').disabled=false;
+    if(!r.obj?.reference){status.textContent=r.obj?.error||'授权失败';return;}
+    if(CHAT_SESSION===session && dialog.open){
+      const input=$('chat-input');input.value+=(input.value?' ':'')+r.obj.reference;
+      input.dispatchEvent(new Event('input',{bubbles:true}));dialog.close();input.focus();
+    } else await call('DELETE','/v1/credential-grants',{session,reference:r.obj.reference});
+  };
 }
 function chatModeChange(mode){
   chatOptionSet('mode',mode);syncChatMode();
@@ -7108,13 +7139,14 @@ async function chatSubmit(resume = false){
   }
   const full = resume ? '（恢复）继续上一次任务' :
     (attachments.length ? '[附件: ' + attachments.map(a=>a.name).join(', ') + ']\n' : '') + msg;
+  const preview=gate==='full' ? '正在提交…' : full;
   let userEntry,entry;
   if(CHAT_SESSION===session){
     if(input && !resume && input.value.trim()===msg)input.value='';
-    CHAT_FOLLOW=true;chatAddBubble('user',full);userEntry=CHAT_MSGS[CHAT_MSGS.length-1];
+    CHAT_FOLLOW=true;chatAddBubble('user',preview);userEntry=CHAT_MSGS[CHAT_MSGS.length-1];
     chatAddBubble('bot','');entry=CHAT_MSGS[CHAT_MSGS.length-1];
   }else{
-    userEntry={role:'user',text:full,pending:false,el:null};entry={role:'bot',text:'',el:null};destination.push(userEntry,entry);
+    userEntry={role:'user',text:preview,pending:false,el:null};entry={role:'bot',text:'',el:null};destination.push(userEntry,entry);
   }
   userEntry.images=attachments.filter(a=>a.kind==='image').map(a=>({id:a.id,name:a.name,session}));
   if(userEntry.el)chatRenderImages(userEntry.el,userEntry.images);
@@ -7123,6 +7155,12 @@ async function chatSubmit(resume = false){
   const r = await call('POST',resume ? '/v1/chat/sessions/' + encodeURIComponent(session) + '/resume' : '/v1/chat',
     resume ? {route,reasoning_effort,gate,permission_mode:permission} : {message:full,session,route,reasoning_effort,gate,workspace:executionWorkspace || undefined,permission_mode:permission,attachments:attachments.map(a=>a.id)});
   CHAT_SUBMITTING.delete(session);
+  userEntry.text=r.obj?.display_message ?? (gate==='full'?'消息未显示':full);
+  if(userEntry.el?.isConnected && preview!==userEntry.text){
+    userEntry.el.replaceChildren();chatRenderText(userEntry.el,userEntry.text);
+    chatAppendCopy(userEntry.el,()=>userEntry.text);renderChatEntry(userEntry);
+    if(userEntry.images?.length)chatRenderImages(userEntry.el,userEntry.images);
+  }
   if(!Number.isInteger(r.obj?.id)){
     entry.pending = false; entry.progress.stage = 'failed';
     entry.text = r.status === 0 ? '连接中断，无法确认是否已提交。请检查任务列表后重试，避免重复执行。' : '提交失败：' + (r.obj?.error || r.status);
@@ -7154,8 +7192,8 @@ async function chatSteer(){
   if(r.status !== 202){
     toast(r.status === 409 ? '任务已进入收尾，请在完成后发送；内容已保留' : '补充未确认送达，内容已保留，请检查连接'); return;
   }
-  if(CHAT_SESSION === session){ input.value = ''; chatAddBubble('user',message); }
-  else (CHAT_CACHE[session] ||= []).push({role:'user',text:message,pending:false,timestamp_ms:Date.now()});
+  if(CHAT_SESSION === session){ input.value = ''; chatAddBubble('user',r.obj.display_message ?? '补充已送达'); }
+  else (CHAT_CACHE[session] ||= []).push({role:'user',text:r.obj.display_message ?? '补充已送达',pending:false,timestamp_ms:Date.now()});
   const binding = CHAT_ENTRIES.get(id);
   if(binding){ binding.entry.steeringRevision = r.obj.revision; chatApplyProgress(session,id,{stage:'steering'}); }
   chatPersist();

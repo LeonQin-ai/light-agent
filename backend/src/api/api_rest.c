@@ -375,8 +375,8 @@ static int h_task_create(const http_request *req, http_response *resp, void *ud)
     char *safe_prompt = credential_prepare_prompt(ctx->state_root, "default", prompt);
     if (!safe_prompt) {
         cJSON_Delete(root);
-        resp->status = 500;
-        http_resp_json(resp, "{\"error\":\"SSH credential needs a host or saved environment and a working local vault\"}");
+        resp->status = 422;
+        http_resp_json(resp, "{\"error\":\"Use credential authorization for secrets, or supply a valid SSH target and local vault\"}");
         return 0;
     }
     char *directory=workspace_pick(ctx,root,NULL);
@@ -534,11 +534,17 @@ static int h_task_message(const http_request *req, http_response *resp, void *ud
         cJSON_Delete(o); resp->status = 400;
         http_resp_json(resp, "{\"error\":\"message and matching session required\"}"); scheduler_release(ctx->scheduler, t); return 0;
     }
-    char *safe_message = credential_prepare_prompt(ctx->state_root, session, message);
+    cJSON *settings=t->llm_config ? cJSON_Parse(t->llm_config) : NULL;
+    char *safe_message = credential_prepare_for_gate(ctx->state_root,session,message,json_str(settings,"gate"));
+    cJSON_Delete(settings);
     if (!safe_message) {
-        cJSON_Delete(o); resp->status = 500;
-        http_resp_json(resp, "{\"error\":\"SSH credential needs a host or saved environment and a working local vault\"}"); scheduler_release(ctx->scheduler, t); return 0;
+        cJSON_Delete(o); resp->status = 422;
+        http_resp_json(resp, "{\"error\":\"Use credential authorization for secrets, or supply a valid SSH target and local vault\"}"); scheduler_release(ctx->scheduler, t); return 0;
     }
+    char *display;
+    cJSON *display_value=cJSON_CreateString(safe_message);
+    display=display_value?cJSON_PrintUnformatted(display_value):NULL;
+    cJSON_Delete(display_value);
     int revision = task_add_message(t, safe_message);
     free(safe_message);
     cJSON_Delete(o);
@@ -547,8 +553,9 @@ static int h_task_message(const http_request *req, http_response *resp, void *ud
         http_resp_json(resp, revision == -1 ? "{\"error\":\"task is finishing; send a new message\"}" : "{\"error\":\"message queue limit exceeded\"}");
     } else {
         resp->status = 202;
-        http_resp_appendf(resp, "{\"id\":%lld,\"revision\":%d,\"status\":\"accepted\"}", id, revision);
+        http_resp_appendf(resp, "{\"id\":%lld,\"revision\":%d,\"status\":\"accepted\",\"display_message\":%s}", id, revision,display?display:"null");
     }
+    free(display);
     scheduler_release(ctx->scheduler, t); return 0;
 }
 
@@ -811,12 +818,12 @@ static int h_chat(const http_request *req, http_response *resp, void *ud) {
         cJSON_Delete(root); resp->status=400;
         http_resp_json(resp,"{\"error\":\"attachments must be ready, belong to this session, and number at most four\"}"); return 0;
     }
-    char *safe_msg = credential_prepare_prompt(ctx->state_root, session, msg);
+    char *safe_msg = credential_prepare_for_gate(ctx->state_root, session, msg,json_str(root,"gate"));
     if (!safe_msg) {
         free(attachments);
         cJSON_Delete(root);
-        resp->status = 500;
-        http_resp_json(resp, "{\"error\":\"SSH credential needs a host or saved environment and a working local vault\"}");
+        resp->status = 422;
+        http_resp_json(resp, "{\"error\":\"Use credential authorization for secrets, or supply a valid SSH target and local vault\"}");
         return 0;
     }
     char *directory=workspace_pick(ctx,root,session);
@@ -840,6 +847,9 @@ static int h_chat(const http_request *req, http_response *resp, void *ud) {
     if(id>=0)workspace_bind(ctx,NULL,directory,id);free(directory);
     if (id >= 0)
         reasoning_session_note_prompt(ctx->reasoning, session, safe_msg);
+    cJSON *display_value=id>=0 ? cJSON_CreateString(safe_msg) : NULL;
+    char *display=display_value?cJSON_PrintUnformatted(display_value):NULL;
+    cJSON_Delete(display_value);
     free(safe_msg);
     free(attachments);
     cJSON_Delete(root);
@@ -848,8 +858,9 @@ static int h_chat(const http_request *req, http_response *resp, void *ud) {
         return 0;
     }
 
-    http_resp_appendf(resp, "{\"id\":%lld,\"status\":\"queued\",\"thinking\":%s}", (long long)id,
-                      thinking ? "true" : "false");
+    http_resp_appendf(resp, "{\"id\":%lld,\"status\":\"queued\",\"thinking\":%s,\"display_message\":%s}", (long long)id,
+                      thinking ? "true" : "false",display?display:"null");
+    free(display);
     return 0;
 }
 
@@ -1200,7 +1211,7 @@ static int h_orchestrate(const http_request *req, http_response *resp, void *ud)
     char *safe_task = credential_prepare_prompt(ctx->state_root, "default", task);
     if (!safe_task) {
         cJSON_Delete(root); resp->status = 500;
-        http_resp_json(resp, "{\"error\":\"SSH credential needs a host or saved environment and a working local vault\"}");
+        http_resp_json(resp, "{\"error\":\"Use credential authorization for secrets, or supply a valid SSH target and local vault\"}");
         return 0;
     }
     cJSON *selected=cJSON_GetObjectItemCaseSensitive(root,"agents");
@@ -1857,7 +1868,7 @@ static int h_flow_decompose(const http_request *req, http_response *resp, void *
     char *safe_task = credential_prepare_prompt(ctx->state_root, "default", t->valuestring);
     if (!safe_task) {
         cJSON_Delete(root); resp->status = 500;
-        http_resp_json(resp, "{\"error\":\"SSH credential needs a host or saved environment and a working local vault\"}");
+        http_resp_json(resp, "{\"error\":\"Use credential authorization for secrets, or supply a valid SSH target and local vault\"}");
         return 0;
     }
     cJSON *selected=cJSON_GetObjectItemCaseSensitive(root,"agents");
@@ -3423,6 +3434,27 @@ static int h_config_llm(const http_request *req, http_response *resp, void *ud) 
 /* Snapshot capture size limit (bytes; 0 = unlimited). UI-configurable
  * override of the built-in 64MB default / SNAPSHOT_MAX_FILE env. */
 /* GET /v1/security/stats — Secret Security Plane counters (§22). */
+static int h_credential_grant(const http_request *req,http_response *resp,void *ud) {
+    runtime_ctx *ctx=ud;
+    if (!authz_ok(ctx,req,resp)) return 0;
+    char *raw=body_str(req);
+    cJSON *o=raw && req->body_len<=3500 ? cJSON_Parse(raw) : NULL;
+    ssh_vault_secret_free(raw);
+    const char *session=json_str(o,"session");
+    const char *mode=json_str(o,"mode");
+    int revoke=!strcmp(req->method,"DELETE");
+    char *reply=NULL;
+    if (session && *session && (revoke || (mode && !strcmp(mode,"strict"))))
+        reply=credential_dispatch(revoke?"revoke":"grant",ctx->state_root,session,
+            json_str(o,"kind"),json_str(o,"target"),json_str(o,"user"),
+            json_str(o,"secret"),json_str(o,"reference"),NULL,json_str(o,"query"));
+    cJSON_Delete(o);
+    resp->status=reply?200:400;
+    http_resp_json(resp,reply ? reply : "{\"error\":\"Authorization failed. Check strict mode, target and OS keyring availability.\"}");
+    free(reply);
+    return 0;
+}
+
 static int h_security_stats(const http_request *req, http_response *resp, void *ud) {
     runtime_ctx *ctx = (runtime_ctx *)ud;
     char *s;
@@ -6495,6 +6527,8 @@ int api_attach(runtime_ctx *ctx) {
     http_server_route(ctx->http, "GET", "/v1/routes/models", h_routes_models, ctx);
     http_server_route(ctx->http, "GET", "/v1/config/snapshot", h_config_snapshot_get, ctx);
     http_server_route(ctx->http, "POST", "/v1/config/snapshot", h_config_snapshot, ctx);
+    http_server_route(ctx->http, "POST", "/v1/credential-grants", h_credential_grant, ctx);
+    http_server_route(ctx->http, "DELETE", "/v1/credential-grants", h_credential_grant, ctx);
     http_server_route(ctx->http, "GET", "/v1/security/stats", h_security_stats, ctx);
     http_server_route(ctx->http, "POST", "/v1/config/security", h_config_security, ctx);
     http_server_route(ctx->http, "POST", "/v1/chat", h_chat, ctx);

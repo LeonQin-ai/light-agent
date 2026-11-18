@@ -52,6 +52,7 @@ typedef struct tool_ctx {
     metrics *metrics;              /* metrics sink (may be NULL) */
     struct skill_registry *skills; /* for the skill tool (may be NULL) */
     struct mcp_manager *mcp;       /* for MCP tools (may be NULL) */
+    int credential_strict;
 } tool_ctx;
 
 tool_registry *tool_registry_new(void);
@@ -126,6 +127,8 @@ void ssh_session_profiles_clear(const char *state_root, const char *session_id);
 /* Extract explicit SSH endpoint/password fields before a prompt is queued or
  * persisted. Returns a malloc'd prompt with the password removed (NULL on
  * local credential storage failure). Passwords stay in the session vault. */
+int credential_strict_for_gate(const char *gate);
+char *credential_prepare_for_gate(const char *root,const char *sid,const char *prompt,const char *gate);
 char *credential_prepare_prompt(const char *state_root, const char *session_id,
                                 const char *prompt);
 char *ssh_session_prepare_prompt(const char *state_root, const char *session_id,
@@ -134,6 +137,10 @@ char *ssh_session_prepare_prompt(const char *state_root, const char *session_id,
  * writes the local one-shot password to stdout and returns an exit status. */
 int ssh_askpass_run_if_requested(void);
 const tool *tool_git(void);
+const tool *tool_credential_use(void);
+char *credential_dispatch(const char *action,const char *root,const char *session,
+                          const char *kind,const char *target,const char *user,
+                          const char *secret,const char *reference,const char *workspace,const char *query);
 const tool *tool_mcp(void);
 const tool *tool_skill(void);
 const tool *tool_skill_manage(void);
