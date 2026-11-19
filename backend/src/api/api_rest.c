@@ -4693,6 +4693,24 @@ static int h_mcp_sync(const http_request *req, http_response *resp, void *ud) {
 
     if (!authz_ok(ctx, req, resp))
         return 0;
+    char *body = body_str(req);
+    cJSON *input = body ? cJSON_Parse(body) : NULL;
+    free(body);
+    const cJSON *server = cJSON_GetObjectItemCaseSensitive(input,"server");
+    if (server) {
+        const char *name = cJSON_GetStringValue(server);
+        char *tools = name && *name ? mcp_manager_discover(ctx->mcp,ctx->tools,name) : NULL;
+        cJSON_Delete(input);
+        if (!tools) {
+            resp->status = 400;
+            http_resp_json(resp,"{\"ok\":false,\"error\":\"MCP discovery failed\"}");
+        } else {
+            http_resp_json(resp,tools);
+            free(tools);
+        }
+        return 0;
+    }
+    cJSON_Delete(input);
     int loaded = ctx->mcp ? mcp_manager_load_local(ctx->mcp, ctx->state_root) : -1;
     n = (ctx->mcp && ctx->tools) ? mcp_manager_sync_tools(ctx->mcp, ctx->tools) : -1;
     o = cJSON_CreateObject();

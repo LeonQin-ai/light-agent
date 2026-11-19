@@ -63,6 +63,8 @@ int mcp_manager_sync_tools_one(mcp_manager *m, struct tool_registry *reg, const 
 
 /* JSON array of connections {name,transport,url,has_token,command,args,tools}. */
 char *mcp_manager_json(mcp_manager *m);
+/* List safe server summaries, or discover and register tools for one server. */
+char *mcp_manager_discover(mcp_manager *m, struct tool_registry *reg, const char *name);
 
 /* One-shot connection test for the plaza "Test" button: performs the MCP
  * handshake (initialize -> notifications/initialized -> tools/list) against

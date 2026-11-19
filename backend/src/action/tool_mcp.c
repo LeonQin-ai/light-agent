@@ -32,6 +32,16 @@ static tool_result *mcp_exec(const tool *self, const tool_ctx *ctx, const char *
 
     srv_j = cJSON_GetObjectItemCaseSensitive(args, "server");
     tool_j = cJSON_GetObjectItemCaseSensitive(args, "tool");
+    const char *operation = cJSON_GetStringValue(tool_j);
+    if (operation && strcmp(operation, "__list__") == 0) {
+        const char *name = cJSON_GetStringValue(srv_j);
+        char *json = mcp_manager_discover(ctx->mcp, ctx->reg, name && *name ? name : NULL);
+        cJSON_Delete(args);
+        tool_result *result = tool_result_new(json != NULL,
+            json ? json : "mcp: discovery failed; check the connection name and server health");
+        free(json);
+        return result;
+    }
     if (!srv_j || !cJSON_IsString(srv_j) || !tool_j || !cJSON_IsString(tool_j)) {
         cJSON_Delete(args);
         return tool_result_new(0, "mcp: required string args 'server' (connection name) and 'tool'; "
@@ -60,13 +70,15 @@ const tool *tool_mcp(void) {
     static const tool t = {
         "mcp",
         "Call a tool on a REGISTERED MCP server by connection name. Discovered "
-        "tools are also exposed directly as mcp__<server>__<tool> entries.",
+        "tools are also exposed directly as mcp__<server>__<tool> entries. "
+        "If a needed capability is missing, call with tool=__list__ and no server to list "
+        "configured connections, then with server=<name> and tool=__list__ to discover and register its tools.",
         "{\"type\":\"object\",\"properties\":{\"server\":{\"type\":\"string\"},"
         "\"tool\":{\"type\":\"string\"},"
         "\"args\":{\"type\":\"object\",\"description\":\"arguments for the remote "
         "tool - OMIT the args property entirely when the remote tool needs no "
         "parameters\"}},"
-        "\"required\":[\"server\",\"tool\"]}",
+        "\"required\":[\"tool\"]}",
         1,
         mcp_exec,
         NULL,

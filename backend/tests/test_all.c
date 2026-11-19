@@ -6538,6 +6538,22 @@ static void test_mcp_stdio(void) {
     c.args_csv = (char *)"tools/mock_mcp_server.js,--stdio,--probe-a,--probe-b,--probe-c";
     CHECK(mcp_manager_add_ex(m, &c) == 0);
 
+    tool_registry *discovery = tool_registry_new();
+    CHECK(discovery && tool_register(discovery,tool_mcp()) == 0);
+    if (discovery) {
+        tool_ctx discover_ctx = {.reg = discovery, .mcp = m};
+        tool_result *servers = tool_execute(discovery,"mcp","{\"tool\":\"__list__\"}",&discover_ctx);
+        CHECK(servers && servers->ok && strstr(servers->output,"mocks") &&
+              strstr(servers->output,"configured") == NULL);
+        CHECK(tool_find(discovery,"mcp__mocks__echo") == NULL);
+        tool_result_free(servers);
+        tool_result *found = tool_execute(discovery,"mcp",
+            "{\"tool\":\"__list__\",\"server\":\"mocks\"}",&discover_ctx);
+        CHECK(found && found->ok && strstr(found->output,"echo"));
+        CHECK(tool_find(discovery,"mcp__mocks__echo") != NULL);
+        tool_result_free(found);
+    }
+
     /* first call spawns the child lazily and runs the handshake */
     char *out = NULL, *err = NULL;
     int rc = -1;
@@ -6588,6 +6604,7 @@ static void test_mcp_stdio(void) {
     CHECK(reg && tool_find(reg, "mcp__mocks__echo") != NULL);
 
     tool_registry_free(reg);
+    tool_registry_free(discovery);
     mcp_manager_free(m); /* kills the child */
 }
 
@@ -10699,6 +10716,10 @@ int main(int argc, char **argv) {
         test_discovery_read_paths();
         test_existing_path_redaction();
         printf("%d passed, %d failed\n",g_pass,g_fail); return g_fail?1:0;
+    }
+    if (argc==2 && !strcmp(argv[1],"--mcp-stdio")) {
+        test_mcp_stdio();
+        printf("%d passed, %d failed\n",g_pass,g_fail); return g_fail ? 1 : 0;
     }
     if (argc==2 && !strcmp(argv[1],"--ssh-prompt")) {
         test_ssh_prompt_regex();

@@ -2770,17 +2770,37 @@ async function loadMcp(){
   if(!MCP_CONNS.length){
     box.innerHTML = '<span class="muted" style="font-size:12px">（暂无连接，先添加一个）</span>';
   } else {
-    box.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Transport</th><th>Target</th><th>Tools</th><th>Token</th><th></th></tr></thead><tbody>' +
+    box.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Transport</th><th>Target</th><th>工具状态</th><th>Token</th><th></th></tr></thead><tbody>' +
       MCP_CONNS.map((c, i) => '<tr><td>' + esc(c.name) + '</td><td>' + esc(c.transport || 'http') + '</td>' +
         '<td class="muted">' + esc((c.transport === 'stdio') ? ((c.command || '') + ' ' + (c.args || '')) : c.url) + '</td>' +
-        '<td>' + (typeof c.tools === 'number' ? c.tools : '—') + '</td>' +
+        '<td>' + mcpToolState(c) + '</td>' +
         '<td>' + (c.has_token ? '已设置' : '—') + '</td>' +
         '<td><button class="sec sm" onclick="mcpConnTest(' + i + ')">测试</button> ' +
         '<button class="sec sm danger" onclick="mcpDelete(' + i + ')">Delete</button> ' +
-        '<button class="sec sm" onclick="mcpSync()">Sync</button></td></tr>').join('') +
+        '<button class="sec sm" onclick="mcpDiscover(' + i + ')">发现工具</button></td></tr>').join('') +
       '</tbody></table></div>';
   }
   loadMcpPlaza();
+}
+
+function mcpToolState(connection) {
+  const available = connection.connected && connection.tools > 0;
+  const label = available ? '可用' : connection.connected ? '已连接，未发现工具' : '未连接或尚未发现';
+  const names = Array.isArray(connection.tool_names) ? connection.tool_names : [];
+  const status = '<span class="' + (available ? 'ok' : 'muted') + '">' + label + '</span>';
+  if (!names.length) return status;
+  return '<details><summary>' + status + ' · ' + names.length + '</summary><ul>' +
+    names.map(name => '<li>' + esc(name) + ' · ' + (available ? '可用' : '不可用') + '</li>').join('') +
+    '</ul></details>';
+}
+
+async function mcpDiscover(index) {
+  const connection = MCP_CONNS[index];
+  if (!connection) return;
+  toast('正在发现 ' + connection.name + ' 的工具…');
+  const result = await call('POST', '/v1/mcp/sync', {server: connection.name}, 35000);
+  toast(Array.isArray(result.obj) ? '发现 ' + result.obj.length + ' 个工具' : '工具发现失败，请检查连接配置');
+  await loadMcp();
 }
 
 let MCP_PLAZA = [];

@@ -810,6 +810,7 @@ static void mcp_server_slug(const char *server, char *out, size_t cap) {
  * when npx must cold-download. Servers that miss it register their tools on
  * a later sync / agent call and can be re-checked from the UI test button. */
 #define MCP_BOOTSTRAP_TIMEOUT_MS 4000
+#define MCP_DISCOVERY_TIMEOUT_MS 15000
 /* Total budget across ALL servers during boot sync — see sync_tools.
  * Kept well under the desktop shell's connect wait: the boot listener must
  * come up in seconds so the web console paints immediately; slow servers
@@ -943,7 +944,7 @@ int mcp_manager_sync_tools(mcp_manager *m, struct tool_registry *reg) {
         int tmo = budget_left < MCP_BOOTSTRAP_TIMEOUT_MS ? (int)budget_left : MCP_BOOTSTRAP_TIMEOUT_MS;
         if (tmo <= 0) {
             log_warn("mcp: boot sync budget exhausted, skipping '%s' "
-                         "(tools register on first use)",
+                         "(use on-demand discovery to register tools)",
                          m->items[i].name);
             continue;
         }
@@ -977,6 +978,36 @@ int mcp_manager_sync_tools_one(mcp_manager *m, struct tool_registry *reg, const 
     return registered;
 }
 
+/* Model-facing discovery deliberately omits credentials and transport details. */
+char *mcp_manager_discover(mcp_manager *m, struct tool_registry *reg, const char *name) {
+    if (!m || (name && !reg)) return NULL;
+    mutex_lock(&m->mtx);
+    cJSON *result = NULL;
+    if (name) {
+        int index = find_conn(m, name);
+        if (index >= 0) {
+            sync_server(m, reg, (size_t)index, MCP_DISCOVERY_TIMEOUT_MS);
+            mcp_session *session = &m->sess[index];
+            if (session->initialized && session->tools)
+                result = cJSON_Duplicate(session->tools, 1);
+        }
+    } else {
+        result = cJSON_CreateArray();
+        for (size_t i = 0; result && i < m->count; i++) {
+            cJSON *entry = cJSON_CreateObject();
+            if (!entry) continue;
+            cJSON_AddStringToObject(entry, "name", m->items[i].name);
+            cJSON_AddNumberToObject(entry, "tools", cJSON_GetArraySize(m->sess[i].tools));
+            cJSON_AddBoolToObject(entry, "connected", m->sess[i].initialized);
+            cJSON_AddItemToArray(result, entry);
+        }
+    }
+    mutex_unlock(&m->mtx);
+    char *json = result ? cJSON_PrintUnformatted(result) : NULL;
+    cJSON_Delete(result);
+    return json;
+}
+
 char *mcp_manager_json(mcp_manager *m) {
     cJSON *arr = cJSON_CreateArray();
     char *s;
@@ -1007,6 +1038,12 @@ char *mcp_manager_json(mcp_manager *m) {
         mcp_session *s = &m->sess[i];
         cJSON_AddNumberToObject(o, "tools", s->tools ? cJSON_GetArraySize(s->tools) : 0);
         cJSON_AddBoolToObject(o, "connected", s->initialized ? 1 : 0);
+        cJSON *names = cJSON_AddArrayToObject(o, "tool_names");
+        cJSON *entry;
+        cJSON_ArrayForEach(entry, s->tools) {
+            const char *name = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(entry, "name"));
+            if (name && names) cJSON_AddItemToArray(names, cJSON_CreateString(name));
+        }
         cJSON_AddItemToArray(arr, o);
     }
 
