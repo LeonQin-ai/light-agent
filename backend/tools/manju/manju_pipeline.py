@@ -31,6 +31,7 @@ import hashlib
 import asyncio
 import argparse
 import subprocess
+import tempfile
 
 import numpy as np
 import cv2
@@ -634,16 +635,20 @@ def encode(frames_iter, out_path, dur, voice_wav, freq):
            "-map", "0:v", "-map", "[a]",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", out_path]
-    pr = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                          stderr=subprocess.PIPE)
-    try:
-        for fr in frames_iter:
-            pr.stdin.write(fr.tobytes())
-        pr.stdin.close()
-    except BrokenPipeError:
-        pass
-    err = pr.stderr.read().decode("utf-8", "ignore")
-    rc = pr.wait()
+    with tempfile.TemporaryFile() as log, subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=log) as pr:
+        try:
+            for fr in frames_iter:
+                pr.stdin.write(fr.tobytes())
+            pr.stdin.close()
+        except BrokenPipeError:
+            pass
+        except BaseException:
+            pr.kill()
+            raise
+        rc = pr.wait()
+        log.seek(0)
+        err = log.read(800).decode("utf-8", "ignore")
     if rc != 0:
         raise RuntimeError("ffmpeg rc=%d %s" % (rc, err[:800]))
 
@@ -658,6 +663,14 @@ def save_json(path, obj):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(obj, fh, ensure_ascii=False, indent=2)
+
+
+def manifest_asset(directory, filename):
+    root = os.path.realpath(directory)
+    path = os.path.realpath(os.path.join(root, filename))
+    if os.path.commonpath([root, path]) != root:
+        raise ValueError("清单文件路径越过产物目录：%s" % filename)
+    return path
 
 
 def shot_plan_meta(shots, ep):
@@ -782,8 +795,8 @@ def cmd_tts(args):
 # ---------------------------------------------------------------- 子命令：compose
 def cmd_compose(args):
     doc = load_json(args.shots)
-    pj = load_json(os.path.join(args.panels, "panels.json"))
-    aj = load_json(os.path.join(args.audio, "audio.json"))
+    pj = load_json(manifest_asset(args.panels, "panels.json"))
+    aj = load_json(manifest_asset(args.audio, "audio.json"))
     ep = args.ep
     p = palette_of(ep)
     ep_name = "ep%02d" % ep
@@ -796,16 +809,31 @@ def cmd_compose(args):
         print("[compose] ERROR: panels(%d)/audio(%d) 与 shots(%d)+2 不一致"
               % (len(entries), len(audio_entries), len(shots)), flush=True)
         sys.exit(1)
+    for index, (panel, audio, expected) in enumerate(zip(entries, audio_entries, shot_plan_meta(shots, ep))):
+        if (panel.get("role") != expected["role"] or
+                panel.get("kind") != expected["kind"] or
+                audio.get("kind") != expected["kind"] or
+                type(audio.get("frames")) is not int or audio["frames"] <= 0):
+            raise ValueError("分镜、画面与音轨顺序或帧数不一致，清单条目 %d" % index)
 
     ovls = build_overlays(doc, ep, p)
     plan = []
     for i, (e, ae) in enumerate(zip(entries, audio_entries)):
-        bgr = cv2.imread(os.path.join(args.panels, e["file"]), cv2.IMREAD_COLOR)
+        bgr = cv2.imdecode(np.fromfile(manifest_asset(args.panels, e["file"]), dtype=np.uint8),
+                           cv2.IMREAD_COLOR)
         if bgr is None:
             print("[compose] ERROR: 缺少面板 %s" % e["file"], flush=True)
             sys.exit(1)
+        height, width = bgr.shape[:2]
+        if (width, height) != (BW, BH):
+            # Generated assets may be landscape or square. Crop to the
+            # portrait canvas before applying the fixed camera coordinates.
+            crop_w = min(width, max(1, round(height * BW / BH)))
+            crop_h = min(height, max(1, round(width * BH / BW)))
+            left, top = (width - crop_w) // 2, (height - crop_h) // 2
+            bgr = cv2.resize(bgr[top:top + crop_h, left:left + crop_w], (BW, BH))
         panel = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        wav_path = os.path.join(args.audio, ae["file"])
+        wav_path = manifest_asset(args.audio, ae["file"])
         data, sr = sf.read(wav_path, dtype="float32", always_2d=False)
         if data.ndim > 1:
             data = data.mean(axis=1).astype(np.float32)
@@ -826,8 +854,6 @@ def cmd_compose(args):
         need = int(round(s["n"] / float(FPS) * SR))
         chunks.append(pad_to(s["audio"], need))
     voice = np.concatenate(chunks) if chunks else np.zeros(1, dtype=np.float32)
-    voice_wav = os.path.join(args.audio, "voice_%s.wav" % ep_name)
-    sf.write(voice_wav, voice, SR, subtype="PCM_16")
 
     # 逐帧：推拉 + 平移 + 正弦手持抖动（manju_anim）+ 雨丝 + 快速颗粒 + 淡入合成
     def frames():
@@ -850,12 +876,31 @@ def cmd_compose(args):
 
     out_path = os.path.abspath(args.out)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    tmp = out_path + ".part.mp4"
-    encode(frames(), tmp, dur, voice_wav, 92 + ep * 3)
-    os.replace(tmp, out_path)
+    poster_path = manifest_asset(args.panels, pj.get("poster", "poster.png"))
+    if not os.path.isfile(poster_path):
+        raise ValueError("缺少封面图片")
+    manifest = os.path.abspath(args.manifest or os.path.join(os.path.dirname(out_path), "manifest.json"))
+    os.makedirs(os.path.dirname(manifest), exist_ok=True)
 
+    # Publish only a verified render. Keep the previous output when encoding
+    # fails, and never put an unverified episode in the manifest.
+    with tempfile.TemporaryDirectory(prefix=".compose-", dir=os.path.dirname(out_path)) as stage:
+        tmp_video = os.path.join(stage, "episode.mp4")
+        voice_wav = os.path.join(stage, "voice.wav")
+        sf.write(voice_wav, voice, SR, subtype="PCM_16")
+        encode(frames(), tmp_video, dur, voice_wav, 92 + ep * 3)
+        rec = verify_episode(tmp_video, ep_name, title, len(shots), total_frames, poster_path)
+        publish_episode(tmp_video, out_path, manifest, rec)
+
+    print("[ep] %s | %s | shots=%d | %.2fs | %d frames | %.2f MB | audio=%s | open=%s/%s"
+          % (ep_name, title, len(shots), rec["seconds"], rec["frames"], rec["bytes"] / 1048576.0,
+             rec["has_audio"], rec["first_frame_ok"], rec["last_frame_ok"]), flush=True)
+    print("[compose] verified -> %s (manifest: %s)" % (out_path, manifest), flush=True)
+
+
+def verify_episode(path, ep_name, title, shot_count, expected_frames, poster_path):
     # 校验（manju_av.render_chapter）：cv2 帧数/fps/首尾帧解码 + ffmpeg probe
-    cap = cv2.VideoCapture(out_path)
+    cap = cv2.VideoCapture(path)
     nframes = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     ok_first = bool(cap.read()[0])
@@ -863,41 +908,35 @@ def cmd_compose(args):
     ok_last = bool(cap.read()[0])
     cap.release()
     ff = imageio_ffmpeg.get_ffmpeg_exe()
-    probe = subprocess.run([ff, "-hide_banner", "-i", out_path], capture_output=True)
+    probe = subprocess.run([ff, "-hide_banner", "-i", path], capture_output=True, timeout=30)
     txt = probe.stderr.decode("utf-8", "ignore")
     has_audio = "Audio: aac" in txt
     m = re.search(r"Duration: (\d+):(\d+):(\d+\.\d+)", txt)
     vdur = (int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))) if m else 0.0
-    size = os.path.getsize(out_path)
-    poster_path = os.path.join(os.path.abspath(args.panels), pj.get("poster", "poster.png"))
+    size = os.path.getsize(path)
 
-    rec = dict(ep=ep_name, title=title, shots=len(shots), seconds=round(vdur, 2),
+    rec = dict(ep=ep_name, title=title, shots=shot_count, seconds=round(vdur, 2),
                frames=nframes, fps=round(float(fps), 2), bytes=size, poster=poster_path,
                has_audio=has_audio, first_frame_ok=ok_first, last_frame_ok=ok_last)
+    if (not (ok_first and ok_last and has_audio) or nframes != expected_frames or
+            abs(fps - FPS) > 0.01 or abs(vdur - expected_frames / FPS) > 0.15):
+        raise ValueError("成片校验失败，预期 %d 帧：%s" % (expected_frames, json.dumps(rec, ensure_ascii=False)))
+    return rec
 
+
+def publish_episode(tmp_video, out_path, manifest, rec):
     # manifest 合并（按 ep 键去重，排序写回）
-    manifest = args.manifest or os.path.join(os.path.dirname(out_path), "manifest.json")
-    recs = []
-    if os.path.exists(manifest):
-        try:
-            recs = load_json(manifest)
-            if not isinstance(recs, list):
-                recs = []
-        except Exception:
-            recs = []
-    done = {r.get("ep"): r for r in recs if isinstance(r, dict)}
-    done[ep_name] = rec
-    save_json(manifest, [done[k] for k in sorted(done)])
-
-    print("[ep] %s | %s | shots=%d | %.2fs | %d frames | %.2f MB | audio=%s | open=%s/%s"
-          % (ep_name, title, len(shots), vdur, nframes, size / 1048576.0,
-             has_audio, ok_first, ok_last), flush=True)
-
-    ok = ok_first and ok_last and has_audio and nframes > 0 and vdur > 0
-    if not ok:
-        print("[compose] VERIFY FAILED: %s" % json.dumps(rec, ensure_ascii=False), flush=True)
-        sys.exit(1)
-    print("[compose] verified -> %s (manifest: %s)" % (out_path, manifest), flush=True)
+    recs = load_json(manifest) if os.path.exists(manifest) else []
+    if not isinstance(recs, list) or any(not isinstance(r, dict) or not isinstance(r.get("ep"), str)
+                                        for r in recs):
+        raise ValueError("成片清单格式无效")
+    done = {r["ep"]: r for r in recs}
+    done[rec["ep"]] = rec
+    with tempfile.TemporaryDirectory(prefix=".manifest-", dir=os.path.dirname(manifest)) as stage:
+        tmp_manifest = os.path.join(stage, "manifest.json")
+        save_json(tmp_manifest, [done[k] for k in sorted(done)])
+        os.replace(tmp_video, out_path)
+        os.replace(tmp_manifest, manifest)
 
 
 # ---------------------------------------------------------------- CLI

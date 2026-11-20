@@ -17,6 +17,7 @@ typedef struct tx tx;
 typedef struct policy_engine policy_engine;
 typedef struct event_bus event_bus;
 typedef struct metrics metrics;
+struct router;
 
 typedef struct tool_result {
     int ok;       /* 1 success, 0 failure/denied */
@@ -63,6 +64,9 @@ const tool *tool_find(tool_registry *reg, const char *name);
 /* Iteration (used by the API to list tools). */
 int tool_registry_count(const tool_registry *reg);
 const tool *tool_registry_get(const tool_registry *reg, size_t i);
+void tool_registry_set_router(tool_registry *reg, struct router *router);
+struct router *tool_registry_router(const tool_registry *reg);
+int tool_is_available(const tool_registry *reg, const tool *entry);
 
 /* Execute a named tool after policy check. Returns a malloc'd result (never NULL). */
 tool_result *tool_execute(tool_registry *reg, const char *name, const char *args_json,
@@ -147,6 +151,7 @@ const tool *tool_skill_manage(void);
 const tool *tool_glob(void);
 const tool *tool_grep(void);
 const tool *tool_delegate(void);
+const tool *tool_image_generate(void);
 
 /* Register the built-in tools (incl. the skill tool) into a registry. */
 void tool_register_builtins(tool_registry *reg);

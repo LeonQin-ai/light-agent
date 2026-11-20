@@ -760,8 +760,8 @@ static http_response *http_full(const char *base_url, const char *method, const 
     if(h->read_failed) {
         strbuf_free(&sb); free(r); http_stream_close(h); return NULL;
     }
+    r->body_len = sb.len;
     r->body = strbuf_detach(&sb);
-    r->body_len = strlen(r->body);
     http_stream_close(h);
     return r;
 }

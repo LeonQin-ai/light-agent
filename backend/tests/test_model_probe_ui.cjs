@@ -24,6 +24,56 @@ const assert = require('node:assert/strict');
       return {model:$('r-model').value,base:$('r-base').value,provider:presetProvider()};
     });
     assert.deepEqual(preset,{model:'z-ai/glm-5.3-flash',base:'https://integrate.api.nvidia.com/v1',provider:'openai'});
+    const imageCases=await page.evaluate(async()=>{
+      const select=$('r-provider');
+      select.value='qwen_image';
+      select.dispatchEvent(new Event('change'));
+      const preset={model:$('r-model').value,base:$('r-base').value,caps:$('r-purpose').value};
+      const routes=[
+        {name:'image',provider:'openai',model:preset.model,base_url:preset.base,image_generation:true},
+        {name:'chat',provider:'openai',model:'chat-fixture',image_generation:false}
+      ];
+      let probe, writes=0;
+      call=async(method,url,body)=>{
+        if(url==='/v1/routes') return {status:200,obj:routes};
+        if(url==='/v1/config/llm') {
+          if(method==='POST') writes++;
+          return {status:200,obj:routes[1]};
+        }
+        if(url==='/v1/config/llm/test') {
+          probe=body;
+          return {status:200,obj:{request_id:23}};
+        }
+        if(url.startsWith('/v1/config/llm/test?'))
+          return {status:200,obj:{request_id:23,ok:true,reply:'图片已生成'}};
+        return {status:200,obj:[]};
+      };
+      await loadModels();
+      const [imageRow,chatRow]=$('routes-body').rows;
+      await setActive(0);
+      await testRoute(0);
+      const imageText=imageRow.textContent;
+      const chatText=chatRow.textContent;
+      const chatSelect=document.createElement('select');
+      chatSelect.id='chat-model';
+      document.body.appendChild(chatSelect);
+      await fillChatModelSelect();
+      const chatOptions=Array.from(chatSelect.options,option=>option.value);
+      chatSelect.remove();
+      return {preset,probe,writes,imageText,chatText,chatOptions};
+    });
+    assert.deepEqual(imageCases.preset,{
+      model:'qwen-image-3.0-pro',
+      base:'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+      caps:'image_generation'
+    });
+    assert.deepEqual(imageCases.probe,{route_name:'image'});
+    assert.equal(imageCases.writes,0);
+    assert.match(imageCases.imageText,/文生图.*测试出图.*测试通过 图片已生成/);
+    assert.doesNotMatch(imageCases.imageText,/上下文|Set active/);
+    assert.match(imageCases.chatText,/上下文.*Set active/);
+    assert.doesNotMatch(imageCases.chatText,/图片已生成/);
+    assert.deepEqual(imageCases.chatOptions,['@cur','chat']);
     const results=await page.evaluate(async()=>{
       const out=[], model='nvidia/nemotron-3.5-super-vl:free';
       let posts=0, polls=0;
@@ -70,6 +120,6 @@ const assert = require('node:assert/strict');
     assert.match(results[4].text,/测试超时/); assert(results[4].polls<=2); assert.equal(results[4].busy,false);
     assert.match(results[5].text,/测试超时/); assert(results[5].polls>=3); assert.equal(results[5].busy,false);
     assert.deepEqual(errors,[]);
-    console.log('PASS 6 model probe UI scenarios: NVIDIA preset, duplicate clicks, provider errors, request identity, exception cleanup, provider-aware deadlines');
+    console.log('PASS: model presets, image route isolation and testing, probe lifecycle and provider-aware deadlines');
   } finally { await browser.close(); }
 })().catch(e=>{console.error(e);process.exitCode=1;});

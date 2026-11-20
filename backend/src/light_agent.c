@@ -1011,6 +1011,7 @@ int init(runtime_ctx *ctx, const config *cfg) {
     /* observability / routing / plugin / skill / mcp / cluster / attention */
     ctx->trace = trace_new(1024);
     ctx->router = router_new();
+    tool_registry_set_router(ctx->tools, ctx->router);
     ctx->usage = usage_new();
     usage_set_state(ctx->usage,ctx->state_root);
     ctx->registry = plugin_registry_new();

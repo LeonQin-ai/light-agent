@@ -273,8 +273,8 @@ static http_response *do_request(const char *method, const char *base_url, const
     r = ok ? (http_response *)calloc(1, sizeof(*r)):NULL;
     if(r) {
         r->status = (int)dwStatus;
+        r->body_len = body_buf.len;
         r->body = strbuf_detach(&body_buf);
-        r->body_len = r->body ? strlen(r->body) : 0;
     } else strbuf_free(&body_buf);
 
     close_request(&guard,hReq);

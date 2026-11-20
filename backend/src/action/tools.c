@@ -6,6 +6,7 @@
 #include "os/os_fs.h"
 #include "os/os_time.h"
 #include "security/secret.h"
+#include "llm/router.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,7 @@
 struct tool_registry {
     const tool **tools;
     size_t count, cap;
+    router *router;
 };
 
 tool_registry *tool_registry_new(void) {
@@ -99,6 +101,18 @@ const tool *tool_registry_get(const tool_registry *reg, size_t i) {
     return (reg && i < reg->count) ? reg->tools[i] : NULL;
 }
 
+void tool_registry_set_router(tool_registry *reg, router *router) {
+    if (reg) reg->router = router;
+}
+
+router *tool_registry_router(const tool_registry *reg) {
+    return reg ? reg->router : NULL;
+}
+
+int tool_is_available(const tool_registry *reg, const tool *entry) {
+    return entry && (entry != tool_image_generate() || router_has_image(tool_registry_router(reg)));
+}
+
 /* Fast-mode subagent delegation. The agent loop (h_act) intercepts this tool
  * and runs an isolated child reasoning run; the registry handler is only a
  * fallback for execution contexts without an agent loop. */
@@ -129,6 +143,7 @@ void tool_register_builtins(tool_registry *reg) {
     tool_register(reg, tool_list_dir());
     tool_register(reg, tool_file_write());
     tool_register(reg, tool_file_edit());
+    tool_register(reg, tool_image_generate());
     tool_register(reg, tool_shell());
     tool_register(reg, tool_ssh());
     tool_register(reg, tool_git());

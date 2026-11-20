@@ -165,10 +165,12 @@ static char *build_catalog_prompt(const tool_registry *tools, struct skill_regis
     strbuf_append(&b,"\nFor a guessed exploratory file_read path that does not exist and is not required for the requested result, verify absence with list_dir of its exact parent after the failure. Then complete_task may include unavailable_optional_reads:[{path,reason,evidence_step_id}], using the successful directory step ID from Current execution state. Explain the omitted source and base conclusions on sources actually read. Do not retry an absent path indefinitely. Never use this for required source/deliverable reads, existing unread files, failed writes or commands.\n");
     for (size_t i = 0; i < (size_t)tool_registry_count(tools); i++) {
         const tool *t = tool_registry_get(tools, i);
-        if (!t || !t->name)
+        if (!tool_is_available(tools,t) || !t->name)
             continue;
         if (policy && policy_check(policy, t->name, "{}", NULL) == POLICY_DENY)
             continue;
+        if(t == tool_image_generate())
+            strbuf_append(&b, "When building a UI that needs original artwork (hero, product image, illustration or background), generate that asset with image_generate, save it in the project, and reference the resulting file in the actual UI. Use normal UI code for text, controls and layout. For a visible in-chat preview, use file_read on the generated image and reference that image in the answer.\n");
         if (strcmp(t->name, "glob") == 0) have_glob_tool = 1;
         if (strcmp(t->name, "skill") == 0) {
             have_skill_tool = 1;
@@ -786,7 +788,7 @@ static char *native_tool_catalog(const tool_registry *tools, struct policy_engin
     cJSON *list=cJSON_CreateArray();
     for (int i=0;i<tool_registry_count(tools);++i) {
         const tool *t=tool_registry_get(tools,(size_t)i);
-        if(!t || !t->name || strlen(t->name)>64 ||
+        if(!tool_is_available(tools,t) || !t->name || strlen(t->name)>64 ||
            (policy && policy_check(policy,t->name,"{}",NULL)==POLICY_DENY)) continue;
         int valid=1;
         for(const unsigned char *p=(const unsigned char*)t->name;*p;++p)

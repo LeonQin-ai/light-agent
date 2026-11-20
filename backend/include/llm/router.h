@@ -51,8 +51,16 @@ int router_remove(router *r, const char *name);
 int router_set_policy(router *r, const char *policy);
 const char *router_policy(router *r);
 
-/* Pick the next route per policy (borrowed). NULL if empty. */
+/* Pick the next chat route per policy (borrowed). NULL if none is available. */
 const route *router_pick(router *r);
+
+/* Image generation routes are selected separately from chat. */
+int route_is_image(const route *rt);
+int router_has_image(router *r);
+/* Take an owned snapshot. A NULL/empty image route name selects the first. */
+int router_select_image(router *r, const char *name, route *out);
+int router_copy_named(router *r, const char *name, route *out);
+void route_clear(route *e);
 
 int router_count(router *r);
 const route *router_get(router *r, size_t i);

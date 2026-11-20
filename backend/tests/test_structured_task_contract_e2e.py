@@ -13,9 +13,11 @@ def action(name,**args):return {'tool':name,'args':args}
 def finish(**extra):return action('complete_task',status='complete',requires_tools=False,answer=FINAL,acceptance={},**extra)
 def declare(**acceptance):return action('declare_task',acceptance=acceptance)
 
-def exercise(protocol,mode,prompt='Verify the requested result.'):
+def exercise(protocol,mode,prompt='Verify the requested result.',live_image_route=None):
     calls=0;acceptance=None
     declaration_requests=[]
+    image_calls=[]
+    png64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
     write=action('file_write',path='report.any',content=CONTENT)
     read=action('file_read',path='report.any')
     done=finish()
@@ -52,6 +54,14 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
         acceptance={'artifacts':['report.any']};replies=[read,done,write,read,done];expected='DONE'
     elif mode=='image_history':
         replies=[action('file_read',path='preview.png'),done];expected='DONE'
+    elif mode=='ui_artwork':
+        acceptance={'artifacts':['assets/hero.png','index.html']}
+        markup='<h1>Tea house</h1><img src="assets/hero.png" alt="Tea on a mountain terrace">'
+        replies=[action('image_generate',prompt='Tea on a mountain terrace at dawn',path='assets/hero.png'),
+                 action('file_write',path='index.html',content=markup),
+                 action('file_read',path='index.html'),done]
+        expected='DONE'
+        prompt='Build a tea house landing page with an original generated hero image.'
     elif mode in ('rollover','rollover_stale'):
         replies=[declare(artifacts=['report.any']),write,read]
         replies += [[action('file_write',path=f'noise-{i}.txt',content=str(i)) for i in range(start,start+32)] for start in range(0,288,32)]
@@ -136,6 +146,14 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
         def do_POST(self):
             nonlocal calls
             request=self.rfile.read(int(self.headers['Content-Length']))
+            if mode=='ui_artwork' and self.path=='/images/generations':
+                image_calls.append(json.loads(request))
+                assert self.headers.get('Authorization')=='Bearer art-fixture'
+                respond_json(self,json.dumps({'data':[{'b64_json':png64}]}).encode())
+                return
+            if mode=='ui_artwork' and calls==0:
+                catalog=[t['function']['name'] for t in json.loads(request)['tools']]
+                assert 'image_generate' in catalog and b'actual UI' in request
             if b'Summarize these tool observations' in request:
                 # Observation compaction is a maintenance call: answer with a
                 # valid summary without consuming a scripted planning reply.
@@ -166,7 +184,7 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
         with tempfile.TemporaryDirectory(prefix='coa-contract-') as folder:
             work=Path(folder);(work/'tiny').write_text('TINY_SOURCE_PROOF',encoding='utf8');(work/'long.dat').write_text('x'*9001,encoding='utf8')
             if mode=='image_history':
-                png=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
+                png=base64.b64decode(png64)
                 (work/'preview.png').write_bytes(png)
             if mode.startswith('cache_'):
                 if mode=='cache_shell_env':
@@ -196,11 +214,18 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
                     # The rollover fixture performs 288+ single-file writes; under
                     # AddressSanitizer on a shared runner that can exceed two
                     # minutes even though the task itself makes steady progress.
-                    deadline=time.monotonic()+(240 if mode.startswith('rollover') else 25)
+                    deadline=time.monotonic()+(240 if mode.startswith('rollover') or live_image_route else 25)
                     for _ in range(150):
                         try:api('/v1/scheduler');break
                         except OSError:assert proc.poll() is None;time.sleep(.05)
                     body={'message':prompt,'session':'contract'}
+                    if mode=='ui_artwork':
+                        route={'provider':'openai','model':'mock-text-to-image',
+                               'base_url':f'http://127.0.0.1:{server.server_port}',
+                               'api_key':'art-fixture'}
+                        if live_image_route:
+                            route={key:live_image_route[key] for key in route}
+                        api('/v1/routes',{**route,'name':'art','caps':'image_generation'})
                     if protocol=='native' and mode in ('commentary','quoted_commentary','stuck'):
                         body['acceptance']={'requires_observation':True}
                     if acceptance is not None:body['acceptance']=acceptance
@@ -215,6 +240,15 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
                         assert task['output']==FINAL,task
                         if mode in ('artifact','artifact_recovery'):assert (work/'report.any').read_text()==CONTENT
                         if mode=='script_output':assert (work/'report.any').read_text()==CONTENT
+                        if mode=='ui_artwork':
+                            image=(work/'assets'/'hero.png').read_bytes()
+                            if live_image_route:
+                                assert image.startswith(b'\x89PNG\r\n\x1a\n') and len(image)>len(base64.b64decode(png64))
+                                print('Live UI hero image bytes:',len(image),flush=True)
+                            else:
+                                assert image==base64.b64decode(png64)
+                                assert len(image_calls)==1 and image_calls[0]['model']=='mock-text-to-image',image_calls
+                            assert (work/'index.html').read_text()==markup
                         if mode=='image_history':
                             # The terminal scheduler status can become visible
                             # just before the durable journal record lands
@@ -282,6 +316,7 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
     finally:server.shutdown();server.server_close()
 
 if __name__=='__main__':
+    exercise('native','ui_artwork')
     exercise('native','image_history')
     exercise('native','script_late_contract')
     exercise('native','script_budget_readback')

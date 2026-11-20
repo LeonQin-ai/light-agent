@@ -753,7 +753,8 @@ static int completion_file_read_allowed(reasoning *r,const char *path){
     char wanted[2048];normalized_evidence_path(r,path,wanted,sizeof(wanted));
     for(int i=0;i<r->n_steps;i++){
         struct run_step *step=&r->steps[i];
-        if(step->ok!=1 || (strcmp(step->tool,"file_read")&&strcmp(step->tool,"file_write")&&strcmp(step->tool,"file_edit")))continue;
+        if(step->ok!=1 || (strcmp(step->tool,"file_read")&&strcmp(step->tool,"file_write")&&
+                          strcmp(step->tool,"file_edit")&&strcmp(step->tool,"image_generate")))continue;
         cJSON *args=cJSON_Parse(step->args?step->args:"{}");const char *keys[]={"path","copy_from"};
         for(int k=0;k<2;k++){
             if(k && strcmp(step->tool,"file_write"))continue;
@@ -2966,11 +2967,17 @@ static void run_step_add(reasoning *r, const char *tool, const char *args, const
     st->args = str_head(safe_args ? safe_args : "",65536);
     st->out = str_head(safe_out ? safe_out : "",65536);
     free(safe_args); free(safe_out);
-    if (tool && strncmp(tool, "file_", 5) == 0 && args) {
+    if (tool && (strncmp(tool, "file_", 5) == 0 || !strcmp(tool,"image_generate")) && args) {
         cJSON *parsed = cJSON_Parse(args);
         cJSON *path = parsed ? cJSON_GetObjectItemCaseSensitive(parsed, "path") : NULL;
         if (cJSON_IsString(path) && path->valuestring)
             utf8_head_copy(st->target, sizeof(st->target), path->valuestring);
+        if(ok==1 && cJSON_IsString(path) && !strcmp(tool,"image_generate")) {
+            char canonical[2048];
+            normalized_evidence_path(r,path->valuestring,canonical,sizeof(canonical));
+            st->evidence_path=xstrdup(canonical);
+            st->evidence_version=fs_file_version(canonical);
+        }
         if(ok==1 && cJSON_IsString(path) && (!strcmp(tool,"file_read") || !strcmp(tool,"file_write") || !strcmp(tool,"file_edit"))) {
             char canonical[2048];normalized_evidence_path(r,path->valuestring,canonical,sizeof(canonical));
             st->evidence_path=xstrdup(canonical);
@@ -4634,6 +4641,12 @@ static int declared_output_current(reasoning *r,const char *path,uint64_t curren
 static int run_has_verified_artifact(reasoning *r,const char *declared_path) {
     char target[2048];
     normalized_evidence_path(r,declared_path,target,sizeof(target));
+    for(int i=r->n_steps-1;i>=0;i--) {
+        struct run_step *step=&r->steps[i];
+        if(step->ok==1 && !strcmp(step->tool,"image_generate") && step->evidence_path &&
+           !strcmp(step->evidence_path,target) && step->evidence_version &&
+           step->evidence_version==fs_file_version(target) && fs_file_size(target)>0) return 1;
+    }
     for(int ri=0;ri<r->file_receipts_n;ri++)
         if(!strcmp(r->file_receipts[ri].path,target) && r->file_receipts[ri].verified &&
            r->file_receipts[ri].verified==fs_file_version(target) && !fs_is_dir(target) && fs_file_size(target)>0)return 1;

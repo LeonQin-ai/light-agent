@@ -2183,7 +2183,7 @@ panels.models = `
   </details>
   <div class="card">
     <h2>Model routes</h2>
-    <div class="hint">管理 LLM 路由：点 <b>Set active</b> 把某条路由设为当前活跃模型（实时切换并持久化到 state/light-agent.json）；<b>Delete</b> 移除一条路由。</div>
+    <div class="hint">在对话路由上点 <b>Set active</b> 切换默认模型。文生图路由可用于生成图片，并可单独测试。</div>
     <div class="row" style="margin-top:6px">
       <button onclick="loadModels()">Refresh</button>
       <span id="models-stat" class="muted"></span>
@@ -2202,6 +2202,7 @@ panels.models = `
       <input id="r-name" type="text" placeholder="name (如 deepseek)" style="flex:1;min-width:140px">
       <select id="r-provider" style="flex:0 0 auto">
         <option value="openai">OpenAI</option>
+        <option value="qwen_image">通义千问文生图（百炼 Token Plan）</option>
         <option value="anthropic">Anthropic Claude</option>
         <option value="deepseek">DeepSeek（OpenAI 兼容）</option>
         <option value="deepseek_a">DeepSeek（Anthropic 端点）</option>
@@ -2217,6 +2218,10 @@ panels.models = `
     <div class="row">
       <input id="r-model" type="text" placeholder="model (如 deepseek-chat)" style="flex:2;min-width:180px">
       <input id="r-base" type="text" placeholder="base_url (如 https://api.deepseek.com/v1)" style="flex:3;min-width:220px">
+      <select id="r-purpose" style="flex:0 0 auto" aria-label="模型路由用途">
+        <option value="">自动识别用途</option>
+        <option value="image_generation">文生图</option>
+      </select>
     </div>
     <div class="row">
       <input id="r-key" type="password" autocomplete="new-password" placeholder="api_key" style="flex:2;min-width:180px">
@@ -2227,7 +2232,7 @@ panels.models = `
       <button class="sec sm" onclick="testForm()">测试连接</button>
       <span id="routes-msg" class="muted"></span>
     </div>
-    <div class="hint" style="margin-top:8px">🔍 用 api-key 拉取该供应商的可用模型列表（issue #18：一个供应商可配多个模型，随时 Set active 切换）：</div>
+    <div class="hint" style="margin-top:8px">用 API Key 拉取供应商的可用模型列表。</div>
     <div class="row" style="margin-bottom:6px">
       <button class="sec sm" onclick="fetchModels()">拉取模型列表</button>
       <button class="sec sm" id="models-addall" style="display:none" onclick="addFetchedModels()">➕ 全部创建</button>
@@ -2527,7 +2532,7 @@ async function fillAgentModelSelect(){
   const sel = $('agent-model'); if(!sel) return;
   const keep=sel.value;
   const r = await call('GET', '/v1/routes');
-  const routes = Array.isArray(r.obj) ? r.obj : [];
+  const routes = Array.isArray(r.obj) ? r.obj.filter(x => !isImageRoute(x)) : [];
   let html = '<option value="">（当前激活模型）</option>';
   routes.forEach(x => {
     const val = (x.provider || '') + '|' + (x.model || '');
@@ -2549,7 +2554,7 @@ async function loadAgents(){
   flowAgentOptions();
   /* 模型选项来自路由表：每个 agent 可单独换模型（PUT /v1/agents/<name>） */
   const rr = await call('GET', '/v1/routes');
-  const routes = Array.isArray(rr.obj) ? rr.obj : [];
+  const routes = Array.isArray(rr.obj) ? rr.obj.filter(x => !isImageRoute(x)) : [];
   const modelOptions = (cur) => {
     let h = '<option value="">（当前激活模型）</option>';
     let found = false;
@@ -2618,7 +2623,7 @@ const AGENT_PRESETS = [
   {key:'manju-voice', name:'manju-voice', label:'🎙️ 配音', kw:['配音','声优','台词朗读','tts','旁白配音','voice actor'],
    hint:'逐句神经网络配音，音画对齐', role:'你是漫剧配音导演。为镜头脚本逐句合成配音：python tools/manju/manju_pipeline.py tts --shots <shots.json> --out <audio目录>。旁白低沉男声、对白年轻男声、系统播报腔（edge_tts 神经网络音色）；镜头时长跟随语音长度。核对 audio.json 每句 wav 存在且时长合理。最终回复用反引号标出 audio 目录路径。'},
   {key:'manju-editor', name:'manju-editor', label:'🎞️ 剪辑合成', kw:['剪辑','合成','成片','渲染视频','ffmpeg','漫剧合成'],
-   hint:'画面+配音 → 校验过的 mp4 成片', role:'你是漫剧剪辑合成师。把画面与配音合成整集成片：python tools/manju/manju_pipeline.py compose --shots <shots.json> --panels <frames目录> --audio <audio目录> --out <videos/epNN.mp4> --ep <集号> --manifest <manifest.json>。脚本自带帧数/音轨/首尾帧校验；校验失败必须排查并重渲，不能交付损坏文件。最终回复用反引号标出 mp4 路径，并给出时长与帧数。'}
+   hint:'画面+配音 → 校验过的 mp4 成片', role:'你是漫剧剪辑合成师。把画面与配音合成整集成片：python tools/manju/manju_pipeline.py compose --shots <shots.json> --panels <frames目录> --audio <audio目录> --out <videos/epNN.mp4> --ep <集号> --manifest <manifest.json>。脚本校验通过后立即交付路径、时长和帧数。失败时报告错误并停止。'}
 ];
 
 function renderAgentPresets(){
@@ -4258,11 +4263,12 @@ async function fillChatModelSelect(){
   const sel = $('chat-model'); if(!sel) return;
   const session=CHAT_SESSION;
   const r = await call('GET', '/v1/routes');
-  CHAT_ROUTES = Array.isArray(r.obj) ? r.obj : [];
+  const routes = Array.isArray(r.obj) ? r.obj : [];
   const cur = await call('GET', '/v1/config/llm');
   const curProv = (cur.obj && cur.obj.provider) || '';
   const curModel = (cur.obj && cur.obj.model) || '';
   if(CHAT_SESSION!==session || !sel.isConnected)return;
+  CHAT_ROUTES = routes.filter(x => !isImageRoute(x));
   let html = '<option value="@cur">默认模型：'+esc(curModel || curProv)+'</option>';
   let matched = false;
   CHAT_ROUTES.forEach(x => {
@@ -4274,6 +4280,7 @@ async function fillChatModelSelect(){
   });
   sel.innerHTML = html;
   const chosen=chatOptions(session).route;
+  if(chosen && routes.some(x => x.name===chosen && isImageRoute(x))) chatOptionSet('route',null);
   sel.value=chosen && CHAT_ROUTES.some(x=>x.name===chosen)?chosen:'@cur';
 
 }
@@ -6029,6 +6036,7 @@ async function flowRun(){
 const PROVIDER_PRESETS = {
   mock:      {provider:'mock',      base:'',                                                                 model:''},
   openai:    {provider:'openai',    base:'https://api.openai.com/v1',                                        model:'gpt-4o'},
+  qwen_image:{provider:'openai',    base:'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1', model:'qwen-image-3.0-pro', caps:'image_generation'},
   anthropic: {provider:'anthropic', base:'https://api.anthropic.com',                                        model:'claude-sonnet-4-6'},
   deepseek:  {provider:'openai',    base:'https://api.deepseek.com/v1',                                      model:'deepseek-chat'},
   deepseek_a:{provider:'anthropic', base:'https://api.deepseek.com/anthropic',                               model:'deepseek-v4-pro'},
@@ -6042,6 +6050,13 @@ const PROVIDER_PRESETS = {
 
 function presetProvider(){
   return (PROVIDER_PRESETS[$('r-provider').value] || PROVIDER_PRESETS.openai).provider;
+}
+
+function isImageRoute(route){
+  if(typeof route?.image_generation === 'boolean') return route.image_generation;
+  if(route?.provider && route.provider !== 'openai') return false;
+  return String(route?.caps || '').split(',').some(cap => cap.trim() === 'image_generation')
+    || /^(qwen-image-|wan2\.7-image|gpt-image-|dall-e-)/i.test(route?.model || '');
 }
 
 let ROUTES = [];
@@ -6066,7 +6081,7 @@ async function loadModelPlaza(){
         : '') + '</div>' +
     '<div class="row"><button class="sec sm" onclick="modelPlazaUse(' + i + ')">配置</button>' +
     '<button class="sec sm" onclick="modelPlazaTest(' + i + ')">测试</button>' +
-    '<button class="sm" onclick="modelPlazaSet(' + i + ')">配置并设为当前</button></div></div>'
+    (isImageRoute(m) ? '' : '<button class="sm" onclick="modelPlazaSet(' + i + ')">配置并设为当前</button>') + '</div></div>'
   ).join('');
 }
 
@@ -6075,6 +6090,7 @@ function modelPlazaFill(i){
   $('r-name').value = m.id;
   $('r-base').value = m.base_url;
   $('r-model').value = m.model;
+  $('r-purpose').value = isImageRoute(m) ? 'image_generation' : '';
 }
 
 function modelPlazaUse(i){
@@ -6083,7 +6099,7 @@ function modelPlazaUse(i){
 }
 
 async function modelPlazaSet(i){
-  const m = MODEL_PLAZA[i]; if(!m) return;
+  const m = MODEL_PLAZA[i]; if(!m || isImageRoute(m)) return;
   modelPlazaFill(i);
   const key = ($('r-key') && $('r-key').value.trim()) || '';
   const r = await call('POST', '/v1/config/llm', {provider: m.provider, base_url: m.base_url, model: m.model, api_key: key});
@@ -6094,7 +6110,8 @@ async function modelPlazaSet(i){
 async function modelPlazaTest(i){
   const m = MODEL_PLAZA[i]; if(!m) return;
   const key = ($('r-key') && $('r-key').value.trim()) || '';
-  await testLlm({provider: m.provider, base_url: m.base_url, model: m.model, api_key: key},
+  await testLlm({provider: m.provider, base_url: m.base_url, model: m.model, api_key: key,
+                 caps: isImageRoute(m) ? 'image_generation' : undefined},
                 (m.model || m.name) + ' ');
 }
 
@@ -6114,7 +6131,7 @@ async function loadModels(){
     for(const [i,row] of Array.from($('routes-body')?.rows || []).entries()){
       const route=ROUTES[i];
       if(!route || !row.cells[7])continue;
-      const active=['provider','model','base_url'].every(key=>(route[key]||'')===(ACTIVE[key]||''));
+      const active=!isImageRoute(route) && ['provider','model','base_url'].every(key=>(route[key]||'')===(ACTIVE[key]||''));
       row.classList.toggle('active-row',active);
       row.cells[0].innerHTML=esc(route.name||'')+(active?' <span class="badge badge-ok">active</span>':'');
       const activate=row.cells[7].querySelector('button[onclick^="setActive("]');
@@ -6129,7 +6146,11 @@ async function loadModels(){
       const p = PROVIDER_PRESETS[$('r-provider').value] || PROVIDER_PRESETS.openai;
       const rb = $('r-base'), rm = $('r-model');
       if(rb) rb.value = p.base;
-      if(rm){ rm.placeholder = p.model || 'model (可选)'; if(!rm.value) rm.value = p.model; }
+      if(rm){
+        rm.placeholder = p.model || 'model (可选)';
+        if(!rm.value || p.caps || rm.value === PROVIDER_PRESETS.qwen_image.model) rm.value = p.model;
+      }
+      $('r-purpose').value = p.caps || '';
     });
   }
   const st = $('models-stat');
@@ -6142,7 +6163,8 @@ async function loadModels(){
   const ap = ACTIVE.provider || '';
   t.innerHTML = ROUTES.map((x, i) => {
     /* active = 路由与当前激活 LLM 的 provider+model+base_url 一致（自动路由已不再按名对应） */
-    const isActive = (x.provider || '') === ap
+    const image = isImageRoute(x);
+    const isActive = !image && (x.provider || '') === ap
       && (x.model || '') === (ACTIVE.model || '')
       && (x.base_url || '') === (ACTIVE.base_url || '');
     return '<tr class="' + (isActive ? 'active-row' : '') + '">'
@@ -6150,14 +6172,14 @@ async function loadModels(){
       + '<td>' + esc(x.provider || '') + '</td>'
       + '<td>' + esc(x.model || '') + '</td>'
       + '<td class="muted">' + esc(x.base_url || '') + '</td>'
-      + '<td>' + routeContextLabel(x) + '</td>'
+      + '<td>' + (image ? '文生图' : routeContextLabel(x)) + '</td>'
       + '<td>' + (x.weight != null ? x.weight : 1) + '</td>'
       + '<td>' + (x.calls != null ? x.calls : 0) + '</td>'
-      + '<td><button onclick="testRoute(' + i + ')" class="sec sm">Test</button> '
+      + '<td><button onclick="testRoute(' + i + ')" class="sec sm">' + (image ? '测试出图' : 'Test') + '</button> '
       + '<button onclick="editRouteKey(' + i + ')" class="sec sm">改Key</button> '
-      + '<button onclick="setRouteContext(' + i + ')" class="sec sm">上下文</button> '
+      + (image ? '' : '<button onclick="setRouteContext(' + i + ')" class="sec sm">上下文</button> '
       + '<button onclick="refreshRouteContext(' + i + ')" class="sec sm">核实上下文</button> '
-      + '<button onclick="setActive(' + i + ')" class="sec sm"' + (isActive ? ' disabled' : '') + '>Set active</button> '
+      + '<button onclick="setActive(' + i + ')" class="sec sm"' + (isActive ? ' disabled' : '') + '>Set active</button> ')
       + '<button onclick="deleteRoute(' + i + ')" class="sec sm danger">Delete</button>'
       + '<div class="muted" role="status" data-route-test="' + i + '" style="overflow-wrap:anywhere">'
       + esc(ROUTE_TEST_RESULTS.get(x.name) || '') + '</div></td></tr>';
@@ -6165,7 +6187,7 @@ async function loadModels(){
 }
 
 async function setActive(i){
-  const x = ROUTES[i]; if(!x) return;
+  const x = ROUTES[i]; if(!x || isImageRoute(x)) return;
   const st = $('models-stat'); if(st) st.textContent = 'switching…';
   const r = await call('POST', '/v1/config/llm', {
     provider: x.provider, base_url: x.base_url || '', model: x.model || '', api_key: x.api_key || ''
@@ -6190,7 +6212,7 @@ async function editRouteKey(i){
   const st = $('models-stat'); if(st) st.textContent = 'updating key…';
   const r = await call('POST', '/v1/routes', {
     name: x.name, provider: x.provider, base_url: x.base_url || '', model: x.model || '',
-    api_key: k.trim(), weight: x.weight != null ? x.weight : 1
+    api_key: k.trim(), weight: x.weight != null ? x.weight : 1, caps: x.caps
   });
   if(r.status < 200 || r.status >= 300){
     if(st) st.textContent = r.obj?.error || 'API Key 更新失败';
@@ -6203,7 +6225,7 @@ async function editRouteKey(i){
 /* 手动设置路由的真实上下文窗口：供应商元数据/目录都拿不到时的兜底，
  * 经 POST /v1/routes 以 context_source=configured 持久化 */
 async function setRouteContext(i){
-  const x = ROUTES[i]; if(!x) return;
+  const x = ROUTES[i]; if(!x || isImageRoute(x)) return;
   const cur = Number(x.context_window || x.context_window_tokens) || '';
   const k = prompt('路由 ' + x.name + ' 的真实上下文窗口（tokens，1024–4000000）：', cur);
   if(k === null) return;
@@ -6212,7 +6234,7 @@ async function setRouteContext(i){
   const st = $('models-stat'); if(st) st.textContent = 'updating context…';
   const r = await call('POST', '/v1/routes', {
     name: x.name, provider: x.provider, base_url: x.base_url || '', model: x.model || '',
-    api_key: x.api_key || '', weight: x.weight != null ? x.weight : 1,
+    api_key: x.api_key || '', weight: x.weight != null ? x.weight : 1, caps: x.caps,
     context_window: v, context_source: 'configured', max_output_tokens: Number(x.max_output_tokens) || 0
   });
   if(st) st.textContent = (r.status < 300) ? '上下文窗口已更新' : 'error ' + r.status;
@@ -6243,7 +6265,7 @@ function fetchedModelId(model){
 }
 
 async function refreshRouteContext(i){
-  const route=ROUTES[i]; if(!route) return;
+  const route=ROUTES[i]; if(!route || isImageRoute(route)) return;
   const st=$('models-stat'); if(st) st.textContent='正在向供应商核实上下文…';
   const started=await call('POST','/v1/routes/models',{route_name:route.name});
   if(started.status>=300 || started.obj?.running){ if(st) st.textContent='模型查询忙或启动失败，请稍后重试'; return; }
@@ -6304,13 +6326,14 @@ function renderFetchedModels(){
   box.innerHTML = FETCHED_MODELS.map((m, i) => {
     const id = fetchedModelId(m);
     const context = Number(m && (m.context_window || m.context_window_tokens)) || 0;
-    const title = context ? '上下文窗口：' + context.toLocaleString() + ' tokens' : '模型未提供上下文元数据，使用默认 256K';
+    const title = isImageRoute({model:id}) ? '文生图' :
+      context ? '上下文窗口：' + context.toLocaleString() + ' tokens' : '模型未提供上下文元数据，使用默认 256K';
     return '<button class="sec sm" onclick="pickFetchedModel(' + i + ')" title="' + esc(title) + '">' + esc(id) + '</button>';
   }).join(' ');
   if(btn) btn.style.display = '';
 }
 
-/* 点模型 chip = 直接创建该模型的路由（不存在才建）并立即激活 */
+/* 创建路由，并将对话模型设为默认。 */
 async function pickFetchedModel(index){
   const modelInfo = typeof index === 'number' ? FETCHED_MODELS[index] : index;
   const m = fetchedModelId(modelInfo);
@@ -6322,9 +6345,16 @@ async function pickFetchedModel(index){
   const existing = ROUTES.find(x => x.name === name);
   const r = await call('POST', '/v1/routes', {name, provider, base_url: base, model: m,
     api_key: key || (existing && existing.api_key) || '', weight: existing && existing.weight != null ? existing.weight : 1,
-    ...fetchedModelMetadata(modelInfo)});
+    caps: existing?.caps, ...fetchedModelMetadata(modelInfo)});
   if(!(r.status < 300)){ toast('创建路由失败：HTTP ' + r.status); return; }
   const inp = $('r-model'); if(inp) inp.value = m;
+  const purpose = $('r-purpose');
+  if(purpose) purpose.value = existing?.caps?.split(',').includes('image_generation') ? 'image_generation' : '';
+  if(isImageRoute(existing || {provider, model:m})){
+    toast('已保存文生图路由 ' + m);
+    loadModels();
+    return;
+  }
   const st = $('models-stat'); if(st) st.textContent = 'switching…';
   const a = await call('POST', '/v1/config/llm', {provider, base_url: base, model: m, api_key: key});
   if(st) st.textContent = (a.obj && a.obj.ok) ? 'switched to ' + m : 'error: ' + ((a.obj && a.obj.error) || a.status);
@@ -6351,7 +6381,7 @@ async function addFetchedModels(){
     if(r.status < 300) created++; else skipped++;
   }
   if(st) st.textContent = '✔ 已创建 ' + created + ' 条路由' + (skipped ? '（跳过 ' + skipped + ' 条已存在）' : '');
-  toast('已创建 ' + created + ' 条模型路由，可在 Model routes 里 Set active 切换');
+  toast('已创建 ' + created + ' 条模型路由');
   loadModels();
 }
 
@@ -6364,7 +6394,8 @@ async function addRoute(){
     name, provider,
     base_url: $('r-base').value.trim(),
     model: $('r-model').value.trim(),
-    api_key: $('r-key').value.trim()
+    api_key: $('r-key').value.trim(),
+    caps: $('r-purpose').value || undefined
   };
   const w = parseFloat($('r-weight').value);
   if(!isNaN(w)) body.weight = w;
@@ -6373,6 +6404,7 @@ async function addRoute(){
       : (r.obj && r.obj.error) ? 'error: ' + r.obj.error : 'error ' + r.status;
   if(r.status < 300){
     $('r-name').value = ''; $('r-base').value = ''; $('r-key').value = ''; $('r-model').value = '';
+    $('r-purpose').value = '';
   }
   loadModels();
 }
@@ -6400,9 +6432,10 @@ async function testLlm(body, prefix, routeName){
   };
   report('测试 ' + prefix + '请求中…');
   const started = Date.now();
-  const slowNvidiaModel = (body.model || '').toLowerCase().includes('deepseek-v4.1-flash')
-    && (body.base_url || '').toLowerCase().includes('integrate.api.nvidia.com');
-  const deadline = started + (slowNvidiaModel ? 300000 : 60000);
+  const config = routeName === undefined ? body : (ROUTES.find(route => route.name === routeName) || body);
+  const slowNvidiaModel = (config.model || '').toLowerCase().includes('deepseek-v4.1-flash')
+    && (config.base_url || '').toLowerCase().includes('integrate.api.nvidia.com');
+  const deadline = started + (slowNvidiaModel || isImageRoute(config) ? 300000 : 60000);
   try {
   const r0 = await call('POST', '/v1/config/llm/test', body, deadline-Date.now());
   if(r0.status === 0 || r0.status >= 300 || r0.obj?.error)
@@ -6434,8 +6467,7 @@ async function testLlm(body, prefix, routeName){
 
 async function testRoute(i){
   const x = ROUTES[i]; if(!x) return;
-  await testLlm({provider: x.provider, base_url: x.base_url || '', model: x.model || '', api_key: x.api_key || ''},
-                '', x.name);
+  await testLlm({route_name: x.name}, '', x.name);
 }
 
 async function testForm(){
@@ -6444,7 +6476,8 @@ async function testForm(){
     provider,
     base_url: $('r-base').value.trim(),
     model: $('r-model').value.trim(),
-    api_key: ($('r-key') && $('r-key').value.trim()) || ''
+    api_key: ($('r-key') && $('r-key').value.trim()) || '',
+    caps: $('r-purpose').value || undefined
   }, '表单配置 ');
 }
 
@@ -6551,7 +6584,7 @@ const STAGE_NOTES = {
   cancelled:'任务已取消。', timed_out:'任务执行超时。', interrupted:'任务已离开当前执行器，运行状态无法确认；会话记录已保留，可点击“恢复”继续。',
   rolled_back:'本轮操作失败，事务内的文件修改已回滚；正在检查后续处理方式。'
 };
-const TOOL_LABELS = {file_read:'读取文件', file_write:'写入文件', file_edit:'修改文件',
+const TOOL_LABELS = {file_read:'读取文件', file_write:'写入文件', file_edit:'修改文件', image_generate:'生成图片',
   list_dir:'浏览目录',
   shell:'运行命令', ssh:'远程执行', git:'检查代码仓库', glob:'查找文件', grep:'搜索代码',
   search:'检索资料', web_search:'搜索网页', mcp:'调用连接工具', skill:'执行技能'};

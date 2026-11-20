@@ -65,7 +65,9 @@ jobs:
       - name: Structured acceptance and cross-run artifact regression
         run: COA_BUILD_DIR=build-macos python3 tests/test_structured_task_contract_e2e.py
       - name: Generated image readback and vision delivery
-        run: COA_BUILD_DIR=build-macos python3 tests/test_generated_image_e2e.py
+        run: |
+          COA_BUILD_DIR=build-macos python3 tests/test_generated_image_e2e.py
+          python3 tests/test_image_routes.py build-macos/light-agent
       - name: Model finalization and provider diagnostics regression
         run: COA_BUILD_DIR=build-macos python3 tests/test_model_finalization_e2e.py
       - name: Command execution Trace and persistence
@@ -178,7 +180,9 @@ jobs:
       - name: Structured acceptance and cross-run artifact regression
         run: python tests/test_structured_task_contract_e2e.py
       - name: Generated image readback and vision delivery
-        run: python tests/test_generated_image_e2e.py
+        run: |
+          python tests/test_generated_image_e2e.py
+          python tests/test_image_routes.py build/light-agent
       - name: Model finalization and provider diagnostics regression
         run: python tests/test_model_finalization_e2e.py
       - name: Command execution Trace and persistence
@@ -367,7 +371,9 @@ jobs:
       - name: Structured acceptance and cross-run artifact regression
         run: python tests/test_structured_task_contract_e2e.py
       - name: Generated image readback and vision delivery
-        run: python tests/test_generated_image_e2e.py
+        run: |
+          python tests/test_generated_image_e2e.py
+          python tests/test_image_routes.py build/light-agent.exe
       - name: Model finalization and provider diagnostics regression
         run: python tests/test_model_finalization_e2e.py
       - name: Command execution Trace and persistence

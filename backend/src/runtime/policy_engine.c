@@ -214,7 +214,7 @@ int policy_risk(const char *tool_name, const char *args_json) {
         return 0;
     if (strcmp(tool_name, "shell") == 0)
         base = 70;
-    else if (strcmp(tool_name, "file_write") == 0)
+    else if (strcmp(tool_name, "file_write") == 0 || strcmp(tool_name, "image_generate") == 0)
         base = 40;
     else if (strcmp(tool_name, "file_delete") == 0)
         base = 60;

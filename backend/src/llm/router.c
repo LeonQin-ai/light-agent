@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
 #include "cJSON.h"
 
 struct router {
@@ -201,7 +202,12 @@ static int route_has_cap(const route *e, const char *tag) {
     const char *p = e->caps;
     while (*p) {
         const char *comma = strchr(p, ',');
-        size_t len = comma ? (size_t)(comma - p) : strlen(p);
+        const char *end = comma ? comma : p + strlen(p);
+        while (p < end && isspace((unsigned char)*p))
+            ++p;
+        while (p < end && isspace((unsigned char)end[-1]))
+            --end;
+        size_t len = (size_t)(end - p);
         if (len == tlen && strncmp(p, tag, len) == 0)
             return 1;
         if (!comma)
@@ -212,7 +218,79 @@ static int route_has_cap(const route *e, const char *tag) {
     return 0;
 }
 
-/* Pick under lock. Metrics-only policies restrict to configured routes and
+int route_is_image(const route *rt) {
+    if (!rt || !rt->provider || strcmp(rt->provider, "openai") != 0)
+        return 0;
+    const char *model = rt->model ? rt->model : "";
+    return route_has_cap(rt, "image_generation") ||
+           strncmp(model, "qwen-image-", 11) == 0 ||
+           strncmp(model, "wan2.7-image", 12) == 0 ||
+           strncmp(model, "gpt-image-", 10) == 0 ||
+           strncmp(model, "dall-e-", 7) == 0;
+}
+
+static int select_route(router *r, const char *name, int only_image, route *out) {
+    if (out)
+        memset(out, 0, sizeof(*out));
+    if (!r)
+        return -1;
+    int rc = -1;
+    mutex_lock(&r->mtx);
+    for (size_t i = 0; i < r->count; i++) {
+        const route *e = &r->routes[i];
+        if ((name && *name && strcmp(e->name, name)) ||
+            (only_image && (!route_is_image(e) || !e->model || !*e->model)))
+            continue;
+        if (!out) {
+            rc = 0;
+            break;
+        }
+        *out = *e;
+        out->name = xstrdup(e->name);
+        out->provider = xstrdup(e->provider);
+        out->base_url = e->base_url ? xstrdup(e->base_url) : NULL;
+        out->api_key = e->api_key ? xstrdup(e->api_key) : NULL;
+        out->model = e->model ? xstrdup(e->model) : NULL;
+        out->caps = e->caps ? xstrdup(e->caps) : NULL;
+        if (!out->name || !out->provider || (e->base_url && !out->base_url) ||
+            (e->api_key && !out->api_key) || (e->model && !out->model) ||
+            (e->caps && !out->caps)) {
+            route_clear(out);
+        } else {
+            rc = 0;
+        }
+        break;
+    }
+    mutex_unlock(&r->mtx);
+    return rc;
+}
+
+int router_has_image(router *r) {
+    return select_route(r, NULL, 1, NULL) == 0;
+}
+
+int router_select_image(router *r, const char *name, route *out) {
+    return out ? select_route(r, name, 1, out) : -1;
+}
+
+int router_copy_named(router *r, const char *name, route *out) {
+    return out && name && *name ? select_route(r, name, 0, out) : -1;
+}
+
+static route *pick_chat_round_robin(router *r) {
+    for (size_t i = 0; i < r->count; i++) {
+        size_t index = (r->cursor + i) % r->count;
+        route *e = &r->routes[index];
+        if (route_is_image(e))
+            continue;
+        size_t step = (e->weight >= 1.0) ? (size_t)e->weight : 1;
+        r->cursor = (index + step) % r->count;
+        return e;
+    }
+    return NULL;
+}
+
+/* Pick under lock. Metrics-only policies restrict to configured chat routes and
  * choose the best value; equal-value ties rotate (secondary round-robin). */
 static route *pick_locked(router *r) {
     int is_cost;
@@ -230,30 +308,25 @@ static route *pick_locked(router *r) {
     is_cost = strcmp(pol, "cost") == 0;
     is_lat = strcmp(pol, "latency") == 0;
     is_cap = strncmp(pol, "capability:", 11) == 0;
-    if (!is_cost && !is_lat && !is_cap) {
-        /* weighted round-robin: advance by the current route's weight */
-        route *e = &r->routes[r->cursor % r->count];
-        size_t step = (e->weight >= 1.0) ? (size_t)e->weight : 1;
-        r->cursor = (r->cursor + step) % r->count;
-        return e;
-    }
+    if (!is_cost && !is_lat && !is_cap)
+        return pick_chat_round_robin(r);
 
     if (is_cap) {
         const char *tag = pol + 11;
         for (size_t i = 0; i < r->count && n < 64; i++)
-            if (route_has_cap(&r->routes[i], tag))
+            if (!route_is_image(&r->routes[i]) && route_has_cap(&r->routes[i], tag))
                 cand[n++] = i;
-        if (n == 0) { /* nobody carries the tag: degrade to full round-robin */
-            for (size_t i = 0; i < r->count && n < 64; i++)
-                cand[n++] = i;
-            route *e = &r->routes[cand[r->cursor++ % n]];
-            return e;
-        }
+        if (n == 0)
+            return pick_chat_round_robin(r);
     } else {
-        for (size_t i = 0; i < r->count && n < 64; i++)
-            cand[n++] = i;
+        for (size_t i = 0; i < r->count && n < 64; i++) {
+            if (!route_is_image(&r->routes[i]))
+                cand[n++] = i;
+        }
     }
 
+    if (!n)
+        return NULL;
     /* best metric value (lower = better; 0 = unknown, never preferred) */
     best = cand[0];
     for (size_t i = 1; i < n; i++) {
@@ -328,6 +401,7 @@ char *router_json(router *r) {
         cJSON *o = cJSON_CreateObject();
         cJSON_AddStringToObject(o, "name", e->name);
         cJSON_AddStringToObject(o, "provider", e->provider);
+        cJSON_AddBoolToObject(o, "image_generation", route_is_image(e));
         if (e->base_url)
             cJSON_AddStringToObject(o, "base_url", e->base_url);
         if (e->model)

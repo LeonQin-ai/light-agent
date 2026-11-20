@@ -22,6 +22,7 @@
 #include "infra/catalog.h"
 #include "infra/logging.h"
 #include "llm/llm.h"
+#include "llm/image.h"
 #include "os/os_time.h"
 #include "os/os_proc.h"
 #include "os/os_fs.h"
@@ -760,6 +761,7 @@ static char *chat_route_snapshot(runtime_ctx *ctx,cJSON *body,int *invalid){
     const char *name=cJSON_GetStringValue(choice);if(!name || !*name){*invalid=1;return NULL;}
     for(int i=0;i<router_count(ctx->router);i++){
         const route *r=router_get(ctx->router,(size_t)i);if(!r || strcmp(r->name,name))continue;
+        if (route_is_image(r)) {*invalid=1;return NULL;}
         cJSON *o=cJSON_CreateObject();cJSON_AddStringToObject(o,"provider",r->provider);cJSON_AddStringToObject(o,"model",r->model?r->model:"");
         cJSON_AddStringToObject(o,"base_url",r->base_url?r->base_url:"");cJSON_AddStringToObject(o,"api_key",r->api_key?r->api_key:"");
         cJSON_AddNumberToObject(o,"context_window",(double)r->context_window_tokens);cJSON_AddNumberToObject(o,"max_output_tokens",(double)r->max_output_tokens);
@@ -1345,8 +1347,8 @@ static const char *manju_role_editor =
     "你是漫剧剪辑合成师。把画面与配音合成整集成片："
     "python tools/manju/manju_pipeline.py compose --shots <shots.json> --panels <frames目录> --audio <audio目录> "
     "--out <videos/epNN.mp4> --ep <集号> --manifest <manifest.json>。"
-    "脚本自带帧数/音轨/首尾帧校验；校验失败必须排查并重渲，不能交付损坏文件。"
-    "最终回复用反引号标出 mp4 路径，并给出时长与帧数。";
+    "合成脚本校验帧数、音轨和首尾帧。成功后立即交付成片路径、时长和帧数。"
+    "失败时报告脚本错误，停止执行。";
 
 /* A chapter marker is a short line beginning 第…章 (UTF-8). */
 static int manju_chapter_marker(const char *line, size_t len) {
@@ -1597,13 +1599,13 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
              shots_abs, episode, pipe_abs, shots_abs, frames_abs, episode, frames_abs);
     snprintf(task3, sizeof(task3),
              "为镜头脚本 %s 逐句合成漫剧第%d集配音："
-             "python \"%s\" tts --shots \"%s\" --out \"%s\"。"
+             "python \"%s\" tts --shots \"%s\" --out \"%s\" --ep %d。"
              "核对 audio.json 每句 wav 存在且时长合理。最终回复用反引号标出 %s 目录路径。",
-             shots_abs, episode, pipe_abs, shots_abs, audio_abs, audio_abs);
+             shots_abs, episode, pipe_abs, shots_abs, audio_abs, episode, audio_abs);
     snprintf(task4, sizeof(task4),
              "把画面与配音合成漫剧第%d集成片："
              "python \"%s\" compose --shots \"%s\" --panels \"%s\" --audio \"%s\" --out \"%s\" --ep %d --manifest \"%s\"。"
-             "脚本自带帧数/音轨/首尾帧校验，失败必须排查重渲。最终回复用反引号标出 %s 路径与时长、帧数。",
+             "校验成功即交付 %s 路径与时长、帧数。失败时报告错误并停止。",
              episode, pipe_abs, shots_abs, frames_abs, audio_abs, video_abs, episode, manifest_abs, video_abs);
 
     cJSON *dag = cJSON_CreateObject();
@@ -1618,6 +1620,7 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         cJSON_AddStringToObject(nd, "id", ids[i]);
         cJSON_AddStringToObject(nd, "agent", agents[i]);
         cJSON_AddStringToObject(nd, "task", tasks[i]);
+        if (i == 3) cJSON_AddNumberToObject(nd, "manju_compose_episode", episode);
         cJSON_AddItemToArray(nodes, nd);
     }
     const char *from[4] = {"step1", "step1", "step2", "step3"};
@@ -2893,14 +2896,16 @@ static int h_route_add(const http_request *req, http_response *resp, void *ud) {
         const char *base = json_str(root, "base_url");
         const char *model = json_str(root, "model");
         const char *key = json_str(root, "api_key");
+        const char *caps = json_str(root, "caps");
+        route proposed = {.provider = (char *)provider, .model = (char *)model, .caps = (char *)caps};
         const char *active_key = config_get_str(ctx->config, "llm.api_key", "");
-        int refresh_active = key && strcmp(key, active_key) &&
+        int refresh_active = !route_is_image(&proposed) && key && strcmp(key, active_key) &&
             !strcmp(provider, config_get_str(ctx->config, "llm.provider", "")) &&
             !strcmp(base ? base : "", config_get_str(ctx->config, "llm.base_url", "")) &&
             !strcmp(model ? model : "", config_get_str(ctx->config, "llm.model", ""));
         if (router_add_ex(ctx->router, name, provider, base, key, model,
                           json_dbl(root, "weight", 1.0), (int)json_dbl(root, "cost_rank", 0),
-                          (int)json_dbl(root, "latency_ms", 0), json_str(root, "caps")) != 0 ||
+                          (int)json_dbl(root, "latency_ms", 0), caps) != 0 ||
             (refresh_active && set_llm(ctx, provider, base, model, key) != 0)) {
             cJSON_Delete(root);
             resp->status = 500;
@@ -3420,6 +3425,21 @@ static int h_config_llm(const http_request *req, http_response *resp, void *ud) 
     const char *base_url = json_str(root, "base_url");
     const char *model = json_str(root, "model");
     const char *api_key = json_str(root, "api_key");
+    route proposed = {.provider = (char *)provider, .model = (char *)model, .caps = (char *)json_str(root, "caps")};
+    int image = route_is_image(&proposed);
+    for (int i = 0; !image && i < router_count(ctx->router); ++i) {
+        const route *saved = router_get(ctx->router, (size_t)i);
+        if (saved && saved->provider && !strcmp(saved->provider, provider) &&
+            !strcmp(saved->model ? saved->model : "", model ? model : "") &&
+            !strcmp(saved->base_url ? saved->base_url : "", base_url ? base_url : ""))
+            image = route_is_image(saved);
+    }
+    if (image) {
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"Image generation routes cannot be activated as chat models\"}");
+        return 0;
+    }
     /* set_llm dups every value; keep the JSON alive until after the call
      * so the pointers above stay valid (they live inside `root`) */
     rc = set_llm(ctx, provider, base_url, model, api_key);
@@ -3560,8 +3580,8 @@ static int h_config_snapshot(const http_request *req, http_response *resp, void 
     return 0;
 }
 
-/* Validate that a given provider/base_url/model/api_key actually answers a chat
- * request. Creates a throwaway LLM instance (never persisted, never made active)
+/* Validate that a given route answers a chat or image generation request.
+ * Uses a throwaway client (never persisted, never made active)
  * and returns {ok, reply|error}. Lets the UI prove a config works before saving.
  *
  * issue #3: the probe runs on a detached worker thread — an inline provider
@@ -3585,14 +3605,25 @@ static struct {
 } g_llm_probe;
 
 static void llm_probe_thread(void *arg) {
-    llm_probe_cfg *cfg = (llm_probe_cfg *)arg;
+    route *cfg = (route *)arg;
     llm *nl;
     llm_request lreq = {0};
     llm_response lr = {0};
     int rc;
 
-    nl = llm_create(cfg->provider, cfg->base_url, cfg->api_key, cfg->model);
-    if (!nl) {
+    if (route_is_image(cfg)) {
+        llm_image_result result = {0};
+        const char *size = cfg->model && !strncmp(cfg->model, "qwen-image-", 11) ? "512x512" : NULL;
+        rc = llm_image_generate(cfg, "A plain blue square centered on a white background.", size, &result);
+        g_llm_probe.ok = rc == 0;
+        if (rc == 0)
+            snprintf(g_llm_probe.reply, sizeof(g_llm_probe.reply), "Generated %s (%zu bytes)",
+                     result.mime, result.len);
+        else
+            snprintf(g_llm_probe.reply, sizeof(g_llm_probe.reply), "%s",
+                     result.error ? result.error : "Image generation failed");
+        llm_image_result_free(&result);
+    } else if (!(nl = llm_create(cfg->provider, cfg->base_url, cfg->api_key, cfg->model))) {
         snprintf(g_llm_probe.reply, sizeof(g_llm_probe.reply),
                  "unknown provider (mock|openai|anthropic)");
         g_llm_probe.ok = 0;
@@ -3624,8 +3655,9 @@ static void llm_probe_thread(void *arg) {
         free(lr.error);
         llm_destroy(nl);
     }
-    log_info("model probe model=%s result=%s elapsed_ms=%lld",cfg->model,
+    log_info("model probe model=%s result=%s elapsed_ms=%lld",cfg->model ? cfg->model : "",
              g_llm_probe.ok ? "ok" : g_llm_probe.reply,(long long)time_now_ms()-g_llm_probe.started_ms);
+    route_clear(cfg);
     free(cfg);
     g_llm_probe.finished_ms=(long long)time_now_ms();
     atomic_store_explicit(&g_llm_probe.phase,2,memory_order_release);
@@ -3686,10 +3718,12 @@ static int h_config_llm_test(const http_request *req, http_response *resp, void 
         http_resp_json(resp, "{\"error\":\"body must be a JSON object\"}");
         return 0;
     }
-    if (!json_str(root, "provider") || !*json_str(root, "provider")) {
+    const char *route_name = json_str(root, "route_name");
+    const char *provider = json_str(root, "provider");
+    if ((!route_name || !*route_name) && (!provider || !*provider)) {
         cJSON_Delete(root);
         resp->status = 400;
-        http_resp_json(resp, "{\"error\":\"need 'provider' string\"}");
+        http_resp_json(resp, "{\"error\":\"need 'route_name' or 'provider' string\"}");
         return 0;
     }
     if (atomic_load_explicit(&g_llm_probe.phase,memory_order_acquire) == 1) {
@@ -3700,9 +3734,8 @@ static int h_config_llm_test(const http_request *req, http_response *resp, void 
     }
 
     {
-        llm_probe_cfg *cfg = (llm_probe_cfg *)calloc(1, sizeof(llm_probe_cfg));
+        route *cfg = calloc(1, sizeof(*cfg));
         thread_t *th;
-        const char *v;
 
         if (!cfg) {
             cJSON_Delete(root);
@@ -3710,23 +3743,43 @@ static int h_config_llm_test(const http_request *req, http_response *resp, void 
             http_resp_json(resp, "{\"error\":\"out of memory\"}");
             return 0;
         }
-        v = json_str(root, "provider");
-        snprintf(cfg->provider, sizeof(cfg->provider), "%s", v ? v : "");
-        v = json_str(root, "base_url");
-        snprintf(cfg->base_url, sizeof(cfg->base_url), "%s", v ? v : "");
-        v = json_str(root, "api_key");
-        snprintf(cfg->api_key, sizeof(cfg->api_key), "%s", v ? v : "");
-        v = json_str(root, "model");
-        snprintf(cfg->model, sizeof(cfg->model), "%s", v ? v : "");
+        if (route_name && *route_name) {
+            if (router_copy_named(ctx->router, route_name, cfg) != 0) {
+                free(cfg);
+                cJSON_Delete(root);
+                resp->status = 404;
+                http_resp_json(resp, "{\"error\":\"Model route not found\"}");
+                return 0;
+            }
+        } else {
+            const char *base = json_str(root, "base_url");
+            const char *key = json_str(root, "api_key");
+            const char *model = json_str(root, "model");
+            const char *caps = json_str(root, "caps");
+            cfg->provider = xstrdup(provider);
+            cfg->base_url = xstrdup(base ? base : "");
+            cfg->api_key = xstrdup(key ? key : "");
+            cfg->model = xstrdup(model ? model : "");
+            cfg->caps = xstrdup(caps ? caps : "");
+            if (!cfg->provider || !cfg->base_url || !cfg->api_key || !cfg->model || !cfg->caps) {
+                route_clear(cfg);
+                free(cfg);
+                cJSON_Delete(root);
+                resp->status = 500;
+                http_resp_json(resp, "{\"error\":\"out of memory\"}");
+                return 0;
+            }
+        }
         cJSON_Delete(root);
         g_llm_probe.id++;
-        snprintf(g_llm_probe.model,sizeof(g_llm_probe.model),"%s",cfg->model);
+        snprintf(g_llm_probe.model,sizeof(g_llm_probe.model),"%s",cfg->model ? cfg->model : "");
         g_llm_probe.started_ms=(long long)time_now_ms();
         g_llm_probe.reply[0]=0;
         atomic_store(&g_llm_probe.phase,1);
         th = thread_create(llm_probe_thread, cfg);
         if (!th) {
             g_llm_probe.phase = 0;
+            route_clear(cfg);
             free(cfg);
             resp->status = 500;
             http_resp_json(resp, "{\"error\":\"failed to start probe thread\"}");

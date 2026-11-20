@@ -6183,6 +6183,37 @@ static void test_flow_decompose(void) {
 static void test_flow(void) {
     section("flow compiler (DAG)");
 
+    /* Imported editors stop when their fixed renderer reports bad inputs.
+     * Legacy saved imports have the generated command but no operation field. */
+    {
+        const char *dir = "state-test/manju-compose-without-input";
+        fs_mkdirs(dir);
+        config cfg = {0};
+        cfg.state_root = dir;
+        cfg.workspace = dir;
+        cfg.provider = "mock";
+        runtime_ctx ctx;
+        if (init(&ctx, &cfg) != 0) { CHECK(0); return; }
+        CHECK(agent_pool_find(ctx.agents, "manju-editor") >= 0 ||
+              agent_pool_add(ctx.agents, "manju-editor", "Compose fixtures only") >= 0);
+        const char *legacy = "{\"nodes\":[{\"id\":\"step4\",\"agent\":\"manju-editor\","
+            "\"task\":\"把画面与配音合成漫剧第500集成片：python \\\"tools/manju/manju_pipeline.py\\\" compose "
+            "--shots \\\"manju/ep500/shots.json\\\" --ep 500 --manifest \\\"manju/ep500/manifest.json\\\"\"}]}";
+        const char *native = "{\"nodes\":[{\"id\":\"step4\",\"agent\":\"manju-editor\","
+            "\"task\":\"Compile video\",\"manju_compose_episode\":500}]}";
+        const char *fixtures[] = {legacy, native};
+        for (size_t i = 0; i < sizeof(fixtures) / sizeof(fixtures[0]); i++) {
+            char *answer = NULL, *trace = NULL;
+            CHECK(flow_run(&ctx, fixtures[i], -1, &answer, &trace) != 0);
+            CHECK(trace && strstr(trace, "\"status\":\"error\"") &&
+                  (strstr(trace, "漫剧合成失败") || strstr(trace, "无法启动漫剧合成")));
+            CHECK(!fs_exists("state-test/manju-compose-without-input/manju/ep500/videos/ep500.mp4"));
+            free(answer);
+            free(trace);
+        }
+        runtime_shutdown(&ctx);
+    }
+
     /* Large valid graphs stay off the caller's stack; reject one past the cap. */
     {
         char dag[8192];

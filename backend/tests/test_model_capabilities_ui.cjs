@@ -6,7 +6,7 @@ const extract=name=>html.match(new RegExp('(?:async )?function '+name+'\\([^]*?\
 const posts=[];
 const context={esc:s=>String(s).replaceAll('<','&lt;'),ROUTES:[{name:'ark',provider:'openai',model:'fixture',base_url:'https://fixture',context_window:1048576}],prompt:()=> 'new fixture key',$:()=>({}),call:async(method,path,body)=>{posts.push(body);return{status:200}},loadModels:()=>{}};
 vm.createContext(context);
-vm.runInContext(['routeContextLabel','fetchedModelMetadata','editRouteKey'].map(extract).join('\n'),context);
+vm.runInContext(['isImageRoute','routeContextLabel','fetchedModelMetadata','editRouteKey'].map(extract).join('\n'),context);
 const fallback=context.routeContextLabel({context_window:262144,context_source:'fallback'});
 assert.match(fallback,/上下文未核实/);
 assert.match(fallback,/262,144/);

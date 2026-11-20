@@ -11,14 +11,17 @@
 #include "os/os_thread.h"
 #include "os/os_time.h"
 #include "os/os_fs.h"
+#include "os/os_proc.h"
 #include "os/http_cancel.h"
 #include "security/secret.h"
+#include "api/manju_pipeline.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <math.h>
 #include "cJSON.h"
 
 #define FLOW_MAX_NODES 64
@@ -69,6 +72,7 @@ typedef struct flow_node {
     char id[64];
     char agent[64];
     char task[FLOW_MAX_TASKLEN];
+    int manju_compose_episode;
     int layer;
     int indeg;
     int nadj;                /* out-degree */
@@ -93,6 +97,24 @@ static int flow_add_edge(flow_dag *d, int from, int to, char **err) {
     if(d->nodes[from].nadj>=FLOW_MAX_NODES) { flow_err(err,"too many dependency edges"); return -1; }
     d->nodes[from].adj[d->nodes[from].nadj++]=to; d->nodes[to].indeg++;
     return 0;
+}
+
+/* Older imported flows persist only the generated command in task. Match
+ * that shape so continuing an existing import also uses the bounded step. */
+static int flow_legacy_manju_episode(const flow_node *node) {
+    if (strcmp(node->id, "step4") || strcmp(node->agent, "manju-editor") ||
+        !strstr(node->task, "把画面与配音合成漫剧") ||
+        !strstr(node->task, "manju_pipeline.py\" compose --shots \""))
+        return 0;
+    const char *episode_arg = strstr(node->task, " --ep ");
+    if (!episode_arg)
+        return 0;
+    const char *number = episode_arg + strlen(" --ep ");
+    char *end = NULL;
+    long episode = strtol(number, &end, 10);
+    if (episode < 1 || episode > 500 || strncmp(end, " --manifest \"", 13))
+        return 0;
+    return (int)episode;
 }
 
 /* Parse the JSON document into `d`. Returns 0 ok; on failure -1 with *err. */
@@ -143,6 +165,19 @@ static int flow_parse(const char *dag_json, flow_dag *d, char **err) {
         snprintf(nd->id, sizeof(nd->id), "%s", jid->valuestring);
         snprintf(nd->agent, sizeof(nd->agent), "%s", jag->valuestring);
         snprintf(nd->task, sizeof(nd->task), "%s", jtk->valuestring);
+        cJSON *compose_episode = cJSON_GetObjectItemCaseSensitive(jn, "manju_compose_episode");
+        if (compose_episode) {
+            double episode = cJSON_GetNumberValue(compose_episode);
+            if (strcmp(nd->agent, "manju-editor") || !isfinite(episode) ||
+                episode < 1 || episode > 500 || (int)episode != episode) {
+                cJSON_Delete(root);
+                flow_err(err, "manju_compose_episode requires manju-editor and an episode from 1 to 500");
+                return -1;
+            }
+            nd->manju_compose_episode = (int)episode;
+        } else {
+            nd->manju_compose_episode = flow_legacy_manju_episode(nd);
+        }
         d->n++;
     }
 
@@ -502,7 +537,7 @@ static llm *flow_agent_llm(runtime_ctx *ctx, const char *agent) {
     if (provider) {
         for (int i = 0; i < router_count(ctx->router); i++) {
             const route *cand = router_get(ctx->router, (size_t)i);
-            if (cand && cand->provider && strcmp(cand->provider, provider) == 0) {
+            if (cand && !route_is_image(cand) && cand->provider && strcmp(cand->provider, provider) == 0) {
                 rt = cand;
                 break;
             }
@@ -511,7 +546,7 @@ static llm *flow_agent_llm(runtime_ctx *ctx, const char *agent) {
         rt = router_pick(ctx->router);
     }
     llm *nl = NULL;
-    if (rt) {
+    if (rt && (!model || !route_is_image(&(route){.provider = rt->provider, .model = model}))) {
         nl = llm_create(rt->provider, rt->base_url, rt->api_key, model ? model : rt->model);
         if (nl) {
             nl->context_window_tokens = rt->context_window_tokens;
@@ -549,6 +584,91 @@ static reasoning *flow_reasoning_new(runtime_ctx *ctx,const char *workspace,cons
 
 static int flow_abort_requested(void *parent) { return parent && task_should_abort((task *)parent); }
 
+static void flow_manju_compose(flow_job *j) {
+    const char *workspace = j->workspace ? j->workspace : ".";
+    const int episode = j->nd->manju_compose_episode;
+    const size_t script_size = sizeof(manju_pipeline_py) - 1;
+    const char success[] = "\n[light-agent] compose complete";
+    char script_length[32], shots[64], panels[64], audio[64], video[64], manifest[64], ep[16];
+    snprintf(script_length, sizeof(script_length), "%zu", script_size);
+    snprintf(ep, sizeof(ep), "%d", episode);
+    snprintf(shots, sizeof(shots), "manju/ep%02d/shots.json", episode);
+    snprintf(panels, sizeof(panels), "manju/ep%02d/frames", episode);
+    snprintf(audio, sizeof(audio), "manju/ep%02d/audio", episode);
+    snprintf(video, sizeof(video), "manju/ep%02d/videos/ep%02d.mp4", episode, episode);
+    snprintf(manifest, sizeof(manifest), "manju/ep%02d/manifest.json", episode);
+
+    /* Feed the shipped pipeline to Python, without shell interpolation or
+     * executing any script left in the workspace by a previous agent. */
+    char bootstrap[] =
+        "import os, sys\n"
+        "source = sys.stdin.buffer.read(int(sys.argv[1]))\n"
+        "os.chdir(sys.argv[2])\n"
+        "sys.argv = ['manju_pipeline.py'] + sys.argv[3:]\n"
+        "workspace = os.path.realpath('.')\n"
+        "for i, flag in enumerate(sys.argv):\n"
+        "    if flag in ('--shots', '--panels', '--audio', '--out', '--manifest'):\n"
+        "        path = os.path.realpath(sys.argv[i + 1])\n"
+        "        if os.path.commonpath([workspace, path]) != workspace:\n"
+        "            raise ValueError('Compose path escapes the workspace')\n"
+        "exec(compile(source, 'manju_pipeline.py', 'exec'), {'__name__': '__main__'})\n"
+        "print('[light-agent] compose complete', flush=True)\n";
+#ifdef _WIN32
+    char python[] = "python";
+#else
+    char python[] = "python3";
+#endif
+    char *argv[] = {python, "-I", "-u", "-c", bootstrap, script_length, (char *)workspace,
+                    "compose", "--shots", shots, "--panels", panels, "--audio", audio,
+                    "--out", video, "--ep", ep, "--manifest", manifest, NULL};
+    j->rc = -1;
+    proc_popen *proc = proc_popen_new_direct(argv, 1);
+    if (!proc || proc_popen_write(proc, manju_pipeline_py, script_size) != 0) {
+        proc_popen_free(proc);
+        j->out = xstrdup("无法启动漫剧合成，请检查 Python 和漫剧依赖。");
+        return;
+    }
+    int64_t deadline = time_now_ms() + 15 * 60 * 1000;
+    while (proc_popen_alive(proc) && !flow_abort_requested(j->parent) && time_now_ms() < deadline) {
+        proc_popen_read(proc, 200);
+        size_t length = strlen(proc_popen_buffer(proc));
+        if (length > 16384) {
+            const char *tail = proc_popen_buffer(proc);
+            size_t drop = length - 8192;
+            while ((tail[drop] & 0xc0) == 0x80) drop++;
+            proc_popen_trim(proc, drop);
+        }
+    }
+    if (flow_abort_requested(j->parent) || proc_popen_alive(proc)) {
+        j->rc = -4;
+        j->out = xstrdup("漫剧合成超过时限或已取消，已停止处理。");
+        proc_popen_free(proc);
+        return;
+    }
+    while (proc_popen_read(proc, 50)) {}
+    const char *output = proc_popen_buffer(proc);
+    size_t length = strlen(output);
+    while (length && (output[length - 1] == '\r' || output[length - 1] == '\n'))
+        length--;
+    size_t marker_length = sizeof(success) - 1;
+    int verified = length >= marker_length &&
+        !memcmp(output + length - marker_length, success, marker_length);
+    strbuf result;
+    strbuf_init(&result);
+    if (verified) {
+        j->rc = 0;
+        char *absolute = fs_absolute_path(workspace);
+        strbuf_appendf(&result, "漫剧合成完成，成片 `%s/%s`。\n",
+                       absolute ? absolute : workspace, video);
+        free(absolute);
+        strbuf_append_n(&result, output, length - marker_length);
+    } else {
+        strbuf_appendf(&result, "漫剧合成失败，已停止。\n%s", output);
+    }
+    j->out = strbuf_detach(&result);
+    proc_popen_free(proc);
+}
+
 static void flow_worker(void *arg) {
     reasoning *r;
     char key[96];
@@ -558,6 +678,10 @@ static void flow_worker(void *arg) {
     http_set_cancel_check(flow_abort_requested,j->parent);
     flow_event(j->ctx, "execute", j->nd->id, j->nd->agent, j->task);
     flow_prog_node_mark(j->task_id, j->nd->id, FP_RUNNING);
+    if (j->nd->manju_compose_episode) {
+        flow_manju_compose(j);
+        goto finish;
+    }
     llm *node_llm = NULL;
     r = flow_reasoning_new(j->ctx,j->workspace,j->nd->agent,&node_llm);
     if (r) {
@@ -595,6 +719,7 @@ static void flow_worker(void *arg) {
     }
     llm_destroy(node_llm);
 
+finish:
     http_set_cancel_check(NULL,NULL);
     if (j->parent && task_should_abort(j->parent))
         j->rc = j->parent->cancel_flag ? -3 : -4;
