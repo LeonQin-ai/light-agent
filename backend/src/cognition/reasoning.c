@@ -2776,7 +2776,11 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
     if(rc==0 && r->planner_native_end_turn==3) {
         cJSON *control=cJSON_Parse(completion_json?completion_json:"{}");
         cJSON *acc=cJSON_GetObjectItemCaseSensitive(control,"acceptance");
-        if(r->gate_mode) {
+        if (r->completion_only) {
+            rc = -1;
+            free(plan_err);
+            plan_err = xstrdup("Finalization requires a completion or blocked decision; a task declaration cannot finalize the run.");
+        } else if(r->gate_mode) {
             /* Simple mode: the user request alone defines the task. Model
              * contracts are ignored — no evidence gates run in this mode. */
         } else if(r->acceptance_frozen) {
@@ -2786,13 +2790,15 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
         } else {
             int grew=acceptance_decl_grows(r,acc);
             merge_acceptance(r,acc);
+            if (!r->acceptance_invalid)
+                round_log_append(r,"[system] 验收合同已记录。");
             if(grew && ++r->acceptance_declares>=3 && !r->acceptance_frozen){
                 r->acceptance_frozen=1;
                 round_log_append(r,"[system] 验收合同在本任务中已多次变更，已锁定为当前版本；后续声明不再合并。请完成当前合同，或用 blocked 说明真实受阻项。");
             }
         }
         cJSON_Delete(control);
-        if(r->acceptance_invalid){rc=-1;free(plan_err);plan_err=xstrdup("Invalid acceptance declaration; no tools executed.");}
+        if(rc==0 && r->acceptance_invalid){rc=-1;free(plan_err);plan_err=xstrdup("Invalid acceptance declaration; no tools executed.");}
     }
     /* A successful HTTP/planner span is not task completion. Preserve the
      * parsed decision so exported traces explain why no tool ran. Never store
@@ -2828,7 +2834,8 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
         note_failed_tool(r,diagnostic.rejected_tool,json?json:"{}",plan_err?plan_err:"batch schema rejected");
         free(json);cJSON_Delete(args);
     }
-    if(rc==0 && completion_json)resolve_optional_missing_reads(r,completion_json);
+    if(rc==0 && completion_json && r->planner_native_end_turn==1)
+        resolve_optional_missing_reads(r,completion_json);
     /* Only visible generation/tool arguments can benefit from more output
      * room. An exhausted hidden-only response is not partial deliverable. */
     if (r->planner_response_truncated && !r->planner_output_escalated &&
@@ -2851,7 +2858,8 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
     free(completion_json);
     if(rc==0)snprintf(r->public_commentary,sizeof(r->public_commentary),"%s",diagnostic.commentary);
     if (rc == 0 && raw)
-        progress_emit(r, r->n_actions ? "plan_ready" : r->planner_native_end_turn==4?"continuing":"response_ready");
+        progress_emit(r, r->n_actions ? "plan_ready" :
+                         (r->planner_native_end_turn==3 || r->planner_native_end_turn==4) ? "continuing" : "response_ready");
     free(aug);
     if (rc != 0 || !raw) {
         r->last_model_failure = diagnostic;
@@ -2877,8 +2885,7 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
     r->last_model_error[0]=0;
     r->had_plan = r->n_actions > 0 || r->planner_native_end_turn==3;
     r->prev_plan_action_sig = r->last_plan_action_sig;
-    r->last_plan_action_sig = r->planner_native_end_turn==3 ?
-        observation_json_hash(r->acceptance)^UINT64_C(0x9e3779b185ebca87):plan_action_signature(r->actions, r->n_actions);
+    r->last_plan_action_sig = plan_action_signature(r->actions, r->n_actions);
     /* remember this round's plan for stall detection (identical plan twice in
      * a row means the loop is not making progress); copy — raw flows out */
     free(r->prev_plan);
@@ -2898,7 +2905,11 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
 static int h_plan(state_machine *sm, void *ud, const char *input, char **out) {
     reasoning *r = ud;
     (void)sm;
-    if (r->n_actions == 0)
+    if (r->planner_native_end_turn == 3)
+        log_info("reasoning: acceptance control turn, no executable tool actions");
+    else if (r->planner_native_end_turn == 4)
+        log_info("reasoning: commentary turn, no executable tool actions");
+    else if (r->n_actions == 0)
         log_info("reasoning: no tool plan, treating LLM output as answer");
     *out = xstrdup(input);
     return 0;
@@ -4271,6 +4282,8 @@ static int h_verify(state_machine *sm, void *ud, const char *input, char **out) 
     int eff_total;
 
     (void)sm;
+    if (r->planner_native_end_turn == 3)
+        return 0;
     eff_total = r->n_actions - r->denied_actions;
     if (!evaluator_verify(r->eval, r->all_actions_ok, eff_total, r->ok_actions)) {
         strbuf b;
@@ -4291,6 +4304,8 @@ static int h_verify(state_machine *sm, void *ud, const char *input, char **out) 
 static int h_learn(state_machine *sm, void *ud, const char *input, char **out) {
     reasoning *r = ud;
     (void)sm;
+    if (r->planner_native_end_turn == 3)
+        return 0;
     /* session notes: current task + end-of-run state */
     if (r->last_prompt && *r->last_prompt) {
         char *t = str_head(r->last_prompt, 200);
@@ -5646,6 +5661,7 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     int fail_aborted = 0;
     int provider_rate_limited = 0;
     int no_action_rounds = 0, no_action_stalled = 0;
+    int contract_rounds_without_progress = 0, contract_stopped = 0;
     int unfinished = 0; /* text described future work, or requested write never ran */
     int output_repeated = 0;
     int search_only_rounds = 0;
@@ -5705,6 +5721,7 @@ restart_planning:
             search_only_rounds = 0;
             no_progress_rounds = cycle_reads = cycle_nudged = cycle_aborted = 0;
             no_action_rounds = no_action_stalled = 0;
+            contract_rounds_without_progress = contract_stopped = 0;
             r->observation_seen_n = 0;
             r->opaque_seen_n = 0;r->artifact_seen_n=0;r->artifact_versions_seen_n=0;r->file_receipts_n=0;
             free(r->prev_plan); r->prev_plan = NULL;
@@ -5729,24 +5746,41 @@ restart_planning:
         }
         if (task_has_messages(r->run_task)) {
             /* Preserve real completed observations, discard unexecuted plans. */
-            if (r->had_plan && result) {
+            if (r->had_plan && r->n_actions > 0 && result) {
                 round_log_append(r, result); obs_log_append(r, result);
             }
             continue;
         }
+        if (st == ST_DONE && r->planner_native_end_turn == 3) {
+            /* A declaration changes the contract, but produces no execution
+             * evidence. Allow the planner to recover from a duplicate while
+             * bounding declaration-only loops independently of tool stalls. */
+            if (++contract_rounds_without_progress >= 3 || r->round_idx >= r->max_rounds) {
+                contract_stopped = unfinished = 1;
+                st = ST_FAILED;
+                break;
+            }
+            consec_fail = transport_fail_streak = 0;
+            if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(r->acceptance, "requires_action")) && !r->run_mutated)
+                round_log_append(r, "[system] 当前合同要求执行操作，尚未取得成功回执。下一轮必须调用实际需要的工具，"
+                                    "或在确实受阻时用 complete_task(status=blocked) 说明原因。不要重复声明合同。");
+            else
+                round_log_append(r, "[system] 请按当前验收合同继续。若仍需执行或验证，下一轮调用实际需要的工具；"
+                                    "能交付时提交完整结果，确实受阻时用 complete_task(status=blocked) 说明原因。"
+                                    "不要重复声明合同或用文字承诺代替行动。");
+            continue;
+        }
         /* Count evidence, not rounds or API spend. Successful reads of new
          * pages/changed content reset this streak, regardless of task length.
-         * Interleaved failures, cache evictions and reordered plans do not.
-         * Acceptance-declaration rounds (end_turn==3) execute no tools, so
-         * they must count as progress-free rounds — otherwise a planner can
-         * re-declare contracts forever while the breaker never fires (#270). */
-        if (r->had_plan && (r->n_actions>0 || r->planner_native_end_turn==3)) {
+         * Interleaved failures, cache evictions and reordered plans do not. */
+        if (r->had_plan && r->n_actions > 0) {
             if (r->round_new_observations>0) {
                 no_progress_rounds=cycle_reads=cycle_nudged=0;
+                contract_rounds_without_progress = 0;
                 r->progress_cycle_warning_active=0;
             } else {
                 no_progress_rounds++;
-                cycle_reads += r->n_actions>0 ? r->round_repeat_reads : 1;
+                cycle_reads += r->round_repeat_reads;
                 if (no_progress_rounds >= (r->round_cached_glob ? 1 : 4) && cycle_reads>=2 && !cycle_nudged) {
                     cycle_nudged=1;
                     r->progress_cycle_warning_active=1;
@@ -6064,7 +6098,7 @@ restart_planning:
      * transcript. Without this, a stage failure on the LAST round skipped
      * synthesis entirely (the old `st == ST_DONE` guard) and the caller
      * received the raw round log with no answer at all. */
-    if (!completion_grace && !run_aborted(r) && !(fail_aborted && r->last_model_error[0]) &&
+    if (!contract_stopped && !completion_grace && !run_aborted(r) && !(fail_aborted && r->last_model_error[0]) &&
         !final_text && r->round_log_len > 0 && r->llm) {
         r->prog_tool[0] = 0;
         progress_emit(r, "summarizing");
@@ -6103,6 +6137,7 @@ restart_planning:
         free(final_text); final_text = NULL;
         free(result); result = NULL;
         no_action_rounds = no_action_stalled = 0;
+        contract_rounds_without_progress = contract_stopped = 0;
         stalled = consec_fail = fail_aborted = synthesized = unfinished = 0;
         free(delivery_candidate);delivery_candidate=NULL;completion_reviewed=0;
         goto restart_planning;
@@ -6114,7 +6149,8 @@ restart_planning:
     int cancelled = (r->run_task && r->run_task->cancel_flag) ||
                     (r->abort_parent && r->abort_parent->cancel_flag);
     int timed_out = !cancelled && run_aborted(r);
-    if(!cancelled&&!timed_out&&!r->gate_mode&&(r->file_equalities||r->acceptance||r->acceptance_invalid))verify_completion_files(r,NULL);
+    if(!cancelled&&!timed_out&&!contract_stopped&&!r->gate_mode&&
+       (r->file_equalities||r->acceptance||r->acceptance_invalid))verify_completion_files(r,NULL);
     if(stalled || synthesized || fail_aborted || r->tool_fail_aborted ||
        r->file_checks_failed || r->acceptance_invalid ||
        (!r->gate_mode && required_pending_reads(r)) ||
@@ -6142,8 +6178,13 @@ restart_planning:
     } else if (unfinished) {
         strbuf_append(&out, "任务未完成：尚未完成请求的阅读、操作或验证，当前结果仅为部分进展。");
         int explained=0;
+        if (contract_stopped) {
+            strbuf_appendf(&out,"\n原因：模型在没有新增工具证据期间有 %d 轮只声明验收合同，尚未提交可验证的执行结果，已停止规划。",
+                           contract_rounds_without_progress);
+            explained = 1;
+        }
         if(no_action_stalled){strbuf_append(&out,"\n原因：恢复阶段连续多次没有返回可执行动作或合法完成声明，且没有新增执行进展，已停止重复规划。");explained=1;}
-        if(r->file_checks_failed){strbuf_appendf(&out,"\n原因：%s",r->file_check_error);explained=1;}
+        if(!contract_stopped && r->file_checks_failed){strbuf_appendf(&out,"\n原因：%s",r->file_check_error);explained=1;}
         if (output_repeated) {
             strbuf_append(&out,"\n原因：模型单次答复内部出现持续循环，无法作为有效的完成结果。");
             explained=1;
@@ -6222,7 +6263,7 @@ restart_planning:
             strbuf_append_n(&out, r->obs_log + tail_start, r->obs_log_len - tail_start);
         }
     }
-    if (!final_text || !*final_text) {
+    if ((!final_text || !*final_text) && !contract_stopped) {
         if (r->round_log_len > 0 && r->obs_log_len == 0) {
             if (stalled)
                 strbuf_appendf(&out, "(连续两轮计划相同，已停止；任务可能未完全完成，第 %d/%d 轮)", r->round_idx,

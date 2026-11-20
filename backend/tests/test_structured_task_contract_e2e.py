@@ -15,6 +15,7 @@ def declare(**acceptance):return action('declare_task',acceptance=acceptance)
 
 def exercise(protocol,mode,prompt='Verify the requested result.'):
     calls=0;acceptance=None
+    declaration_requests=[]
     write=action('file_write',path='report.any',content=CONTENT)
     read=action('file_read',path='report.any')
     done=finish()
@@ -24,6 +25,12 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
     elif mode=='quoted_commentary':replies=['Example: `<tool_call>shell{} `. Next I will read.',action('file_read',path='tiny'),done];expected='DONE'
     elif mode=='commentary':replies=['Changing wording does not finish a task.','I will inspect the file.',action('file_read',path='tiny'),done];expected='DONE'
     elif mode=='stuck':replies=['准备继续。','The next phase is still pending.','还需要继续查看。'];expected='FAILED'
+    elif mode.startswith('declaration_'):
+        contract=declare(requires_action=True,requires_observation=True,artifacts=['report.any'])
+        if mode=='declaration_recovery':
+            replies=[contract,contract,write,read,done];expected='DONE'
+        else:
+            replies=[contract];expected='FAILED'
     elif mode in ('artifact','missing','erase','preexisting','write_only','stale'):
         replies=[declare(artifacts=['report.any'])]
         if mode in ('artifact','write_only','stale'):replies += [write]
@@ -135,6 +142,8 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
                 summary=json.dumps({'facts':['scripted fixture actions in progress'],'failures':[],'artifacts':[],'pending':['remaining steps']})
                 respond_json(self,json.dumps({'choices':[{'message':{'content':summary},'finish_reason':'stop'}]}).encode())
                 return
+            if mode.startswith('declaration_'):
+                declaration_requests.append(request)
             if mode=='script_late_contract' and calls==3:
                 assert b'Previous completion was rejected:' not in request
             if mode=='script_budget_readback' and calls==4:
@@ -175,7 +184,8 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
                 (work/'produce.py').write_text(f"from pathlib import Path\nPath('report.any').write_text({CONTENT!r},encoding='utf8')",encoding='utf8')
             if mode=='batch50':
                 (work/'produce50.py').write_text("from pathlib import Path\nfor i in range(1,51): Path(f'chapter{i:02d}.md').write_text(f'CHAPTER {i} VERIFIED CONTENT',encoding='utf8')\n",encoding='utf8')
-            (work/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'contract-fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':4 if mode=='script_budget_readback' else 16}))
+            max_rounds=1 if mode=='declaration_budget' else 4 if mode=='script_budget_readback' else 16
+            (work/'light-agent.json').write_text(json.dumps({'llm.provider':'openai','llm.model':'contract-fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':max_rounds}))
             with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
             def api(path,body=None):
                 req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
@@ -227,6 +237,23 @@ def exercise(protocol,mode,prompt='Verify the requested result.'):
                     if mode=='quoted_commentary':assert task['tool_calls']==1 and task['model_failures']==0,task
                     if mode=='commentary':assert task['tool_calls']==1 and task['model_failures']==0,task
                     if mode=='stuck':assert calls==3 and task['tool_calls']==0,task
+                    if mode.startswith('declaration_'):
+                        # Declaration acknowledgments must reach the next planner
+                        # turn without running acceptance checks on absent receipts.
+                        for request in declaration_requests[1:3]:
+                            assert '验收合同已记录'.encode() in request,(protocol,mode,'no control receipt')
+                            assert '下一轮必须调用实际需要的工具'.encode() in request,(protocol,mode,'no action guidance')
+                            assert b'Previous completion was rejected:' not in request,(protocol,mode,'premature completion check')
+                            assert b'no committed action receipt is present' not in request,(protocol,mode,'missing action checked too early')
+                        if mode=='declaration_recovery':
+                            assert task['tool_calls']==2 and task['model_failures']==0,task
+                            assert (work/'report.any').read_text(encoding='utf8')==CONTENT
+                        else:
+                            assert calls==(1 if mode=='declaration_budget' else 3),task
+                            assert task['tool_calls']==0 and task['model_failures']==0,task
+                            assert '只声明验收合同' in task['output'],task
+                            assert 'no committed action receipt is present' not in task['output'],task
+                            assert not (work/'report.any').exists(),task
                     if mode=='full':assert task['tool_calls']==3,task
                     if mode=='optional':assert task['tool_calls']==1,task
                     if mode.startswith('cache_'):
@@ -278,6 +305,7 @@ if __name__=='__main__':
         for mode in ('unreceipted_rewrite','late_output_declaration','nonproducing_output_declaration'):exercise(protocol,mode)
     if os.name!='nt':exercise('native','cache_shell_env')
     for protocol in ('legacy','native'):
+        for mode in ('declaration_recovery','declaration_loop','declaration_budget'):exercise(protocol,mode)
         for mode in ('chat','commentary','quoted_commentary','stuck','artifact','missing','erase','preexisting','write_only','stale','script_output','script_reuse','script_unchanged','script_rewrite','full','partial','small','optional','api_missing','observation','mutation','failed_tool'):
             exercise(protocol,mode)
         for prompt in ('为什么帮我解释如何修改代码并完整读取文件，输出HTML报告。','Do not read. Read all source. I will write. Help install fix create.','Прочитайте исходники. 完整读文件只是引用。'):
