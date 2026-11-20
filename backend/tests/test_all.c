@@ -822,7 +822,9 @@ static void test_snapshot_tx(void) {
 
     tool_registry *reg = tool_registry_new();
     tool_register_builtins(reg);
-    CHECK(tool_registry_count(reg) == 14); /* delegate, file_read/list_dir/write/edit, shell, ssh, git, mcp, skill, skill_manage, glob, grep */
+    const tool *image_tool = tool_find(reg, "image_generate");
+    CHECK(image_tool == tool_image_generate());
+    CHECK(!tool_is_available(reg, image_tool)); /* no image route configured */
     CHECK(tool_find(reg, "file_read") != NULL);
     CHECK(tool_find(reg, "list_dir") != NULL);
     CHECK(fs_mkdirs("state-test/w") == 0);
