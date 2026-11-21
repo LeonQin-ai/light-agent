@@ -21,6 +21,25 @@ CORRUPT_PNG = PNG.replace("zUQt", "zVQt")
 class ImagesProvider(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path == "/v1/chat/completions":
+            valid = (
+                self.headers.get("Authorization") == "Bearer local-story"
+                and body.get("model") == "deepseek-v4.1-flash-1017"
+                and body.get("thinking", {}).get("type") == "disabled"
+                and not body.get("tools")
+                and "BEGIN_CHAPTER" in body["messages"][-1]["content"]
+                and body["messages"][-1]["content"].endswith("END_CHAPTER")
+            )
+            self.server.story_calls += 1
+            board = {"title": "Episode 2", "badge": "Fixture",
+                     "title_image_prompt": "Opening landscape", "end_image_prompt": "Closing landscape",
+                     "characters": [], "shots": [{"kind": "narration", "text": "A new day.",
+                         "speaker": "narrator", "character_ids": [], "scene": "Village",
+                         "image_prompt": "Village morning, portrait 9:16"}]}
+            content = "{\"shots\":[" if self.server.story_calls == 1 else json.dumps(board)
+            self.reply(valid, {"choices": [{"message": {"content": content}, "finish_reason": "stop"}],
+                               "usage": {"prompt_tokens": 80, "completion_tokens": 40}})
+            return
         valid = (
             self.path == "/v1/images/generations"
             and self.headers.get("Authorization") == "Bearer local-fixture"
@@ -36,7 +55,10 @@ class ImagesProvider(http.server.BaseHTTPRequestHandler):
                 self.server.paint_calls[fixture] += 1
                 if fixture == "second-scene" and self.server.fail_second:
                     valid = False
-        payload = json.dumps({"data": [{"b64_json": image}]} if valid else {}).encode()
+        self.reply(valid, {"data": [{"b64_json": image}]})
+
+    def reply(self, valid, body):
+        payload = json.dumps(body if valid else {}).encode()
         self.send_response(200 if valid else 400)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
@@ -67,6 +89,35 @@ def probe(base, payload):
             return result
         time.sleep(0.25)
     raise RuntimeError("Image route test timed out")
+
+
+def story(base, provider, workspace):
+    chapter = workspace / "novel" / "chapter02.md"
+    chapter.parent.mkdir()
+    chapter.write_text("BEGIN_CHAPTER\n第二章\nEND_CHAPTER", encoding="utf-8")
+    assert request(base, "/v1/agents", {"name": "manju-director", "role": "Storyboard"})[0] == 200
+    assert request(base, "/v1/routes", {
+        "name": "local-story", "provider": "openai", "model": "deepseek-v4.1-flash-1017",
+        "api_key": "local-story", "base_url": f"http://127.0.0.1:{provider.server_port}",
+    })[0] == 200
+    flow = {"nodes": [{"id": "step1", "agent": "manju-director", "task": "Adapt chapter 2",
+                       "manju_story_episode": 2, "manju_chapter": "novel/chapter02.md",
+                       "manju_text_route": "local-story"}], "edges": []}
+    for expected_calls in (2, 0):
+        status, started = request(base, "/v1/flows", flow)
+        assert status == 200, (status, started)
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            _, task = request(base, f"/v1/tasks/{started['id']}")
+            if task["status"] not in ("RUNNING", "QUEUED"):
+                break
+            time.sleep(0.1)
+        assert task["status"] == "DONE", task
+        assert task["flow_nodes"][0]["llm_calls"] == expected_calls, task
+    assert provider.story_calls == 2
+    board = json.loads((workspace / "manju" / "ep02" / "shots.json").read_text(encoding="utf-8"))
+    assert board["shots"][0]["speaker"] == "narrator"
+    print("PASS: Storyboard sends the complete chapter, repairs malformed JSON once and reuses valid output")
 
 
 def paint(base, provider, workspace):
@@ -133,6 +184,7 @@ def main():
         provider.paint_lock = threading.Lock()
         provider.paint_calls = collections.Counter()
         provider.fail_second = True
+        provider.story_calls = 0
         threading.Thread(target=provider.serve_forever, daemon=True).start()
         with socket.socket() as port:
             port.bind(("127.0.0.1", 0))
@@ -175,6 +227,7 @@ def main():
             assert not corrupt["ok"] and "complete PNG" in corrupt["error"], corrupt
             print("PASS: Corrupt PNG response is rejected")
             paint(base, provider, pathlib.Path(tmp))
+            story(base, provider, pathlib.Path(tmp))
             if args.live_routes:
                 routes = json.loads(args.live_routes.read_text(encoding="utf-8-sig"))
                 live = next(r for r in routes if r["model"] == "qwen-image-3.0-pro")

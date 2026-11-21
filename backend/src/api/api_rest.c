@@ -1353,6 +1353,13 @@ static const char *manju_role_editor =
 
 /* A chapter marker is a short line beginning 第…章 (UTF-8). */
 static int manju_chapter_marker(const char *line, size_t len) {
+    size_t hashes = 0;
+    while (hashes < len && hashes < 6 && line[hashes] == '#') hashes++;
+    if (hashes && hashes < len && (line[hashes] == ' ' || line[hashes] == '\t')) {
+        while (hashes < len && (line[hashes] == ' ' || line[hashes] == '\t')) hashes++;
+        line += hashes;
+        len -= hashes;
+    }
     if (len < 9 || len > 120) return 0;
     if ((unsigned char)line[0] != 0xE7 || (unsigned char)line[1] != 0xAC ||
         (unsigned char)line[2] != 0xAC) return 0; /* 第 */
@@ -1471,7 +1478,15 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     }
     route_clear(&selected_text);
     cJSON *jep = cJSON_GetObjectItemCaseSensitive(root, "episode");
-    int episode = cJSON_IsNumber(jep) ? (int)jep->valuedouble : 1;
+    double episode_value = jep ? cJSON_GetNumberValue(jep) : 1;
+    if (!(episode_value >= 1 && episode_value <= 500) ||
+        (int)episode_value != episode_value) {
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"episode must be an integer from 1 to 500\"}");
+        return 0;
+    }
+    int episode = (int)episode_value;
     if ((!text || !*text) && (!path || !*path)) {
         cJSON_Delete(root);
         resp->status = 400;
@@ -1537,8 +1552,14 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         http_resp_json(resp, "{\"error\":\"no readable novel chapters in 'text' or 'path'\"}");
         return 0;
     }
-    if (episode < 1) episode = 1;
-    if (episode > nch) episode = nch;
+    if (nch > 1 && episode > nch) {
+        manju_free_chapters(chapters, nch);
+        free(directory);
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"episode exceeds the number of imported chapters\"}");
+        return 0;
+    }
 
     char slug[96];
     manju_slug(title && *title ? title : "导入小说", slug, sizeof(slug));
@@ -1555,7 +1576,7 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     }
     for (int i = 0; i < nch; i++) {
         char rel[320], abs[2048];
-        snprintf(rel, sizeof(rel), "%s/chapter%02d.md", novel_dir, i + 1);
+        snprintf(rel, sizeof(rel), "%s/chapter%02d.md", novel_dir, nch == 1 ? episode : i + 1);
         path_join(abs, sizeof(abs), directory, rel);
         if (fs_write_file(abs, chapters[i], strlen(chapters[i])) != 0) {
             manju_free_chapters(chapters, nch);
@@ -1647,7 +1668,11 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         cJSON_AddStringToObject(nd, "id", ids[i]);
         cJSON_AddStringToObject(nd, "agent", agents[i]);
         cJSON_AddStringToObject(nd, "task", tasks[i]);
-        if (i == 0 && text_route) cJSON_AddStringToObject(nd, "manju_text_route", text_route);
+        if (i == 0) {
+            cJSON_AddNumberToObject(nd, "manju_story_episode", episode);
+            cJSON_AddStringToObject(nd, "manju_chapter", chapter_rel);
+            if (text_route) cJSON_AddStringToObject(nd, "manju_text_route", text_route);
+        }
         if (i == 1) {
             cJSON_AddNumberToObject(nd, "manju_paint_episode", episode);
             if (image_route && *image_route) cJSON_AddStringToObject(nd, "manju_image_route", image_route);

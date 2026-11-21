@@ -16,6 +16,8 @@
 #include "security/secret.h"
 #include "api/manju_pipeline.h"
 #include "runtime/manju_paint.h"
+#include "runtime/manju_story.h"
+#include "llm/usage.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -76,8 +78,10 @@ typedef struct flow_node {
     int manju_compose_episode;
     int manju_paint_episode;
     int manju_voice_episode;
+    int manju_story_episode;
     char manju_image_route[128];
     char manju_text_route[128];
+    char manju_chapter[320];
     int layer;
     int indeg;
     int nadj;                /* out-degree */
@@ -232,6 +236,20 @@ static int flow_parse(const char *dag_json, flow_dag *d, char **err) {
                 return -1;
             }
             snprintf(nd->manju_text_route, sizeof nd->manju_text_route, "%s", name);
+        }
+        cJSON *story = cJSON_GetObjectItemCaseSensitive(jn, "manju_story_episode");
+        if (story) {
+            double episode = cJSON_GetNumberValue(story);
+            const char *chapter = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(jn, "manju_chapter"));
+            if (strcmp(nd->agent, "manju-director") || !(episode >= 1 && episode <= 500) ||
+                (int)episode != episode || !chapter || !*chapter ||
+                strlen(chapter) >= sizeof nd->manju_chapter) {
+                cJSON_Delete(root);
+                flow_err(err, "manju_story_episode requires manju-director and a valid manju_chapter path");
+                return -1;
+            }
+            nd->manju_story_episode = (int)episode;
+            snprintf(nd->manju_chapter, sizeof nd->manju_chapter, "%s", chapter);
         }
         d->n++;
     }
@@ -614,25 +632,27 @@ static llm *flow_agent_llm(runtime_ctx *ctx, const char *agent) {
     return nl;
 }
 
+static llm *flow_named_chat_llm(runtime_ctx *ctx, const char *name) {
+    route selected = {0};
+    llm *model = NULL;
+    if (router_copy_named(ctx->router, name, &selected) == 0 && !route_is_image(&selected)) {
+        model = llm_create(selected.provider, selected.base_url, selected.api_key, selected.model);
+        if (model) {
+            model->context_window_tokens = selected.context_window_tokens;
+            model->max_output_tokens = selected.max_output_tokens;
+        }
+    }
+    route_clear(&selected);
+    return model;
+}
+
 /* Same isolation rules as the orchestrator's per-agent instances. */
 static reasoning *flow_reasoning_new(runtime_ctx *ctx,const char *workspace,const flow_node *node,llm **owned_llm) {
     reasoning_config rc;
     memset(&rc, 0, sizeof(rc));
-    if (node->manju_text_route[0]) {
-        route selected = {0};
-        if (router_copy_named(ctx->router, node->manju_text_route, &selected) == 0 &&
-            !route_is_image(&selected)) {
-            *owned_llm = llm_create(selected.provider, selected.base_url, selected.api_key, selected.model);
-            if (*owned_llm) {
-                (*owned_llm)->context_window_tokens = selected.context_window_tokens;
-                (*owned_llm)->max_output_tokens = selected.max_output_tokens;
-            }
-        }
-        route_clear(&selected);
-        if (!*owned_llm) return NULL;
-    } else {
-        *owned_llm = flow_agent_llm(ctx, node->agent);
-    }
+    *owned_llm = node->manju_text_route[0] ? flow_named_chat_llm(ctx, node->manju_text_route) :
+        flow_agent_llm(ctx, node->agent);
+    if (node->manju_text_route[0] && !*owned_llm) return NULL;
     rc.llm = *owned_llm ? *owned_llm : ctx->llm;
     rc.tools = ctx->tools;
     rc.memory = ctx->memory;
@@ -655,6 +675,56 @@ static reasoning *flow_reasoning_new(runtime_ctx *ctx,const char *workspace,cons
 }
 
 static int flow_abort_requested(void *parent) { return parent && task_should_abort((task *)parent); }
+
+static void flow_manju_story(flow_job *j) {
+    runtime_ctx *ctx = j->ctx;
+    const flow_node *node = j->nd;
+    llm *client = node->manju_text_route[0] ? flow_named_chat_llm(ctx, node->manju_text_route) :
+        flow_agent_llm(ctx, node->agent);
+    if (!client && !node->manju_text_route[0] && ctx->llm) {
+        llm *active = ctx->llm;
+        client = llm_create(active->provider, active->base_url, active->api_key, active->model);
+        if (client) {
+            client->context_window_tokens = active->context_window_tokens;
+            client->max_output_tokens = active->max_output_tokens;
+        }
+    }
+    if (!client) {
+        j->rc = -1;
+        j->out = xstrdup("无法使用指定的分镜模型路由。请检查 Model routes 后重试。");
+        return;
+    }
+    int requests = 0;
+    int64_t started = time_now_ms();
+    j->rc = manju_story_episode(client, j->workspace, node->manju_chapter, node->manju_story_episode,
+                               flow_abort_requested, j->parent, &requests, &j->out);
+    long long input = 0, output = 0;
+    llm_usage_totals(client, &input, &output);
+    long long thought = llm_usage_reason_total(client);
+    if (ctx->usage && (input || output))
+        usage_add_task(ctx->usage, client->model ? client->model : "?", (long)input,
+                       (long)(output > thought ? output - thought : 0), (long)thought, j->task_id);
+    mutex_lock(&flow_prog_mtx);
+    flow_prog *flow = flow_prog_slot(j->task_id);
+    for (int i = 0; flow && i < flow->n; i++) {
+        flow_prog_node *progress = &flow->nodes[i];
+        if (strcmp(progress->id, node->id)) continue;
+        cJSON *diagnostics = cJSON_CreateObject();
+        if (diagnostics) {
+            cJSON_AddStringToObject(diagnostics, "model", client->model ? client->model : "");
+            cJSON_AddNumberToObject(diagnostics, "llm_calls", requests);
+            cJSON_AddBoolToObject(diagnostics, "usage_available", input > 0 || output > 0);
+            cJSON_AddNumberToObject(diagnostics, "tokens_in", (double)input);
+            cJSON_AddNumberToObject(diagnostics, "tokens_out", (double)output);
+            cJSON_AddNumberToObject(diagnostics, "elapsed_ms", (double)(time_now_ms() - started));
+            cJSON_Delete(progress->diagnostics);
+            progress->diagnostics = diagnostics;
+        }
+        break;
+    }
+    mutex_unlock(&flow_prog_mtx);
+    llm_destroy(client);
+}
 
 static int flow_paint_abort(void *context) {
     flow_job *job = context;
@@ -784,6 +854,10 @@ static void flow_worker(void *arg) {
     http_set_cancel_check(flow_abort_requested,j->parent);
     flow_event(j->ctx, "execute", j->nd->id, j->nd->agent, j->task);
     flow_prog_node_mark(j->task_id, j->nd->id, FP_RUNNING);
+    if (j->nd->manju_story_episode) {
+        flow_manju_story(j);
+        goto finish;
+    }
     if (j->nd->manju_paint_episode) {
         j->rc = manju_paint_episode(j->ctx->router, j->nd->manju_image_route, j->workspace,
                                     j->nd->manju_paint_episode, flow_paint_abort, flow_paint_progress, j, &j->out);
