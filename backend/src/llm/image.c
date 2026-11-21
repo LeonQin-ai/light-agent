@@ -139,7 +139,8 @@ static int valid_png(const unsigned char *p, size_t len) {
     return 0;
 }
 
-static const char *generated_image_mime(const unsigned char *p, size_t len) {
+const char *llm_image_mime(const unsigned char *p, size_t len) {
+    if (!p) return NULL;
     if (valid_png(p, len))
         return "image/png";
     if (len >= 4 && p[0] == 0xff && p[1] == 0xd8 && p[len - 2] == 0xff && p[len - 1] == 0xd9)
@@ -226,6 +227,22 @@ int llm_image_generate(const route *rt, const char *prompt, const char *size, ll
     if (!origin)
         return image_fail(out, "Invalid image service base URL");
     int native = token_plan_origin(origin);
+    const char *generation_path = DASHSCOPE_GENERATION_PATH;
+    char compatible_path[1536];
+    if (!native) {
+        size_t path_length = strlen(base_path);
+        if (path_length + sizeof("/images/generations") > sizeof compatible_path ||
+            strcspn(base_path, "\r\n#?") != path_length) {
+            free(origin);
+            return image_fail(out, "Invalid image service base path");
+        }
+        while (path_length && base_path[path_length - 1] == '/') path_length--;
+        snprintf(compatible_path, sizeof compatible_path, "%.*s/images/generations",
+                 (int)path_length, base_path);
+        /* The plain POSIX transport receives the complete request path
+         * separately and strips any path from the connection base. */
+        generation_path = compatible_path;
+    }
     char normalized[24];
     if (image_size(size, native, normalized) != 0) {
         free(origin);
@@ -245,8 +262,7 @@ int llm_image_generate(const route *rt, const char *prompt, const char *size, ll
             strmap_set(&headers, "Authorization", auth.buf);
         strbuf_free(&auth);
     }
-    http_response *response = http_post(native ? origin : base,
-        native ? DASHSCOPE_GENERATION_PATH : "/images/generations", json, "application/json",
+    http_response *response = http_post(origin, generation_path, json, "application/json",
         &headers, IMAGE_GENERATION_TIMEOUT_MS);
     free(json);
     strmap_free(&headers);
@@ -255,6 +271,7 @@ int llm_image_generate(const route *rt, const char *prompt, const char *size, ll
         rc = image_fail(out, *http_last_error() ? http_last_error() : "Could not call the image service");
         goto done;
     }
+    out->provider_status = response->status;
     if (response->status < 200 || response->status >= 300) {
         char error[100];
         const char *hint = response->status == 401 || response->status == 403 ? " (check route credentials)" :
@@ -280,7 +297,7 @@ int llm_image_generate(const route *rt, const char *prompt, const char *size, ll
         rc = image_fail(out, "Image service response contained no generated image");
     cJSON_Delete(root);
     if (rc == 0) {
-        out->mime = generated_image_mime(out->data, out->len);
+        out->mime = llm_image_mime(out->data, out->len);
         if (!out->mime) {
             free(out->data);
             out->data = NULL;

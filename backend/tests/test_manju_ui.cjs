@@ -17,7 +17,10 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
    const r=route.request(),u=new URL(r.url());let obj=[];
    if(u.pathname==='/')return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(__dirname,'../apps/web/index.html'),'utf8')});
    if(u.pathname==='/v1/config/llm')obj={provider:'openai',model:'fixture',api_key_set:true};
-   if(u.pathname==='/v1/routes')obj=[];
+   if(u.pathname==='/v1/routes')obj=[
+    {name:'deepseek-script',provider:'openai',model:'deepseek-v4.1-flash-1017'},
+    {name:'qwen-panels',provider:'openai',model:'qwen-image-3.0-pro',image_generation:true}
+   ];
    if(u.pathname==='/v1/workspaces')obj={default_workspace:'D:/default',workspaces:[]};
    if(u.pathname==='/v1/agents'){
     if(r.method()==='POST'){const b=r.postDataJSON();agents.push({name:b.name,role:b.role});obj={ok:true,index:agents.length-1};}
@@ -43,6 +46,8 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   for(const label of ['分镜导演','画师','配音','剪辑合成']){
    await page.locator('#agent-presets .agent-preset',{hasText:label}).first().waitFor({timeout:5000});
   }
+  await page.waitForFunction(()=>document.getElementById('manju-text-route').value==='deepseek-script' &&
+    document.getElementById('manju-image-route').value==='qwen-panels');
   /* 一键导入：选文件 → 填标题 → 点击制作 */
   await page.locator('#manju-file').setInputFiles(novel);
   await page.locator('#manju-title').fill('测试小说');
@@ -53,6 +58,8 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   assert.ok(importBody,'import endpoint called');
   assert.equal(importBody.title,'测试小说');
   assert.equal(importBody.episode,1);
+  assert.equal(importBody.text_route,'deepseek-script');
+  assert.equal(importBody.image_route,'qwen-panels');
   assert.ok(importBody.text.includes('第一章 起点')&&importBody.text.includes('第二章 转折'),'novel text uploaded');
   assert.ok(!importBody.path,'file import must not send a server path');
   assert.ok(agentsGets>before,'agent pool refreshed after import');

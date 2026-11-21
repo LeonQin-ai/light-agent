@@ -1328,16 +1328,17 @@ static int h_flow_run(const http_request *req, http_response *resp, void *ud) {
  * deterministic, so import works offline and is unit-testable. */
 
 static const char *manju_role_director =
-    "你是漫剧分镜导演。把小说章节改编成镜头脚本 shots.json："
-    "{\"title\",\"badge\",\"shots\":[{\"kind\":\"narration|dialogue|sys\",\"text\"}]}。"
-    "对白独立成镜（dialogue），旁白 narration，系统/提示音 sys；每镜一句、节奏紧凑、突出冲突。"
-    "先运行 python tools/manju/manju_pipeline.py shots --chapter <章节md> --out <shots.json> 生成基础镜头表，"
-    "再按戏剧节奏审阅修订。最终回复用反引号单独标出 shots.json 路径。";
+    "你是漫剧分镜导演。完整读取章节，再用 file_write 保存可直接交给画师和配音的 shots.json。"
+    "顶层字段 title、badge、title_image_prompt、end_image_prompt、characters（角色 id/name/visual）、shots。"
+    "每镜包含 kind（narration、dialogue 或 sys）、text（一句朗读文本）、speaker、character_ids、scene 和 image_prompt。"
+    "对白镜的 speaker 使用 characters 中的角色 id，旁白和系统分别使用 narrator 和 system。"
+    "在同一集里保持角色外观与服装连续。每条画面提示写清镜头构图、入镜人物的稳定外观、动作和场景。"
+    "使用竖版 9:16，画面不生成字幕或对白框，字幕在合成时添加。"
+    "约三分钟的制作目标可参考 30–36 镜，按剧情需要调整。保留完整情节，不用逐句拆分原文。"
+    "写入并核对 JSON 后交付文件路径与镜头数。";
 static const char *manju_role_artist =
-    "你是漫剧画师。依据镜头脚本渲染全部画面："
-    "python tools/manju/manju_pipeline.py panels --shots <shots.json> --out <frames目录> --ep <集号>。"
-    "画面为赛璐璐人物+氛围背景（对白双人过肩、旁白环境远景）。"
-    "核对 panels.json 与每张 PNG、poster.png 均已生成且可打开。最终回复用反引号标出 frames 目录与 poster 路径。";
+    "你是漫剧画师。依据分镜中的绘图说明，使用配置的文生图模型制作正片和首尾画面。"
+    "保持角色造型和画风连续。成功出图后交付画面清单及封面路径，失败时指出受影响的镜头。";
 static const char *manju_role_voice =
     "你是漫剧配音导演。为镜头脚本逐句合成配音："
     "python tools/manju/manju_pipeline.py tts --shots <shots.json> --out <audio目录>。"
@@ -1445,6 +1446,30 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     const char *text = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "text"));
     const char *path = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "path"));
     const char *title = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "title"));
+    cJSON *jimage_route = cJSON_GetObjectItemCaseSensitive(root, "image_route");
+    const char *image_route = cJSON_GetStringValue(jimage_route);
+    route selected_image = {0};
+    if (jimage_route && (!image_route || !*image_route || strlen(image_route) >= 128 ||
+                         router_select_image(ctx->router, image_route, &selected_image) != 0)) {
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"image_route must identify a configured text-to-image model\"}");
+        return 0;
+    }
+    route_clear(&selected_image);
+    cJSON *jtext_route = cJSON_GetObjectItemCaseSensitive(root, "text_route");
+    const char *text_route = cJSON_GetStringValue(jtext_route);
+    route selected_text = {0};
+    if (jtext_route && (!text_route || !*text_route || strlen(text_route) >= 128 ||
+                        router_copy_named(ctx->router, text_route, &selected_text) != 0 ||
+                        route_is_image(&selected_text))) {
+        route_clear(&selected_text);
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"text_route must identify a configured chat model\"}");
+        return 0;
+    }
+    route_clear(&selected_text);
     cJSON *jep = cJSON_GetObjectItemCaseSensitive(root, "episode");
     int episode = cJSON_IsNumber(jep) ? (int)jep->valuedouble : 1;
     if ((!text || !*text) && (!path || !*path)) {
@@ -1589,14 +1614,16 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     path_join(manifest_abs,sizeof(manifest_abs),directory,manifest);
     snprintf(task1, sizeof(task1),
              "把小说《%s》第%d章改编成漫剧第%d集镜头脚本。章节文件：%s。"
-             "先运行 python \"%s\" shots --chapter \"%s\" --out \"%s\" 生成基础镜头表，"
-             "再按戏剧节奏审阅修订（对白独立成镜、每镜一句、突出冲突）。最终回复用反引号标出 %s 路径。",
-             ntitle, episode, episode, chapter_rel, pipe_abs, chapter_abs, shots_abs, shots_abs);
+             "完整读入 \"%s\" 后按戏剧节奏编排。"
+             "使用 file_write 将一份有效 JSON 写到 \"%s\"，顶层含 title、badge、title_image_prompt、end_image_prompt、characters 和 shots。"
+             "每条镜头需有 kind、text、speaker、character_ids、scene、image_prompt。"
+             "在角色表中统一外观与服装，每镜及封面、片尾提示提供独立的 9:16 画面描述，角色 id 在角色表中定义。"
+             "最终回复标出 %s 路径与镜头数。",
+             ntitle, episode, episode, chapter_rel, chapter_abs, shots_abs, shots_abs);
     snprintf(task2, sizeof(task2),
-             "依据镜头脚本 %s 渲染漫剧第%d集全部画面："
-             "python \"%s\" panels --shots \"%s\" --out \"%s\" --ep %d。"
-             "核对 panels.json 与每张 PNG、poster.png 均已生成。最终回复用反引号标出 %s 目录与 poster 路径。",
-             shots_abs, episode, pipe_abs, shots_abs, frames_abs, episode, frames_abs);
+             "依据镜头脚本 %s，通过已配置的文生图路由生成漫剧第%d集画面。"
+             "核对每幅图，保存至 %s 并发布画面清单。",
+             shots_abs, episode, frames_abs);
     snprintf(task3, sizeof(task3),
              "为镜头脚本 %s 逐句合成漫剧第%d集配音："
              "python \"%s\" tts --shots \"%s\" --out \"%s\" --ep %d。"
@@ -1620,7 +1647,13 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         cJSON_AddStringToObject(nd, "id", ids[i]);
         cJSON_AddStringToObject(nd, "agent", agents[i]);
         cJSON_AddStringToObject(nd, "task", tasks[i]);
+        if (i == 0 && text_route) cJSON_AddStringToObject(nd, "manju_text_route", text_route);
+        if (i == 1) {
+            cJSON_AddNumberToObject(nd, "manju_paint_episode", episode);
+            if (image_route && *image_route) cJSON_AddStringToObject(nd, "manju_image_route", image_route);
+        }
         if (i == 3) cJSON_AddNumberToObject(nd, "manju_compose_episode", episode);
+        if (i == 2) cJSON_AddNumberToObject(nd, "manju_voice_episode", episode);
         cJSON_AddItemToArray(nodes, nd);
     }
     const char *from[4] = {"step1", "step1", "step2", "step3"};

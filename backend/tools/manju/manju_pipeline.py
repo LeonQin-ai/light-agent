@@ -13,7 +13,7 @@
   panels  --shots <shots.json> --out <dir> --ep <N>
       画师：标题卡 + 每镜一张 + 片尾卡 PNG（panel_000.png ...）+ poster.png + panels.json
   tts     --shots <shots.json> --out <dir> [--ep <N>]
-      配音：edge_tts 逐句合成（磁盘缓存 + 5 次重试），44100 单声道，audio.json
+      配音：edge_tts 并发合成（逐句验证、断点续跑），44100 单声道，audio.json
   compose --shots <shots.json> --panels <dir> --audio <dir> --out <ep.mp4> --ep <N>
           [--manifest <path>]
       合成：逐帧推拉/平移/手持抖动 + 雨丝 + 颗粒 + 字幕淡入，rawvideo 管道进 ffmpeg，
@@ -32,6 +32,7 @@ import asyncio
 import argparse
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import cv2
@@ -562,52 +563,75 @@ def end_overlay(text, p):
 
 
 # ---------------------------------------------------------------- TTS（manju_av.voice_of / audio_for）
-def _speak(text, voice, mp3):
+def _speak(text, voice, pitch, mp3):
     import edge_tts
 
     async def go():
-        await edge_tts.Communicate(text, voice, rate="+10%").save(mp3)
+        synthesis = edge_tts.Communicate(
+            text, voice, pitch=pitch, rate="+10%", connect_timeout=10, receive_timeout=20,
+        )
+        await asyncio.wait_for(synthesis.save(mp3), timeout=35)
+
     asyncio.run(go())
 
 
-def voice_of(text, voice, cache_dir):
-    """返回 (float32 mono array, sr)；磁盘缓存（md5 key），5 次重试。"""
-    os.makedirs(cache_dir, exist_ok=True)
-    key = hashlib.md5((voice + "|" + text).encode("utf-8")).hexdigest()[:20]
-    wav = os.path.join(cache_dir, key + ".wav")
-    if os.path.exists(wav) and os.path.getsize(wav) > 2000:
-        try:
-            data, sr = sf.read(wav, dtype="float32", always_2d=False)
-            if len(data) > 1000:
-                return data, sr
-        except Exception:
-            pass
-    mp3 = os.path.join(cache_dir, key + ".mp3")
+def voice_cache_key(text, voice, pitch):
+    style = voice if pitch == "+0Hz" else voice + "|" + pitch
+    return hashlib.md5((style + "|" + text).encode("utf-8")).hexdigest()[:20]
+
+
+def verified_voice_samples(path):
+    """Read the audio, including its tail, before reusing it in a timeline."""
+    try:
+        with open(path, "rb") as stream:
+            header = stream.read(12)
+            if (len(header) != 12 or header[:4] != b"RIFF" or header[8:] != b"WAVE"
+                    or int.from_bytes(header[4:8], "little") + 8 != os.fstat(stream.fileno()).st_size):
+                return 0
+            stream.seek(0)
+            with sf.SoundFile(stream) as wav:
+                if wav.samplerate != SR or wav.channels != 1 or wav.subtype != "PCM_16":
+                    return 0
+                samples = wav.read(dtype="float32")
+                if len(samples) != wav.frames or len(samples) < SR // 20:
+                    return 0
+                if not np.isfinite(samples).all() or float(np.max(np.abs(samples))) <= 0.001:
+                    return 0
+                return len(samples)
+    except (OSError, ValueError, RuntimeError):
+        return 0
+
+
+def voice_of(text, voice, pitch, cache_dir):
+    wav = os.path.join(cache_dir, voice_cache_key(text, voice, pitch) + ".wav")
+    cached = verified_voice_samples(wav)
+    if cached:
+        return cached, True
     ff = imageio_ffmpeg.get_ffmpeg_exe()
-    last = None
-    for attempt in range(5):
+    last_error = None
+    for attempt in range(3):
         try:
-            _speak(text, voice, mp3)
-            r = subprocess.run([ff, "-hide_banner", "-loglevel", "error", "-y", "-i", mp3,
-                                "-ar", str(SR), "-ac", "1", "-c:a", "pcm_s16le", wav],
-                               capture_output=True)
-            if r.returncode == 0 and os.path.exists(wav) and os.path.getsize(wav) > 2000:
-                data, sr = sf.read(wav, dtype="float32", always_2d=False)
-                return data, sr
-            last = "ffmpeg rc=%d %s" % (r.returncode, r.stderr.decode("utf-8", "ignore")[-200:])
-        except Exception as e:  # 网络抖动等，重试
-            last = repr(e)
-        time.sleep(1.2 + attempt * 0.8)
-    raise RuntimeError("TTS failed: %s | %s" % (last, text[:40]))
-
-
-def audio_for(text, kind, cache_dir):
-    data, sr = voice_of(text, VOICE[kind], cache_dir)
-    if sr != SR:
-        n = int(round(len(data) * SR / sr))
-        idx = np.linspace(0, len(data) - 1, n, dtype=np.float32)
-        data = np.interp(idx, np.arange(len(data), dtype=np.float32), data).astype(np.float32)
-    return data
+            with tempfile.TemporaryDirectory(dir=cache_dir, prefix=".voice-") as staging:
+                mp3 = os.path.join(staging, "voice.mp3")
+                pending = os.path.join(staging, "voice.wav")
+                _speak(text, voice, pitch, mp3)
+                result = subprocess.run(
+                    [ff, "-hide_banner", "-loglevel", "error", "-y", "-i", mp3,
+                     "-ar", str(SR), "-ac", "1", "-c:a", "pcm_s16le", pending],
+                    capture_output=True, timeout=25,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(result.stderr.decode("utf-8", "replace")[-240:])
+                count = verified_voice_samples(pending)
+                if not count:
+                    raise RuntimeError("invalid or silent PCM audio")
+                os.replace(pending, wav)
+                return count, False
+        except Exception as error:
+            last_error = error
+        if attempt < 2:
+            time.sleep(1.2 + attempt * 0.8)
+    raise RuntimeError(str(last_error) or type(last_error).__name__) from last_error
 
 
 def pad_to(data, n):
@@ -764,31 +788,64 @@ def cmd_panels(args):
 def cmd_tts(args):
     doc = load_json(args.shots)
     ep = args.ep
-    os.makedirs(args.out, exist_ok=True)
     cache = os.path.join(args.out, "cache")
+    os.makedirs(cache, exist_ok=True)
 
-    lines = [("title", "第%d话。%s" % (ep, doc["badge"]))]
-    lines += [(sh["kind"], sh["text"]) for sh in doc["shots"]]
-    lines.append(("end", "第%d话，完。" % ep))
+    lines = [("title", "第%d话。%s" % (ep, doc["badge"]), None)]
+    lines += [(sh["kind"], sh["text"], sh.get("speaker")) for sh in doc["shots"]]
+    lines.append(("end", "第%d话，完。" % ep, None))
 
-    entries = []
-    for i, (kind, text) in enumerate(lines):
-        data = audio_for(text, kind, cache)
-        samples = len(data)
-        # manju_av：title max(34, +10)；正片 max(28, +10)；片尾 max(28, +8)
-        if kind == "title":
-            frames = max(34, int(round(samples / SR * FPS)) + 10)
-        elif kind == "end":
-            frames = max(28, int(round(samples / SR * FPS)) + 8)
-        else:
-            frames = max(28, int(round(samples / SR * FPS)) + 10)
-        key = hashlib.md5((VOICE[kind] + "|" + text).encode("utf-8")).hexdigest()[:20]
-        entries.append(dict(file=os.path.join("cache", key + ".wav"),
-                            kind=kind, samples=samples, frames=frames))
-        print("[tts] %02d %s %d samples -> %d frames" % (i, kind, samples, frames), flush=True)
+    cast = doc.get("voice_cast", {})
+    if not isinstance(cast, dict):
+        raise ValueError("voice_cast 必须是角色与音色设置的映射")
+    grouped = {}
+    for index, (kind, text, speaker) in enumerate(lines):
+        if kind not in VOICE or not isinstance(text, str) or not text.strip():
+            raise ValueError("第 %d 条配音缺少有效的 kind 或 text" % index)
+        style = cast.get(speaker, {}) if isinstance(speaker, str) else {}
+        if not isinstance(style, dict):
+            raise ValueError("配音角色 %s 的设置须为对象" % speaker)
+        voice, pitch = style.get("voice", VOICE[kind]), style.get("pitch", "+0Hz")
+        if (not isinstance(voice, str) or not re.fullmatch(r"[A-Za-z]+-[A-Za-z0-9-]+Neural", voice)
+                or not isinstance(pitch, str) or not re.fullmatch(r"[+-]\d{1,2}Hz", pitch)):
+            raise ValueError("配音角色 %s 的 voice 或 pitch 格式错误" % speaker)
+        grouped.setdefault((text, voice, pitch), []).append(index)
 
-    save_json(os.path.join(args.out, "audio.json"),
-              dict(ep=ep, sr=SR, fps=FPS, entries=entries))
+    failures = []
+    entries = [None] * len(lines)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {
+            pool.submit(voice_of, text, voice, pitch, cache): (text, voice, pitch, indexes)
+            for (text, voice, pitch), indexes in grouped.items()
+        }
+        for future in as_completed(futures):
+            text, voice, pitch, indexes = futures[future]
+            try:
+                samples, cached = future.result()
+            except Exception as error:
+                failures.append((indexes, str(error)))
+                print("[tts] ERROR lines %s: %s" % (indexes, error), flush=True)
+                continue
+            key = voice_cache_key(text, voice, pitch)
+            for index in indexes:
+                kind, _, speaker = lines[index]
+                minimum = 34 if kind == "title" else 28
+                padding = 8 if kind == "end" else 10
+                frames = max(minimum, round(samples / SR * FPS) + padding)
+                entries[index] = dict(file="cache/" + key + ".wav", kind=kind,
+                                      samples=samples, frames=frames,
+                                      speaker=speaker, voice=voice, pitch=pitch)
+                print("[tts] %02d %s %d samples -> %d frames (%s)" %
+                      (index, kind, samples, frames, "cached" if cached else "generated"), flush=True)
+
+    if failures:
+        failed = sorted(index for indexes, _ in failures for index in indexes)
+        raise RuntimeError("配音未完成，失败条目 %s；成功的音频已保存，重试时继续" % failed)
+    with tempfile.TemporaryDirectory(dir=args.out, prefix=".audio-manifest-") as staging:
+        pending = os.path.join(staging, "audio.json")
+        save_json(pending, dict(ep=ep, sr=SR, fps=FPS, entries=entries,
+                                provider="edge-tts"))
+        os.replace(pending, os.path.join(args.out, "audio.json"))
     print("[tts] %d lines -> %s" % (len(entries), args.out), flush=True)
 
 

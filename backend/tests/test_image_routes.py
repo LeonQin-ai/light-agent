@@ -1,6 +1,7 @@
 """Exercise saved image-route probes with a local Images API and optional live Qwen."""
 
 import argparse
+import collections
 import http.server
 import json
 import pathlib
@@ -28,6 +29,13 @@ class ImagesProvider(http.server.BaseHTTPRequestHandler):
             and "messages" not in body
         )
         image = CORRUPT_PNG if body.get("model") == "local-broken-model" else PNG
+        fixture = next((sample for sample in ("first-scene", "second-scene")
+                        if valid and sample in body["prompt"]), None)
+        if valid and fixture:
+            with self.server.paint_lock:
+                self.server.paint_calls[fixture] += 1
+                if fixture == "second-scene" and self.server.fail_second:
+                    valid = False
         payload = json.dumps({"data": [{"b64_json": image}]} if valid else {}).encode()
         self.send_response(200 if valid else 400)
         self.send_header("Content-Length", str(len(payload)))
@@ -61,6 +69,59 @@ def probe(base, payload):
     raise RuntimeError("Image route test timed out")
 
 
+def paint(base, provider, workspace):
+    assert request(base, "/v1/agents", {"name": "manju-artist", "role": "Paint the episode"})[0] == 200
+    episode = workspace / "manju" / "ep01"
+    episode.mkdir(parents=True)
+    shots = {"title": "Test episode", "badge": "Fixture", "shots": [
+        {"kind": "narration", "text": "The scene opens.", "image_prompt": "first-scene"},
+        {"kind": "dialogue", "text": "This is a line.", "image_prompt": "second-scene"}
+    ]}
+    (episode / "shots.json").write_text(json.dumps(shots), encoding="utf-8")
+    flow = {"name": "Painting integration fixture", "flow": {"nodes": [{
+        "id": "step2", "agent": "manju-artist", "task": "Produce validated episode panels",
+        "manju_paint_episode": 1, "manju_image_route": "local-image"
+    }], "edges": []}}
+    frames = episode / "frames"
+    manifest = frames / "panels.json"
+
+    def run():
+        status, started = request(base, "/v1/flows", flow)
+        assert status == 200, (status, started)
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            status, task = request(base, "/v1/tasks/" + str(started["id"]))
+            assert status == 200, (status, task)
+            if task["status"] not in ("RUNNING", "QUEUED"):
+                return task
+            time.sleep(0.1)
+        raise RuntimeError("Painting flow timed out")
+
+    failed = run()
+    assert failed["status"] == "FAILED" and "HTTP 400" in failed["output"], failed
+    assert not manifest.exists(), "A partial manifest was published"
+    assert len(list(frames.glob("ai_*.png"))) == 1
+    with provider.paint_lock:
+        provider.fail_second = False
+    # A saved flow from before native painting should resume through the
+    # configured image route instead of recreating procedural placeholders.
+    legacy = flow["flow"]["nodes"][0]
+    del legacy["manju_paint_episode"], legacy["manju_image_route"]
+    legacy["task"] = ('依据镜头脚本 shots.json 渲染漫剧第1集全部画面：'
+                      'python "tools/manju/manju_pipeline.py" panels --shots "shots.json" --out "frames" --ep 1。')
+    completed = run()
+    assert completed["status"] == "DONE", completed
+    with provider.paint_lock:
+        assert provider.paint_calls == {"first-scene": 1, "second-scene": 2}, provider.paint_calls
+    panels = json.loads(manifest.read_text(encoding="utf-8"))
+    assert panels["image_model"] == "local-drawing-model"
+    assert [item["role"] for item in panels["panels"]] == ["title", "shot", "shot", "end"]
+    assert [item["kind"] for item in panels["panels"]] == ["title", "narration", "dialogue", "end"]
+    assert all((frames / item["file"]).is_file() for item in panels["panels"])
+    assert (frames / panels["poster"]).is_file()
+    print("PASS: Painting keeps valid panels, retries only the failed panel and publishes a complete manifest")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
@@ -69,6 +130,9 @@ def main():
     with tempfile.TemporaryDirectory(prefix="light-agent-images-") as tmp, (
         http.server.ThreadingHTTPServer(("127.0.0.1", 0), ImagesProvider)
     ) as provider:
+        provider.paint_lock = threading.Lock()
+        provider.paint_calls = collections.Counter()
+        provider.fail_second = True
         threading.Thread(target=provider.serve_forever, daemon=True).start()
         with socket.socket() as port:
             port.bind(("127.0.0.1", 0))
@@ -93,7 +157,7 @@ def main():
                 "name": "local-image",
                 "provider": "openai",
                 "api_key": "local-fixture",
-                "base_url": f"http://127.0.0.1:{provider.server_port}/v1",
+                "base_url": f"http://127.0.0.1:{provider.server_port}/v1/",
                 "model": "local-drawing-model",
                 "caps": "image_generation",
             }
@@ -110,6 +174,7 @@ def main():
             corrupt = probe(base, {**image_route, "model": "local-broken-model"})
             assert not corrupt["ok"] and "complete PNG" in corrupt["error"], corrupt
             print("PASS: Corrupt PNG response is rejected")
+            paint(base, provider, pathlib.Path(tmp))
             if args.live_routes:
                 routes = json.loads(args.live_routes.read_text(encoding="utf-8-sig"))
                 live = next(r for r in routes if r["model"] == "qwen-image-3.0-pro")

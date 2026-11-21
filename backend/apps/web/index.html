@@ -1544,12 +1544,18 @@ panels.agents = `
   </div>
   <div class="card">
     <h2>📖 漫剧工房 · 一键导入小说</h2>
-    <div class="hint">导入小说后自动切章、注册分镜导演/画师/配音/合成团队，并按 分镜 → 画师‖配音 → 合成 的并行流水线制作一集漫剧（需要本机 python + edge_tts + ffmpeg）。进度在「协作任务」中跟踪。</div>
+    <div class="hint">导入小说后，先生成分镜，再并行出图与配音，最后合成整集。需要文生图路由和本机 Python、Edge TTS、FFmpeg。进度在「协作任务」中跟踪。</div>
     <div class="row" style="margin-top:8px">
       <input id="manju-title" type="text" placeholder="小说标题（如 讨债人）" style="flex:1;min-width:160px">
       <label class="hint" for="manju-episode" style="align-self:center">集号</label>
       <input id="manju-episode" type="number" min="1" value="1" style="width:70px">
       <input id="manju-file" type="file" accept=".txt,.md" multiple style="flex:1;min-width:200px">
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label for="manju-text-route">分镜模型</label>
+      <select id="manju-text-route"><option value="">使用当前对话模型</option></select>
+      <label for="manju-image-route">画面模型</label>
+      <select id="manju-image-route"><option value="">使用已配置的文生图模型</option></select>
     </div>
     <div class="row" style="margin-top:8px">
       <input id="manju-path" type="text" placeholder="或服务器上的小说文件/章节目录（如 D:/…/novel/fanqie_xin_shu）" style="flex:1;min-width:240px">
@@ -2554,7 +2560,22 @@ async function loadAgents(){
   flowAgentOptions();
   /* 模型选项来自路由表：每个 agent 可单独换模型（PUT /v1/agents/<name>） */
   const rr = await call('GET', '/v1/routes');
-  const routes = Array.isArray(rr.obj) ? rr.obj.filter(x => !isImageRoute(x)) : [];
+  const allRoutes = Array.isArray(rr.obj) ? rr.obj : [];
+  const routes = allRoutes.filter(x => !isImageRoute(x));
+  for(const [id, label, options] of [
+    ['manju-text-route','使用当前对话模型',routes],
+    ['manju-image-route','使用已配置的文生图模型',allRoutes.filter(isImageRoute)]
+  ]){
+    const field = $(id);
+    if(!field) continue;
+    const selection = field.value;
+    field.replaceChildren(new Option(label, ''));
+    for(const item of options) field.add(new Option(item.model || item.name, item.name));
+    const preferred = id === 'manju-text-route'
+      ? options.find(x => /^deepseek-v4\.1-flash/i.test(x.model || ''))
+      : options.find(x => x.model === 'qwen-image-3.0-pro');
+    field.value = options.some(x => x.name === selection) ? selection : (preferred?.name || '');
+  }
   const modelOptions = (cur) => {
     let h = '<option value="">（当前激活模型）</option>';
     let found = false;
@@ -2617,9 +2638,9 @@ const AGENT_PRESETS = [
   {key:'researcher', name:'researcher', label:'🔬 调研分析', kw:['调研','分析','调查','竞品','评估','对比','可行性','报告'],
    hint:'来源、判断与可执行建议', role:'你是资深调研分析师。先核对资料来源，再给出结论、证据、限制与可执行建议；需要报告文件时实际写入并检查，清楚标识推断与未确认事实。'},
   {key:'manju-director', name:'manju-director', label:'🎬 分镜导演', kw:['漫剧','分镜','镜头脚本','故事板','storyboard','短剧','漫画剧'],
-   hint:'小说章节 → 镜头脚本 shots.json', role:'你是漫剧分镜导演。把小说章节改编成镜头脚本 shots.json：{"title","badge","shots":[{"kind":"narration|dialogue|sys","text"}]}。对白独立成镜（dialogue），旁白 narration，系统/提示音 sys；每镜一句、节奏紧凑、突出冲突。先运行 python tools/manju/manju_pipeline.py shots --chapter <章节md> --out <shots.json> 生成基础镜头表，再按戏剧节奏审阅修订。最终回复用反引号单独标出 shots.json 路径。'},
+   hint:'小说章节 → 镜头脚本 shots.json', role:'你是漫剧分镜导演。完整读取章节，再直接保存 JSON。顶层含 title、badge、title_image_prompt、end_image_prompt、characters、shots。每镜含 kind、text、speaker、character_ids、scene、image_prompt。对白独立成镜（dialogue），旁白 narration，系统播报 sys。统一角色外观，每镜补充独立的竖版 9:16 画面提示。按情节决定镜头数量，不用逐句拆分原文。验证后交付路径与镜头数。'},
   {key:'manju-artist', name:'manju-artist', label:'🎨 画师', kw:['画师','原画','绘制','画面渲染','赛璐璐','插画师'],
-   hint:'镜头脚本 → 逐镜画面 + 封面', role:'你是漫剧画师。依据镜头脚本渲染全部画面：python tools/manju/manju_pipeline.py panels --shots <shots.json> --out <frames目录> --ep <集号>。画面为赛璐璐人物+氛围背景（对白双人过肩、旁白环境远景）。核对 panels.json 与每张 PNG、poster.png 均已生成且可打开。最终回复用反引号标出 frames 目录与 poster 路径。'},
+   hint:'镜头脚本 → 文生图逐镜画面 + 封面', role:'你是漫剧画师。沿用统一角色设定，用已配置的文生图模型逐镜产出竖版画面，校验图片后写入分镜清单，供合成步骤使用。'},
   {key:'manju-voice', name:'manju-voice', label:'🎙️ 配音', kw:['配音','声优','台词朗读','tts','旁白配音','voice actor'],
    hint:'逐句神经网络配音，音画对齐', role:'你是漫剧配音导演。为镜头脚本逐句合成配音：python tools/manju/manju_pipeline.py tts --shots <shots.json> --out <audio目录>。旁白低沉男声、对白年轻男声、系统播报腔（edge_tts 神经网络音色）；镜头时长跟随语音长度。核对 audio.json 每句 wav 存在且时长合理。最终回复用反引号标出 audio 目录路径。'},
   {key:'manju-editor', name:'manju-editor', label:'🎞️ 剪辑合成', kw:['剪辑','合成','成片','渲染视频','ffmpeg','漫剧合成'],
@@ -2680,6 +2701,10 @@ async function manjuImport(){
   const path = $('manju-path').value.trim();
   const files = $('manju-file').files;
   const body = {episode};
+  const textRoute = $('manju-text-route')?.value;
+  const imageRoute = $('manju-image-route')?.value;
+  if(textRoute) body.text_route = textRoute;
+  if(imageRoute) body.image_route = imageRoute;
   if(title) body.title = title;
   if(path){
     body.path = path;

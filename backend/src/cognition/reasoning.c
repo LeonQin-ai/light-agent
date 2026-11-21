@@ -318,6 +318,7 @@ struct reasoning {
     int run_successful_tools;
     double planner_temperature;
     char planner_effort[8];
+    char default_planner_effort[8];
     int thinking_mode; /* task-local preference; set by the chat lane */
     int external_history; /* current request already contains canonical transcript */
     int completion_only; /* reserved final review cannot execute more tools */
@@ -1067,6 +1068,10 @@ void reasoning_set_observer(reasoning *r, reasoning_observer cb, void *ud) {
     if (r) { r->observer = cb; r->observer_ud = ud; }
 }
 void reasoning_set_thinking_mode(reasoning *r, int enabled) { if (r) r->thinking_mode = enabled != 0; }
+void reasoning_set_default_effort(reasoning *r, const char *effort) {
+    if (r) snprintf(r->default_planner_effort, sizeof r->default_planner_effort,
+                    "%s", effort ? effort : "");
+}
 void reasoning_set_external_history(reasoning *r, int enabled) { if(r)r->external_history=enabled!=0; }
 void reasoning_set_abort_parent(reasoning *r, task *t) { if (r) r->abort_parent=t; }
 void reasoning_set_task(reasoning *r, task *t) {
@@ -5545,7 +5550,7 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     cJSON *temperature = cJSON_GetObjectItemCaseSensitive(o, "temperature");
     r->planner_temperature = cJSON_IsNumber(temperature) ? temperature->valuedouble : -1;
     const char *effort = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"reasoning_effort"));
-    snprintf(r->planner_effort,sizeof(r->planner_effort),"%s",effort ? effort : "");
+    snprintf(r->planner_effort,sizeof(r->planner_effort),"%s",effort ? effort : r->default_planner_effort);
     if (cJSON_IsString(cJSON_GetObjectItemCaseSensitive(o, "provider"))) {
         picked=llm_create(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"provider")),
             cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"base_url")),cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"api_key")),
