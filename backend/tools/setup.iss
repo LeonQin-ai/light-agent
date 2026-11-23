@@ -10,7 +10,7 @@
 ;   ISCC.exe tools/setup.iss
 
 #define MyAppName "light-agent"
-#define MyAppVersion "3.3.0"
+#define MyAppVersion "3.4.0"
 #define MyAppPublisher "light-agent"
 #define MyAppExeName "light-agent-desktop.exe"
 
