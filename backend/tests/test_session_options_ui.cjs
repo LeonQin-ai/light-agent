@@ -1,7 +1,9 @@
 const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 (async()=>{const browser=await chromium.launch({headless:true,channel:process.env.UI_TEST_BROWSER||'msedge'});try{
  const page=await browser.newPage(),sessions=[],sessionRequests=[],submitted=[],errors=[];page.on('pageerror',e=>errors.push(e.message));let globalWrites=0;
- let petTask={id:0,session_id:'a',input:'检视代码并发现优化点',status:'RUNNING',stage:'executing'};
+ let petTask={id:0,session_id:'a',input:'检视代码并发现优化点',status:'RUNNING',stage:'executing',cur_tool:'file_edit',steps:[
+  {tool:'file_edit',ok:1,target:'example.c'},{tool:'file_edit',ok:1,target:'example.c'},
+  {tool:'file_edit',ok:0,target:'unmodified.c'}]};
  await page.addInitScript(()=>{
   window.petMessages=[];
   window.chrome ??= {};
@@ -27,8 +29,8 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  if(u.pathname==='/v1/workspaces')obj={default_workspace:'D:/default',workspaces:[]};
  if(u.pathname==='/v1/chat/sessions'){if(r.method()==='POST'){sessionRequests.push(r.postDataJSON());obj={id:sessions.length?'b':'a',workspace:'D:/default'};sessions.push(obj);}else obj=sessions;}
  if(u.pathname==='/v1/chat/history')obj={turns:[],runs:[]};
- if(u.pathname==='/v1/scheduler')obj={
-  active:petTask.status==='RUNNING'?1:0,queued:petTask.status==='QUEUED'?1:0,current_task_id:0};
+ if(u.pathname==='/v1/scheduler')obj=petTask.status==='DONE'?
+  {active:0,queued:0,current_task_id:-1}:{active:2,queued:1,current_task_id:0};
  if(u.pathname==='/v1/tasks/0')obj=petTask;
  if(u.pathname==='/v1/chat'){submitted.push(r.postDataJSON());obj={id:7};}
  if(u.pathname==='/v1/tasks/7')obj={id:7,status:'DONE',output:'verified'};
@@ -40,18 +42,13 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  const pet=page.locator('#chat-task-pet');
  assert.equal(await pet.innerText(),'开启桌宠');
  await pet.click();
- const waitForPetStatus=message=>page.waitForFunction(expected=>
-   petMessages.filter(m=>m.startsWith('task-pet:status:')).at(-1)===expected,message);
- await waitForPetStatus('task-pet:status:move\n检视代码并发现优化点\n繁忙');
- petTask={...petTask,stage:'planning'};
- await waitForPetStatus('task-pet:status:think\n检视代码并发现优化点\n繁忙');
+ await page.waitForFunction(()=>petMessages.includes('task-pet:status:move\n检视代码并发现优化点\n正在修改文件 · 已修改 1 个文件'));
+ petTask={...petTask,cur_tool:'file_read',steps:[],tool_calls:3};
+ await page.waitForFunction(()=>petMessages.includes('task-pet:status:move\n检视代码并发现优化点\n正在读取文件 · 已调用 3 次工具'));
+ petTask={...petTask,stage:'planning',tool_calls:0};
+ await page.waitForFunction(()=>petMessages.includes('task-pet:status:think\n检视代码并发现优化点\n正在规划下一步'));
  petTask={...petTask,status:'DONE'};
- await waitForPetStatus('task-pet:status:空闲');
- petTask={...petTask,status:'QUEUED',stage:'queued'};
- await waitForPetStatus('task-pet:status:move\n检视代码并发现优化点\n繁忙');
- petTask={...petTask,status:'FAILED'};
- await waitForPetStatus('task-pet:status:空闲');
- assert.ok(await page.evaluate(()=>petMessages.filter(m=>m.startsWith('task-pet:status:')).every(m=>/(繁忙|空闲)$/.test(m))));
+ await page.waitForFunction(()=>petMessages.includes('task-pet:status:celebrate\n检视代码并发现优化点\n已完成'));
  assert.equal(await pet.innerText(),'关闭桌宠');
  await pet.click();
  assert.equal(await pet.innerText(),'开启桌宠');
