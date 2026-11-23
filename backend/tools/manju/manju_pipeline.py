@@ -16,7 +16,7 @@
       配音：edge_tts 并发合成（逐句验证、断点续跑），44100 单声道，audio.json
   compose --shots <shots.json> (--panels <dir> | --clips <dir>) --audio <dir> --out <ep.mp4> --ep <N>
           [--manifest <path>]
-      合成：逐帧推拉/平移/手持抖动 + 雨丝 + 颗粒 + 字幕淡入，rawvideo 管道进 ffmpeg，
+      合成：逐帧推拉/平移/手持抖动 + 颗粒 + 字幕淡入，rawvideo 管道进 ffmpeg，
       语音按镜补零 + 低频 drone amix；cv2/ffmpeg 双重校验；写/合并 manifest；失败 exit 1。
 
 依赖：numpy cv2 PIL imageio_ffmpeg soundfile edge_tts
@@ -393,26 +393,6 @@ def fast_grain(fr, fi, amp=2):
         _GRAIN_BANK = [np.random.default_rng(300 + i).integers(
             0, amp + 1, (H, W, 1), dtype=np.uint8) for i in range(6)]
     return cv2.add(fr, np.repeat(_GRAIN_BANK[fi % 6], 3, axis=2))
-
-
-def draw_rain(fr, fi, p):
-    """manju_anim：每帧重绘雨丝；位置只由帧号决定，运动连续不闪烁。"""
-    h, w = fr.shape[:2]
-    col = tuple(max(24, min(255, int(c * 0.62))) for c in p["rain"])
-
-    idx = np.arange(110, dtype=np.int64)
-    ys = (idx * 57 + fi * 19) % (h + 140) - 20
-    xs = (idx * 223 + fi * 13) % (w + 90) - 45
-    ln = 16 + (idx * 11) % 24
-    for x, y, l in zip(xs, ys, ln):
-        cv2.line(fr, (int(x), int(y)), (int(x - 7), int(y + l)), col, 1, cv2.LINE_AA)
-
-    i2 = np.arange(14, dtype=np.int64)
-    ys2 = (i2 * 311 + fi * 47) % (h + 200) - 30
-    xs2 = (i2 * 149 + fi * 29) % (w + 60) - 30
-    for x, y in zip(xs2, ys2):
-        cv2.line(fr, (int(x), int(y)), (int(x - 14), int(y + 46)), col, 2, cv2.LINE_AA)
-    return fr
 
 
 # ---------------------------------------------------------------- overlays（render_manju 原样，文案通用化）
@@ -999,7 +979,6 @@ def cmd_compose(args):
                 cx = min(0.88, max(0.12, s["cx"] + s["px"] * t + wob_x))
                 cy = min(0.88, max(0.12, s["cy"] + s["py"] * t + wob_y))
                 fr = crop_zoom(s["panel"], z, cx, cy)
-                fr = draw_rain(fr, fi, p)
                 fr = fast_grain(fr, fi, 2)
                 fr = fast_composite(fr, s["ovl"], min(1.0, (k + 1) / 4.0))
                 yield fr
