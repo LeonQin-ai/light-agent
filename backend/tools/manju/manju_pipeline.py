@@ -455,7 +455,7 @@ def fast_composite(frame, ovl, fade=1.0):
     return frame
 
 
-def badge_overlay(p, badge, no, total):
+def badge_overlay(p, badge):
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(ov)
     m = 42
@@ -463,13 +463,10 @@ def badge_overlay(p, badge, no, total):
     txt = badge if len(badge) <= 16 else badge[:16] + "…"
     d.rectangle([m, 46, m + 8, 78], fill=p["accent2"])
     d.text((m + 20, 48), txt, font=f, fill=(214, 224, 240))
-    fr = get_font(20, False)
-    s = "%02d/%02d" % (no, total)
-    d.text((W - m - get_font(20, False).getlength(s), 50), s, font=fr, fill=(150, 170, 195))
     return _pack(ov)
 
 
-def body_overlay(kind, text, p, badge, no, total):
+def body_overlay(kind, text, p, badge):
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(ov)
     margin = 46
@@ -521,7 +518,7 @@ def body_overlay(kind, text, p, badge, no, total):
     d.multiline_text((x0 + 32, ty), wrapped, font=font, fill=tcol, spacing=10)
 
     packed = _pack(ov)
-    b = badge_overlay(p, badge, no, total)
+    b = badge_overlay(p, badge)
     if b is not None and packed is not None:
         rgb2, a2c, box2 = b
         rgb1, a1c, box1 = packed
@@ -789,8 +786,8 @@ def build_overlays(doc, ep, p):
     title, badge = doc["title"], doc["badge"]
     shots = doc["shots"]
     ovls = [title_overlay(title, p, "第 %d 话 · %s" % (ep, badge))]
-    for si, sh in enumerate(shots, start=1):
-        ovls.append(body_overlay(sh["kind"], sh["text"], p, badge, si, len(shots)))
+    for sh in shots:
+        ovls.append(body_overlay(sh["kind"], sh["text"], p, badge))
     ovls.append(end_overlay("第 %d 话 完" % ep, p))
     return ovls
 
