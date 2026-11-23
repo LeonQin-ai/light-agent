@@ -66,7 +66,7 @@ def main():
         clip_manifest = clips / "clips.json"
         output, manifest = root / "episode.mp4", root / "manifest.json"
         args = [
-            sys.executable, str(PIPELINE), "compose", "--shots", str(storyboard),
+            sys.executable, "-X", "utf8", str(PIPELINE), "compose", "--shots", str(storyboard),
             "--clips", str(clips), "--audio", str(audio), "--out", str(output),
             "--manifest", str(manifest), "--ep", "2",
         ]

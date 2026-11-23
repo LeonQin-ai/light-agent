@@ -837,10 +837,10 @@ static void flow_manju_pipeline(flow_job *j, int voice) {
 #else
     char python[] = "python3";
 #endif
-    char *argv[] = {python, "-I", "-u", "-c", bootstrap, script_length, (char *)workspace,
+    char *argv[] = {python, "-I", "-X", "utf8", "-u", "-c", bootstrap, script_length, (char *)workspace,
                     "compose", "--shots", shots, clips ? "--clips" : "--panels", panels, "--audio", audio,
                     "--out", video, "--ep", ep, "--manifest", manifest, NULL};
-    char *voice_argv[] = {python, "-I", "-u", "-c", bootstrap, script_length, (char *)workspace,
+    char *voice_argv[] = {python, "-I", "-X", "utf8", "-u", "-c", bootstrap, script_length, (char *)workspace,
                          "tts", "--shots", shots, "--out", audio, "--ep", ep, NULL};
     const char *stage = voice ? "配音" : "合成";
     j->rc = -1;
