@@ -224,7 +224,7 @@ int manju_video_episode(router *routes, const char *route_name, const char *work
                         int episode, int seconds, int (*abort_check)(void *),
                         manju_video_progress progress, void *context, char **result) {
     char relative[64], directory[VIDEO_PATH_CAP], path[VIDEO_PATH_CAP];
-    char *root = NULL, *text = NULL, *manifest = NULL;
+    char *root = NULL, *canonical_directory = NULL, *text = NULL, *manifest = NULL;
     cJSON *board = NULL, *doc = NULL;
     clip_run run = {.seconds = seconds, .abort_check = abort_check, .progress = progress, .context = context};
     const char *error = "无法准备视频分镜";
@@ -273,11 +273,12 @@ int manju_video_episode(router *routes, const char *route_name, const char *work
     }
     snprintf(relative, sizeof relative, "manju/ep%02d/clips", episode);
     path_join(directory, sizeof directory, root, relative);
-    if (fs_mkdirs(directory) != 0 || !inside(root, directory)) {
+    if (fs_mkdirs(directory) != 0 || !inside(root, directory) ||
+        !(canonical_directory = existing_path(directory))) {
         error = "无法准备短视频目录";
         goto done;
     }
-    run.directory = directory;
+    run.directory = canonical_directory;
     if (mutex_init(&run.progress_lock) != 0) goto done;
     notify(&run, 0, 0);
     thread_t *workers[VIDEO_WORKERS];
@@ -330,6 +331,7 @@ done:
     free(run.clips);
     free(manifest);
     free(text);
+    free(canonical_directory);
     free(root);
     cJSON_Delete(doc);
     cJSON_Delete(board);
