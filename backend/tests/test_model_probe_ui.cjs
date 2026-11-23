@@ -26,12 +26,18 @@ const assert = require('node:assert/strict');
     assert.deepEqual(preset,{model:'z-ai/glm-5.3-flash',base:'https://integrate.api.nvidia.com/v1',provider:'openai'});
     const imageCases=await page.evaluate(async()=>{
       const select=$('r-provider');
+      const videoPresets=['happyhorse_video','kling_video','seedance_video'].map(id=>{
+        select.value=id;
+        select.dispatchEvent(new Event('change'));
+        return {id,model:$('r-model').value,base:$('r-base').value,caps:$('r-purpose').value};
+      });
       select.value='qwen_image';
       select.dispatchEvent(new Event('change'));
       const preset={model:$('r-model').value,base:$('r-base').value,caps:$('r-purpose').value};
       const routes=[
         {name:'image',provider:'openai',model:preset.model,base_url:preset.base,image_generation:true},
-        {name:'chat',provider:'openai',model:'chat-fixture',image_generation:false}
+        {name:'chat',provider:'openai',model:'chat-fixture',image_generation:false},
+        {name:'video',provider:'openai',model:'video-fixture',video_generation:true}
       ];
       let probe, writes=0;
       call=async(method,url,body)=>{
@@ -49,28 +55,39 @@ const assert = require('node:assert/strict');
         return {status:200,obj:[]};
       };
       await loadModels();
-      const [imageRow,chatRow]=$('routes-body').rows;
+      const [imageRow,chatRow,videoRow]=$('routes-body').rows;
       await setActive(0);
       await testRoute(0);
       const imageText=imageRow.textContent;
       const chatText=chatRow.textContent;
+      const imageProbe=probe;
+      await setActive(2);
+      await testRoute(2);
       const chatSelect=document.createElement('select');
       chatSelect.id='chat-model';
       document.body.appendChild(chatSelect);
       await fillChatModelSelect();
       const chatOptions=Array.from(chatSelect.options,option=>option.value);
       chatSelect.remove();
-      return {preset,probe,writes,imageText,chatText,chatOptions};
+      return {preset,probe,imageProbe,writes,imageText,chatText,videoText:videoRow.textContent,chatOptions,videoPresets};
     });
     assert.deepEqual(imageCases.preset,{
       model:'qwen-image-3.0-pro',
       base:'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
       caps:'image_generation'
     });
-    assert.deepEqual(imageCases.probe,{route_name:'image'});
+    assert.deepEqual(imageCases.imageProbe,{route_name:'image'});
+    assert.deepEqual(imageCases.probe,{route_name:'video'});
+    assert.deepEqual(imageCases.videoPresets,[
+      {id:'happyhorse_video',model:'happyhorse-1.1-t2v',base:'https://token-plan.cn-beijing.maas.aliyuncs.com',caps:'video_generation'},
+      {id:'kling_video',model:'kling/kling-v3-turbo-video-generation',base:'https://dashscope.aliyuncs.com',caps:'video_generation'},
+      {id:'seedance_video',model:'doubao-seedance-2-0-260128',base:'https://ark.cn-beijing.volces.com/api/v3',caps:'video_generation'}
+    ]);
     assert.equal(imageCases.writes,0);
     assert.match(imageCases.imageText,/文生图.*测试出图.*测试通过 图片已生成/);
     assert.doesNotMatch(imageCases.imageText,/上下文|Set active/);
+    assert.match(imageCases.videoText,/文生视频.*测试出视频.*测试通过/);
+    assert.doesNotMatch(imageCases.videoText,/上下文|Set active/);
     assert.match(imageCases.chatText,/上下文.*Set active/);
     assert.doesNotMatch(imageCases.chatText,/图片已生成/);
     assert.deepEqual(imageCases.chatOptions,['@cur','chat']);

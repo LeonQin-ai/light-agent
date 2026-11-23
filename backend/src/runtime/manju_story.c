@@ -174,6 +174,7 @@ static int budget_for(const llm *client, size_t bytes) {
 }
 
 int manju_story_episode(llm *client, const char *workspace, const char *chapter_path, int episode,
+                        int clip_seconds,
                         int (*abort_check)(void *), void *context, int *requests, char **result) {
     char path[STORY_PATH_CAP], dir[STORY_PATH_CAP], key[17], relative[64];
     char *root = NULL, *chapter_file = NULL, *chapter = NULL, *saved = NULL, *serialized = NULL;
@@ -217,6 +218,8 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
     path_join(path, sizeof path, dir, "shots.json");
     /* A single envelope publishes both the result and its checkpoint. Include
      * model/endpoint and prompt version, but no API keys, in the input identity. */
+    if (clip_seconds)
+        strbuf_appendf(&signature, "motion:%d\n", clip_seconds);
     strbuf_appendf(&signature, "%d\n%s\n%s\n%s\n%s\n",
                    episode, client->provider ? client->provider : "", client->model,
                    client->base_url ? client->base_url : "", story_prompt);
@@ -248,7 +251,14 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
         error = "章节无法完整放入所选模型上下文";
         goto done;
     }
-    strbuf_appendf(&user, "集号：%d\n以下为完整的小说章正文：\n", episode);
+    strbuf_appendf(&user, "集号：%d\n", episode);
+    if (clip_seconds)
+        strbuf_appendf(&user,
+            "本集为短视频漫剧，每个镜头用同一个连续动作填满 %d 秒。"
+            "每镜补充 video_prompt，描述起始姿态、动作及镜头运动。"
+            "使上一镜结尾自然衔接下一镜开头；对白太长时分成连续镜头。\n",
+            clip_seconds);
+    strbuf_append(&user, "以下为完整的小说章正文：\n");
     size_t prefix = user.len;
     strbuf_append_n(&user, chapter, n);
     if (!prefix || user.len != prefix + n) goto done;

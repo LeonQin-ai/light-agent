@@ -45,6 +45,25 @@ static const char *field(const cJSON *object, const char *key) {
     return cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(object, key));
 }
 
+void manju_append_cast(strbuf *prompt, const cJSON *board, const cJSON *shot) {
+    const cJSON *ids = cJSON_GetObjectItemCaseSensitive(shot, "character_ids");
+    const cJSON *cast = cJSON_GetObjectItemCaseSensitive(board, "characters");
+    const cJSON *id;
+    cJSON_ArrayForEach(id, ids) {
+        const char *wanted = cJSON_GetStringValue(id);
+        if (!wanted) continue;
+        const cJSON *character;
+        cJSON_ArrayForEach(character, cast) {
+            const char *key = field(character, "id");
+            const char *visual = field(character, "visual");
+            if (!key || !visual || strcmp(key, wanted)) continue;
+            const char *name = field(character, "name");
+            strbuf_appendf(prompt, "\n保持角色 %s 的外观：%s", name ? name : key, visual);
+            break;
+        }
+    }
+}
+
 static char *existing_path(const char *path) {
 #ifdef _WIN32
     return fs_windows_final_path(path);
@@ -172,7 +191,8 @@ static void paint_worker(void *context) {
     http_set_cancel_check(NULL, NULL);
 }
 
-static char *visual_prompt(const char *direction, const char *visual, const char *text) {
+static char *visual_prompt(const char *direction, const char *visual, const char *text,
+                           const cJSON *board, const cJSON *shot) {
     strbuf prompt;
     strbuf_init(&prompt);
     strbuf_append(&prompt, "竖版9:16的精绘二维中国漫剧分镜，赛璐璐光影，电影构图。"
@@ -181,6 +201,7 @@ static char *visual_prompt(const char *direction, const char *visual, const char
     if (direction && *direction) strbuf_appendf(&prompt, "%s\n", direction);
     if (visual && *visual) strbuf_append(&prompt, visual);
     else strbuf_appendf(&prompt, "将以下情节描绘成单幅画面，忠实表达场景和人物动作，不绘制文字：%s", text);
+    manju_append_cast(&prompt, board, shot);
     return strbuf_detach(&prompt);
 }
 
@@ -212,9 +233,9 @@ static int panel_add(cJSON *entries, const char *file, const char *kind, int ind
     return ok;
 }
 
-int manju_paint_episode(router *routes, const char *route_name, const char *workspace, int episode,
-                        int (*abort_check)(void *), manju_paint_progress progress, void *context,
-                        char **result) {
+static int paint_episode(router *routes, const char *route_name, const char *workspace, int episode,
+                         int characters, int (*abort_check)(void *), manju_paint_progress progress,
+                         void *context, char **result) {
     char directory[PAINT_PATH_CAP], episode_dir[PAINT_PATH_CAP], path[PAINT_PATH_CAP], relative[40];
     char *root = NULL, *canonical_directory = NULL, *text = NULL, *manifest = NULL;
     cJSON *board = NULL, *doc = NULL;
@@ -228,7 +249,7 @@ int manju_paint_episode(router *routes, const char *route_name, const char *work
         error = "没有匹配的文生图路由，请在 Model routes 配置并测试出图";
         goto done;
     }
-    if (strstr(run.model.model, "qwen-image-")) run.size = "576x1024";
+    if (strstr(run.model.model, "qwen-image-")) run.size = characters ? "1024x576" : "576x1024";
     root = existing_path(workspace && *workspace ? workspace : ".");
     snprintf(relative, sizeof relative, "manju/ep%02d", episode);
     if (!root || strlen(root) + strlen(relative) + 100 >= sizeof directory) {
@@ -248,12 +269,23 @@ int manju_paint_episode(router *routes, const char *route_name, const char *work
     cJSON *shots = cJSON_GetObjectItemCaseSensitive(board, "shots");
     const char *title = field(board, "title"), *badge = field(board, "badge");
     int count = cJSON_GetArraySize(shots);
+    const cJSON *cast = cJSON_GetObjectItemCaseSensitive(board, "characters");
+    int cast_count = cJSON_GetArraySize(cast);
     if (!title || !*title || !badge || !*badge || !cJSON_IsArray(shots) ||
         count < 1 || count > PAINT_SHOTS_MAX) {
         error = "shots.json 必须包含标题、短标题及 1–180 个有效镜头";
         goto done;
     }
-    run.total = count + 2;
+    if (characters && (!cJSON_IsArray(cast) || cast_count > 24)) {
+        error = "分镜角色清单无效，需要 0–24 个角色";
+        goto done;
+    }
+    run.total = characters ? cast_count : count + 2;
+    if (!run.total) {
+        strbuf_append(&report, "本集没有需要生成三视图的角色。");
+        rc = 0;
+        goto done;
+    }
     run.panels = calloc((size_t)run.total, sizeof(*run.panels));
     if (!run.panels) goto done;
     const char *direction = field(board, "art_direction");
@@ -263,27 +295,49 @@ int manju_paint_episode(router *routes, const char *route_name, const char *work
         error = "画风或首尾卡提示过长";
         goto done;
     }
-    if (opening && *opening) {
-        run.panels[0].prompt = visual_prompt(direction, opening, title);
+    if (characters) {
+        for (int i = 0; i < cast_count; i++) {
+            const cJSON *character = cJSON_GetArrayItem(cast, i);
+            const char *visual = field(character, "visual");
+            const char *name = field(character, "name");
+            const char *id = field(character, "id");
+            if (!visual || !*visual || !name || !id || strlen(visual) > 1500 || strlen(name) > 320) {
+                error = "角色缺少用于生成三视图的外观说明";
+                goto done;
+            }
+            strbuf prompt;
+            strbuf_init(&prompt);
+            strbuf_appendf(&prompt, "横版中文漫剧角色设定图。浅灰纯色背景，三栏从左到右：同一个角色的正面、侧面、背面全身。"
+                           "三栏都为自然站姿，全身入镜，保持完全相同的发型、身高、服装、色彩和道具，使用正交视角。"
+                           "无字幕、标签、水印、边框或任何文字。角色：%s。造型：%s", name, visual);
+            if (direction && *direction) strbuf_appendf(&prompt, "\n统一画风：%s", direction);
+            run.panels[i].prompt = strbuf_detach(&prompt);
+            if (!run.panels[i].prompt) goto done;
+            expected++;
+        }
+    }
+    if (!characters && opening && *opening) {
+        run.panels[0].prompt = visual_prompt(direction, opening, title, board, NULL);
         if (!run.panels[0].prompt) goto done;
         expected++;
     }
-    if (closing && *closing) {
-        run.panels[count + 1].prompt = visual_prompt(direction, closing, title);
+    if (!characters && closing && *closing) {
+        run.panels[count + 1].prompt = visual_prompt(direction, closing, title, board, NULL);
         if (!run.panels[count + 1].prompt) goto done;
         expected++;
     }
-    for (int i = 0; i < count; i++) {
+    for (int i = 0; !characters && i < count; i++) {
         cJSON *shot = cJSON_GetArrayItem(shots, i);
         if (!valid_shot(shot)) {
             strbuf_appendf(&report, "镜头 %d 的类型、台词或绘图说明无效", i + 1);
             goto done;
         }
-        run.panels[i + 1].prompt = visual_prompt(direction, field(shot, "image_prompt"), field(shot, "text"));
+        run.panels[i + 1].prompt = visual_prompt(direction, field(shot, "image_prompt"),
+                                                field(shot, "text"), board, shot);
         if (!run.panels[i + 1].prompt) goto done;
         expected++;
     }
-    path_join(directory, sizeof directory, episode_dir, "frames");
+    path_join(directory, sizeof directory, episode_dir, characters ? "characters" : "frames");
     if (!existing_under(root, episode_dir) || fs_mkdirs(directory) != 0 || !existing_under(root, directory) ||
         !(canonical_directory = existing_path(directory))) {
         error = "画面目录无法创建或超出工作区";
@@ -319,6 +373,34 @@ int manju_paint_episode(router *routes, const char *route_name, const char *work
             if (panel->prompt && !panel->file[0])
                 strbuf_appendf(&report, "画面 %d：%s\n", i, panel->error[0] ? panel->error : "未生成");
         }
+        goto done;
+    }
+    if (characters) {
+        doc = cJSON_CreateObject();
+        cJSON *entries = doc ? cJSON_AddArrayToObject(doc, "characters") : NULL;
+        if (!entries || !cJSON_AddNumberToObject(doc, "ep", episode) ||
+            !cJSON_AddStringToObject(doc, "image_model", run.model.model)) goto done;
+        for (int i = 0; i < cast_count; i++) {
+            const cJSON *character = cJSON_GetArrayItem(cast, i);
+            cJSON *item = cJSON_CreateObject();
+            if (!item || !cJSON_AddStringToObject(item, "id", field(character, "id")) ||
+                !cJSON_AddStringToObject(item, "name", field(character, "name")) ||
+                !cJSON_AddStringToObject(item, "visual", field(character, "visual")) ||
+                !cJSON_AddStringToObject(item, "file", run.panels[i].file) ||
+                !cJSON_AddItemToArray(entries, item)) {
+                cJSON_Delete(item);
+                goto done;
+            }
+        }
+        manifest = cJSON_PrintUnformatted(doc);
+        path_join(path, sizeof path, directory, "characters.json");
+        if (!manifest || paint_write(path, manifest, strlen(manifest)) != 0) {
+            error = "无法发布角色三视图清单";
+            goto done;
+        }
+        strbuf_appendf(&report, "%s 完成 %d 个角色的正面、侧面和背面设定（%d 次出图请求）。\n角色清单：`%s`",
+                       run.model.model, cast_count, run.requests, path);
+        rc = 0;
         goto done;
     }
     if (!run.panels[0].prompt) strcpy(run.panels[0].file, run.panels[1].file);
@@ -358,4 +440,16 @@ done:
     cJSON_Delete(doc);
     route_clear(&run.model);
     return rc;
+}
+
+int manju_paint_episode(router *routes, const char *route_name, const char *workspace, int episode,
+                        int (*abort_check)(void *), manju_paint_progress progress, void *context,
+                        char **result) {
+    return paint_episode(routes, route_name, workspace, episode, 0, abort_check, progress, context, result);
+}
+
+int manju_character_views(router *routes, const char *route_name, const char *workspace, int episode,
+                          int (*abort_check)(void *), manju_paint_progress progress, void *context,
+                          char **result) {
+    return paint_episode(routes, route_name, workspace, episode, 1, abort_check, progress, context, result);
 }

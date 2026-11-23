@@ -6,7 +6,7 @@ const extract=name=>html.match(new RegExp('(?:async )?function '+name+'\\([^]*?\
 const posts=[];
 const context={esc:s=>String(s).replaceAll('<','&lt;'),ROUTES:[{name:'ark',provider:'openai',model:'fixture',base_url:'https://fixture',context_window:1048576}],prompt:()=> 'new fixture key',$:()=>({}),call:async(method,path,body)=>{posts.push(body);return{status:200}},loadModels:()=>{}};
 vm.createContext(context);
-vm.runInContext(['isImageRoute','routeContextLabel','fetchedModelMetadata','editRouteKey'].map(extract).join('\n'),context);
+vm.runInContext(['isImageRoute','isVideoRoute','mediaRoutePurpose','isMediaRoute','routeContextLabel','fetchedModelMetadata','editRouteKey'].map(extract).join('\n'),context);
 const fallback=context.routeContextLabel({context_window:262144,context_source:'fallback'});
 assert.match(fallback,/上下文未核实/);
 assert.match(fallback,/262,144/);
@@ -18,6 +18,8 @@ assert.equal(context.fetchedModelMetadata({context_window:1048576}).context_sour
 assert.equal(context.fetchedModelMetadata({context_window:-1}).context_source,'fallback');
 (async()=>{
  await context.editRouteKey(0);assert.equal(posts.length,1);assert.ok(!('context_window' in posts[0]));assert.ok(!('max_output_tokens' in posts[0]));
+ context.ROUTES.push({name:'video',provider:'openai',model:'video-fixture',video_generation:true});
+ await context.editRouteKey(1);assert.equal(posts[1].caps,'video_generation');
  const calls=[];context.setTimeout=fn=>fn();context.call=async(method,path,body)=>{calls.push({method,path,body});return {status:200,obj:method==='POST'?{pending:true}:{ok:true}}};
  vm.runInContext(extract('refreshRouteContext'),context);await context.refreshRouteContext(0);
  assert.equal(calls[0].body.route_name,'ark');assert.ok(!('api_key' in calls[0].body));assert.equal(calls[1].method,'GET');

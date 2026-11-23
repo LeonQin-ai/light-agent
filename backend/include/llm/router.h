@@ -56,9 +56,12 @@ const route *router_pick(router *r);
 
 /* Image generation routes are selected separately from chat. */
 int route_is_image(const route *rt);
+int route_is_video(const route *rt);
+int route_is_chat(const route *rt);
 int router_has_image(router *r);
 /* Take an owned snapshot. A NULL/empty image route name selects the first. */
 int router_select_image(router *r, const char *name, route *out);
+int router_select_video(router *r, const char *name, route *out);
 int router_copy_named(router *r, const char *name, route *out);
 void route_clear(route *e);
 

@@ -11,7 +11,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
  try{
   const page=await browser.newPage({viewport:{width:1400,height:900}}),errors=[];
   page.on('pageerror',e=>errors.push(e.message));
-  let importBody=null,agentsGets=0,flowLists=0;
+  let importBody=null,imports=0,agentsGets=0,flowLists=0;
   const agents=[{name:'coder',role:'开发'}];
   await page.route('http://ui.test/**',async route=>{
    const r=route.request(),u=new URL(r.url());let obj=[];
@@ -19,7 +19,9 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
    if(u.pathname==='/v1/config/llm')obj={provider:'openai',model:'fixture',api_key_set:true};
    if(u.pathname==='/v1/routes')obj=[
     {name:'deepseek-script',provider:'openai',model:'deepseek-v4.1-flash-1017'},
-    {name:'qwen-panels',provider:'openai',model:'qwen-image-3.0-pro',image_generation:true}
+    {name:'qwen-panels',provider:'openai',model:'qwen-image-3.0-pro',image_generation:true},
+    {name:'horse-video',provider:'openai',model:'happyhorse-1.1-t2v',video_generation:true},
+    {name:'seedance-video',provider:'openai',model:'doubao-seedance-2-0-260128',video_generation:true}
    ];
    if(u.pathname==='/v1/workspaces')obj={default_workspace:'D:/default',workspaces:[]};
    if(u.pathname==='/v1/agents'){
@@ -29,6 +31,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
    if(u.pathname==='/v1/blackboard')obj={};
    if(u.pathname==='/v1/flows/list'){flowLists++;obj={records:importBody?[{id:7,name:'漫剧《测试小说》第1集',status:'RUNNING'}]:[]};}
    if(u.pathname==='/v1/manju/import'&&r.method()==='POST'){
+    imports++;
     importBody=r.postDataJSON();
     obj={id:7,status:'queued',title:importBody.title,novel_dir:'novel/测试小说',chapters:2,episode:importBody.episode,pipeline:'tools/manju/manju_pipeline.py',agents:['manju-director','manju-artist','manju-voice','manju-editor']};
    }
@@ -60,12 +63,40 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   assert.equal(importBody.episode,1);
   assert.equal(importBody.text_route,'deepseek-script');
   assert.equal(importBody.image_route,'qwen-panels');
+  assert.equal(importBody.character_views,true);
+  assert.ok(!('video_route' in importBody) && !('clip_seconds' in importBody));
   assert.ok(importBody.text.includes('第一章 起点')&&importBody.text.includes('第二章 转折'),'novel text uploaded');
   assert.ok(!importBody.path,'file import must not send a server path');
   assert.ok(agentsGets>before,'agent pool refreshed after import');
   assert.ok(flowLists>0,'collaboration task list refreshed');
   const stat=await page.locator('#manju-stat').innerText();
   assert.ok(stat.includes('#7'),'queued task id surfaced');
+  const submit=page.getByRole('button',{name:'🎬 导入并组队制作'});
+  await page.locator('#manju-media-mode').selectOption('video');
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('请选择视频模型'));
+  assert.equal(imports,1,'video submission must select a route when several exist');
+  await page.locator('#manju-video-route').selectOption('seedance-video');
+  await page.locator('#manju-clip-seconds').selectOption('3');
+  assert.ok(await page.locator('#manju-seedance-hint').isVisible());
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('已切 2 章'));
+  assert.equal(imports,2);
+  assert.equal(importBody.video_route,'seedance-video');
+  assert.equal(importBody.clip_seconds,3);
+  assert.equal(importBody.character_views,true);
+  assert.equal(importBody.image_route,'qwen-panels');
+  await page.locator('#manju-character-views').uncheck();
+  assert.ok(await page.locator('#manju-image-fields').isHidden());
+  await page.locator('#manju-video-route').selectOption('horse-video');
+  await page.locator('#manju-clip-seconds').selectOption('4');
+  assert.ok(await page.locator('#manju-seedance-hint').isHidden());
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('已切 2 章'));
+  assert.equal(imports,3);
+  assert.equal(importBody.video_route,'horse-video');
+  assert.equal(importBody.clip_seconds,4);
+  assert.ok(!('image_route' in importBody) && !('character_views' in importBody));
   /* 空输入给出明确提示而不是发请求 */
   const callsBefore=importBody;
   await page.locator('#manju-title').fill('');
@@ -74,6 +105,6 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('先选择小说文件'),{timeout:5000});
   assert.equal(importBody,callsBefore,'no request without input');
   assert.deepEqual(errors,[]);
-  console.log('PASS: manju presets, one-click novel import, team + flow refresh, empty-input guard');
+  console.log('PASS: manju presets, static and video imports, character settings, team + flow refresh');
  }finally{await browser.close();fs.rmSync(tmp,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

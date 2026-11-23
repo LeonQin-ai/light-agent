@@ -218,8 +218,18 @@ static int route_has_cap(const route *e, const char *tag) {
     return 0;
 }
 
-int route_is_image(const route *rt) {
+int route_is_video(const route *rt) {
     if (!rt || !rt->provider || strcmp(rt->provider, "openai") != 0)
+        return 0;
+    const char *model = rt->model ? rt->model : "";
+    return route_has_cap(rt, "video_generation") ||
+           !strcmp(model, "happyhorse-1.1-t2v") ||
+           !strcmp(model, "kling/kling-v3-turbo-video-generation") ||
+           !strncmp(model, "doubao-seedance-", 16);
+}
+
+int route_is_image(const route *rt) {
+    if (!rt || !rt->provider || strcmp(rt->provider, "openai") != 0 || route_is_video(rt))
         return 0;
     const char *model = rt->model ? rt->model : "";
     return route_has_cap(rt, "image_generation") ||
@@ -229,7 +239,11 @@ int route_is_image(const route *rt) {
            strncmp(model, "dall-e-", 7) == 0;
 }
 
-static int select_route(router *r, const char *name, int only_image, route *out) {
+int route_is_chat(const route *rt) {
+    return rt && !route_is_image(rt) && !route_is_video(rt);
+}
+
+static int select_route(router *r, const char *name, int (*accept)(const route *), route *out) {
     if (out)
         memset(out, 0, sizeof(*out));
     if (!r)
@@ -239,7 +253,7 @@ static int select_route(router *r, const char *name, int only_image, route *out)
     for (size_t i = 0; i < r->count; i++) {
         const route *e = &r->routes[i];
         if ((name && *name && strcmp(e->name, name)) ||
-            (only_image && (!route_is_image(e) || !e->model || !*e->model)))
+            (accept && (!accept(e) || !e->model || !*e->model)))
             continue;
         if (!out) {
             rc = 0;
@@ -266,11 +280,15 @@ static int select_route(router *r, const char *name, int only_image, route *out)
 }
 
 int router_has_image(router *r) {
-    return select_route(r, NULL, 1, NULL) == 0;
+    return select_route(r, NULL, route_is_image, NULL) == 0;
 }
 
 int router_select_image(router *r, const char *name, route *out) {
-    return out ? select_route(r, name, 1, out) : -1;
+    return out ? select_route(r, name, route_is_image, out) : -1;
+}
+
+int router_select_video(router *r, const char *name, route *out) {
+    return out ? select_route(r, name, route_is_video, out) : -1;
 }
 
 int router_copy_named(router *r, const char *name, route *out) {
@@ -281,7 +299,7 @@ static route *pick_chat_round_robin(router *r) {
     for (size_t i = 0; i < r->count; i++) {
         size_t index = (r->cursor + i) % r->count;
         route *e = &r->routes[index];
-        if (route_is_image(e))
+        if (!route_is_chat(e))
             continue;
         size_t step = (e->weight >= 1.0) ? (size_t)e->weight : 1;
         r->cursor = (index + step) % r->count;
@@ -314,13 +332,13 @@ static route *pick_locked(router *r) {
     if (is_cap) {
         const char *tag = pol + 11;
         for (size_t i = 0; i < r->count && n < 64; i++)
-            if (!route_is_image(&r->routes[i]) && route_has_cap(&r->routes[i], tag))
+            if (route_is_chat(&r->routes[i]) && route_has_cap(&r->routes[i], tag))
                 cand[n++] = i;
         if (n == 0)
             return pick_chat_round_robin(r);
     } else {
         for (size_t i = 0; i < r->count && n < 64; i++) {
-            if (!route_is_image(&r->routes[i]))
+            if (route_is_chat(&r->routes[i]))
                 cand[n++] = i;
         }
     }
@@ -402,6 +420,7 @@ char *router_json(router *r) {
         cJSON_AddStringToObject(o, "name", e->name);
         cJSON_AddStringToObject(o, "provider", e->provider);
         cJSON_AddBoolToObject(o, "image_generation", route_is_image(e));
+        cJSON_AddBoolToObject(o, "video_generation", route_is_video(e));
         if (e->base_url)
             cJSON_AddStringToObject(o, "base_url", e->base_url);
         if (e->model)

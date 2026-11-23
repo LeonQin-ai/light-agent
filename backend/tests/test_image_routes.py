@@ -173,6 +173,33 @@ def paint(base, provider, workspace):
     print("PASS: Painting keeps valid panels, retries only the failed panel and publishes a complete manifest")
 
 
+def character_views(base, workspace):
+    episode = workspace / "manju" / "ep01"
+    board = json.loads((episode / "shots.json").read_text(encoding="utf-8"))
+    board["characters"] = [{"id": "hero", "name": "Hero", "visual": "Short black hair, blue jacket"}]
+    (episode / "shots.json").write_text(json.dumps(board), encoding="utf-8")
+    flow = {"nodes": [{"id": "character", "agent": "manju-artist", "task": "Produce a turnaround",
+                       "manju_character_episode": 1, "manju_image_route": "local-image"}],
+            "edges": []}
+    for expected_calls in (1, 0):
+        status, started = request(base, "/v1/flows", flow)
+        assert status == 200, (status, started)
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            status, task = request(base, f"/v1/tasks/{started['id']}")
+            assert status == 200, (status, task)
+            if task["status"] not in ("RUNNING", "QUEUED"):
+                break
+            time.sleep(0.1)
+        assert task["status"] == "DONE", task
+        assert task["flow_nodes"][0]["image_requests"] == expected_calls, task
+    directory = episode / "characters"
+    cast = json.loads((directory / "characters.json").read_text(encoding="utf-8"))
+    assert cast["image_model"] == "local-drawing-model"
+    assert cast["characters"][0]["id"] == "hero" and (directory / cast["characters"][0]["file"]).is_file()
+    print("PASS: Character views use the selected image route, preserve cast IDs, and reuse completed assets")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
@@ -227,6 +254,7 @@ def main():
             assert not corrupt["ok"] and "complete PNG" in corrupt["error"], corrupt
             print("PASS: Corrupt PNG response is rejected")
             paint(base, provider, pathlib.Path(tmp))
+            character_views(base, pathlib.Path(tmp))
             story(base, provider, pathlib.Path(tmp))
             if args.live_routes:
                 routes = json.loads(args.live_routes.read_text(encoding="utf-8-sig"))

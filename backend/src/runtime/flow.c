@@ -17,6 +17,7 @@
 #include "api/manju_pipeline.h"
 #include "runtime/manju_paint.h"
 #include "runtime/manju_story.h"
+#include "runtime/manju_video.h"
 #include "llm/usage.h"
 
 #include <stdlib.h>
@@ -79,8 +80,13 @@ typedef struct flow_node {
     int manju_paint_episode;
     int manju_voice_episode;
     int manju_story_episode;
+    int manju_video_episode;
+    int manju_character_episode;
+    int manju_clip_seconds;
+    int manju_compose_clips;
     char manju_image_route[128];
     char manju_text_route[128];
+    char manju_video_route[128];
     char manju_chapter[320];
     int layer;
     int indeg;
@@ -198,22 +204,58 @@ static int flow_parse(const char *dag_json, flow_dag *d, char **err) {
         } else {
             nd->manju_compose_episode = flow_legacy_manju_episode(nd);
         }
+        cJSON *compose_clips = cJSON_GetObjectItemCaseSensitive(jn, "manju_compose_clips");
+        if (compose_clips) {
+            if (!cJSON_IsBool(compose_clips) || !nd->manju_compose_episode) {
+                cJSON_Delete(root);
+                flow_err(err, "manju_compose_clips requires manju_compose_episode");
+                return -1;
+            }
+            nd->manju_compose_clips = cJSON_IsTrue(compose_clips);
+        }
         cJSON *paint = cJSON_GetObjectItemCaseSensitive(jn, "manju_paint_episode");
+        cJSON *character = cJSON_GetObjectItemCaseSensitive(jn, "manju_character_episode");
         cJSON *image = cJSON_GetObjectItemCaseSensitive(jn, "manju_image_route");
-        if (paint) {
-            double episode = cJSON_GetNumberValue(paint);
+        if (paint || character) {
+            double episode = cJSON_GetNumberValue(paint ? paint : character);
             if (strcmp(nd->agent, "manju-artist") || !isfinite(episode) ||
-                episode < 1 || episode > 500 || (int)episode != episode ||
+                (paint && character) || episode < 1 || episode > 500 || (int)episode != episode ||
                 (image && (!cJSON_IsString(image) || !*image->valuestring ||
                           strlen(image->valuestring) >= sizeof nd->manju_image_route))) {
                 cJSON_Delete(root);
-                flow_err(err, "manju_paint_episode requires manju-artist, an episode from 1 to 500 and an optional manju_image_route");
+                flow_err(err, "Manju art requires manju-artist, an episode from 1 to 500 and an optional image route");
                 return -1;
             }
-            nd->manju_paint_episode = (int)episode;
+            if (character) nd->manju_character_episode = (int)episode;
+            else nd->manju_paint_episode = (int)episode;
             if (image) snprintf(nd->manju_image_route, sizeof nd->manju_image_route, "%s", image->valuestring);
         } else {
             nd->manju_paint_episode = flow_legacy_paint_episode(nd);
+        }
+        cJSON *video = cJSON_GetObjectItemCaseSensitive(jn, "manju_video_episode");
+        cJSON *seconds = cJSON_GetObjectItemCaseSensitive(jn, "manju_clip_seconds");
+        if (seconds) {
+            double length = cJSON_GetNumberValue(seconds);
+            if (length != 3 && length != 4) {
+                cJSON_Delete(root);
+                flow_err(err, "manju_clip_seconds must be 3 or 4");
+                return -1;
+            }
+            nd->manju_clip_seconds = (int)length;
+        }
+        if (video) {
+            double episode = cJSON_GetNumberValue(video);
+            const char *name = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(jn, "manju_video_route"));
+            if (strcmp(nd->agent, "manju-artist") || nd->manju_paint_episode || nd->manju_character_episode ||
+                !(episode >= 1 && episode <= 500) || (int)episode != episode ||
+                !name || !*name || strlen(name) >= sizeof nd->manju_video_route) {
+                cJSON_Delete(root);
+                flow_err(err, "manju_video_episode requires manju-artist and a named video route");
+                return -1;
+            }
+            nd->manju_video_episode = (int)episode;
+            if (!nd->manju_clip_seconds) nd->manju_clip_seconds = 4;
+            snprintf(nd->manju_video_route, sizeof nd->manju_video_route, "%s", name);
         }
         cJSON *voice = cJSON_GetObjectItemCaseSensitive(jn, "manju_voice_episode");
         if (voice) {
@@ -610,7 +652,7 @@ static llm *flow_agent_llm(runtime_ctx *ctx, const char *agent) {
     if (provider) {
         for (int i = 0; i < router_count(ctx->router); i++) {
             const route *cand = router_get(ctx->router, (size_t)i);
-            if (cand && !route_is_image(cand) && cand->provider && strcmp(cand->provider, provider) == 0) {
+            if (route_is_chat(cand) && cand->provider && strcmp(cand->provider, provider) == 0) {
                 rt = cand;
                 break;
             }
@@ -619,7 +661,7 @@ static llm *flow_agent_llm(runtime_ctx *ctx, const char *agent) {
         rt = router_pick(ctx->router);
     }
     llm *nl = NULL;
-    if (rt && (!model || !route_is_image(&(route){.provider = rt->provider, .model = model}))) {
+    if (rt && (!model || route_is_chat(&(route){.provider = rt->provider, .model = model}))) {
         nl = llm_create(rt->provider, rt->base_url, rt->api_key, model ? model : rt->model);
         if (nl) {
             nl->context_window_tokens = rt->context_window_tokens;
@@ -635,7 +677,7 @@ static llm *flow_agent_llm(runtime_ctx *ctx, const char *agent) {
 static llm *flow_named_chat_llm(runtime_ctx *ctx, const char *name) {
     route selected = {0};
     llm *model = NULL;
-    if (router_copy_named(ctx->router, name, &selected) == 0 && !route_is_image(&selected)) {
+    if (router_copy_named(ctx->router, name, &selected) == 0 && route_is_chat(&selected)) {
         model = llm_create(selected.provider, selected.base_url, selected.api_key, selected.model);
         if (model) {
             model->context_window_tokens = selected.context_window_tokens;
@@ -697,6 +739,7 @@ static void flow_manju_story(flow_job *j) {
     int requests = 0;
     int64_t started = time_now_ms();
     j->rc = manju_story_episode(client, j->workspace, node->manju_chapter, node->manju_story_episode,
+                               node->manju_clip_seconds,
                                flow_abort_requested, j->parent, &requests, &j->out);
     long long input = 0, output = 0;
     llm_usage_totals(client, &input, &output);
@@ -742,11 +785,13 @@ static void flow_paint_progress(int ready, int total, int requests, void *contex
             cJSON *progress = cJSON_CreateObject();
             if (progress) {
                 char summary[64];
-                snprintf(summary, sizeof summary, "文生图 %d/%d", ready, total);
+                int video = job->nd->manju_video_episode != 0;
+                const char *stage = video ? "短视频" : job->nd->manju_character_episode ? "角色三视图" : "文生图";
+                snprintf(summary, sizeof summary, "%s %d/%d", stage, ready, total);
                 if (ready < total) cJSON_AddStringToObject(progress, "cur_tool", summary);
-                cJSON_AddNumberToObject(progress, "images_ready", ready);
-                cJSON_AddNumberToObject(progress, "images_total", total);
-                cJSON_AddNumberToObject(progress, "image_requests", requests);
+                cJSON_AddNumberToObject(progress, video ? "clips_ready" : "images_ready", ready);
+                cJSON_AddNumberToObject(progress, video ? "clips_total" : "images_total", total);
+                cJSON_AddNumberToObject(progress, video ? "video_requests" : "image_requests", requests);
                 cJSON_Delete(node->diagnostics);
                 node->diagnostics = progress;
             }
@@ -759,17 +804,18 @@ static void flow_paint_progress(int ready, int total, int requests, void *contex
 static void flow_manju_pipeline(flow_job *j, int voice) {
     const char *workspace = j->workspace ? j->workspace : ".";
     const int episode = voice ? j->nd->manju_voice_episode : j->nd->manju_compose_episode;
+    int clips = !voice && j->nd->manju_compose_clips;
     const size_t script_size = sizeof(manju_pipeline_py) - 1;
     const char success[] = "\n[light-agent] pipeline complete";
     char script_length[32], shots[64], panels[64], audio[64], audio_manifest[64], video[64], manifest[64], ep[16];
     snprintf(script_length, sizeof(script_length), "%zu", script_size);
     snprintf(ep, sizeof(ep), "%d", episode);
     snprintf(shots, sizeof(shots), "manju/ep%02d/shots.json", episode);
-    snprintf(panels, sizeof(panels), "manju/ep%02d/frames", episode);
+    snprintf(panels, sizeof(panels), "manju/ep%02d/%s", episode, clips ? "clips" : "frames");
     snprintf(audio, sizeof(audio), "manju/ep%02d/audio", episode);
     snprintf(audio_manifest, sizeof(audio_manifest), "manju/ep%02d/audio/audio.json", episode);
-    snprintf(video, sizeof(video), "manju/ep%02d/videos/ep%02d.mp4", episode, episode);
-    snprintf(manifest, sizeof(manifest), "manju/ep%02d/manifest.json", episode);
+    snprintf(video, sizeof(video), "manju/ep%02d/videos/ep%02d%s.mp4", episode, episode, clips ? "-motion" : "");
+    snprintf(manifest, sizeof(manifest), "manju/ep%02d/%smanifest.json", episode, clips ? "video-" : "");
 
     /* Feed the shipped pipeline to Python, without shell interpolation or
      * executing any script left in the workspace by a previous agent. */
@@ -780,7 +826,7 @@ static void flow_manju_pipeline(flow_job *j, int voice) {
         "sys.argv = ['manju_pipeline.py'] + sys.argv[3:]\n"
         "workspace = os.path.realpath('.')\n"
         "for i, flag in enumerate(sys.argv):\n"
-        "    if flag in ('--shots', '--panels', '--audio', '--out', '--manifest'):\n"
+        "    if flag in ('--shots', '--panels', '--clips', '--audio', '--out', '--manifest'):\n"
         "        path = os.path.realpath(sys.argv[i + 1])\n"
         "        if os.path.commonpath([workspace, path]) != workspace:\n"
         "            raise ValueError('Manju path escapes the workspace')\n"
@@ -792,7 +838,7 @@ static void flow_manju_pipeline(flow_job *j, int voice) {
     char python[] = "python3";
 #endif
     char *argv[] = {python, "-I", "-u", "-c", bootstrap, script_length, (char *)workspace,
-                    "compose", "--shots", shots, "--panels", panels, "--audio", audio,
+                    "compose", "--shots", shots, clips ? "--clips" : "--panels", panels, "--audio", audio,
                     "--out", video, "--ep", ep, "--manifest", manifest, NULL};
     char *voice_argv[] = {python, "-I", "-u", "-c", bootstrap, script_length, (char *)workspace,
                          "tts", "--shots", shots, "--out", audio, "--ep", ep, NULL};
@@ -856,6 +902,18 @@ static void flow_worker(void *arg) {
     flow_prog_node_mark(j->task_id, j->nd->id, FP_RUNNING);
     if (j->nd->manju_story_episode) {
         flow_manju_story(j);
+        goto finish;
+    }
+    if (j->nd->manju_video_episode) {
+        j->rc = manju_video_episode(j->ctx->router, j->nd->manju_video_route, j->workspace,
+                                     j->nd->manju_video_episode, j->nd->manju_clip_seconds,
+                                     flow_paint_abort, flow_paint_progress, j, &j->out);
+        goto finish;
+    }
+    if (j->nd->manju_character_episode) {
+        j->rc = manju_character_views(j->ctx->router, j->nd->manju_image_route, j->workspace,
+                                     j->nd->manju_character_episode, flow_paint_abort,
+                                     flow_paint_progress, j, &j->out);
         goto finish;
     }
     if (j->nd->manju_paint_episode) {

@@ -38,6 +38,7 @@ struct http_stream {
     HINTERNET session,connection,request;
     int64_t deadline;
     int eof;
+    int binary;
 };
 
 static wchar_t *to_wide(const char *s) {
@@ -176,11 +177,20 @@ static http_response *do_request(const char *method, const char *base_url, const
         return NULL;
     }
 
+    const char *accept = extra_headers ? strmap_get(extra_headers, "Accept") : NULL;
+    int video_media = accept && !strcmp(accept, "video/mp4");
+    int video_api = !strcmp(fpath, "/api/v1/services/aigc/video-generation/video-synthesis") ||
+        !strncmp(fpath, "/api/v1/tasks/", sizeof "/api/v1/tasks/" - 1) ||
+        strstr(fpath, "/contents/generations/tasks") != NULL;
+    DWORD no_redirects = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+
     /* Response headers have a separate WinHTTP timeout (90s by default).
      * Apply bounds on the request handle too; session settings alone do not
      * bound ReceiveResponse on every Windows version. */
     if (!WinHttpSetTimeouts(hReq, to, to, to, to) ||
-        !WinHttpSetOption(hReq, WINHTTP_OPTION_RECEIVE_RESPONSE_TIMEOUT, &to, sizeof to)) {
+        !WinHttpSetOption(hReq, WINHTTP_OPTION_RECEIVE_RESPONSE_TIMEOUT, &to, sizeof to) ||
+        ((video_media || video_api) &&
+         !WinHttpSetOption(hReq, WINHTTP_OPTION_REDIRECT_POLICY, &no_redirects, sizeof no_redirects))) {
         record_winhttp_error("set timeout", GetLastError());
         close_request(&guard,hReq);
         WinHttpCloseHandle(hConn);
@@ -241,7 +251,7 @@ static http_response *do_request(const char *method, const char *base_url, const
     WinHttpQueryHeaders(hReq, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, NULL, &dwStatus, &dwSize, NULL);
     if(live){
         http_stream *h=calloc(1,sizeof(*h));
-        if(h){h->guard=guard;guard=NULL;h->session=hSess;h->connection=hConn;h->request=hReq;h->deadline=deadline;h->status=(int)dwStatus;*live=h;}
+        if(h){h->guard=guard;guard=NULL;h->session=hSess;h->connection=hConn;h->request=hReq;h->deadline=deadline;h->status=(int)dwStatus;h->binary=video_media;*live=h;}
         else {close_request(&guard,hReq);WinHttpCloseHandle(hConn);WinHttpCloseHandle(hSess);}
         free(whost);free(wpath);free(wmethod);return NULL;
     }
@@ -329,7 +339,8 @@ static int http_stream_read_impl(http_stream *h, char *out, size_t cap) {
          * WinHTTP itself retains the network buffer. Avoid QueryDataAvailable,
          * which has previously outlived the configured receive deadline. */
         if(!cap)return 0;
-        if(!WinHttpReadData(h->request,out,1,&downloaded)){record_winhttp_error("stream read",GetLastError());return -1;}
+        DWORD size = h->binary ? (DWORD)(cap < 65536 ? cap : 65536) : 1;
+        if(!WinHttpReadData(h->request,out,size,&downloaded)){record_winhttp_error("stream read",GetLastError());return -1;}
         if(!downloaded)h->eof=1;return (int)downloaded;
     }
     avail = h->len - h->pos;

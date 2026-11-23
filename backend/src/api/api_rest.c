@@ -23,6 +23,7 @@
 #include "infra/logging.h"
 #include "llm/llm.h"
 #include "llm/image.h"
+#include "llm/video.h"
 #include "os/os_time.h"
 #include "os/os_proc.h"
 #include "os/os_fs.h"
@@ -761,7 +762,7 @@ static char *chat_route_snapshot(runtime_ctx *ctx,cJSON *body,int *invalid){
     const char *name=cJSON_GetStringValue(choice);if(!name || !*name){*invalid=1;return NULL;}
     for(int i=0;i<router_count(ctx->router);i++){
         const route *r=router_get(ctx->router,(size_t)i);if(!r || strcmp(r->name,name))continue;
-        if (route_is_image(r)) {*invalid=1;return NULL;}
+        if (!route_is_chat(r)) {*invalid=1;return NULL;}
         cJSON *o=cJSON_CreateObject();cJSON_AddStringToObject(o,"provider",r->provider);cJSON_AddStringToObject(o,"model",r->model?r->model:"");
         cJSON_AddStringToObject(o,"base_url",r->base_url?r->base_url:"");cJSON_AddStringToObject(o,"api_key",r->api_key?r->api_key:"");
         cJSON_AddNumberToObject(o,"context_window",(double)r->context_window_tokens);cJSON_AddNumberToObject(o,"max_output_tokens",(double)r->max_output_tokens);
@@ -1453,15 +1454,47 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     const char *text = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "text"));
     const char *path = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "path"));
     const char *title = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "title"));
+    cJSON *jvideo = cJSON_GetObjectItemCaseSensitive(root, "video_route");
+    const char *video_route = cJSON_GetStringValue(jvideo);
+    cJSON *jseconds = cJSON_GetObjectItemCaseSensitive(root, "clip_seconds");
+    double seconds = jseconds ? cJSON_GetNumberValue(jseconds) : 4;
+    route selected_video = {0};
+    if ((jseconds && !jvideo) ||
+        (jvideo && (!video_route || !*video_route || strlen(video_route) >= 128 ||
+                    (seconds != 3 && seconds != 4) ||
+                    router_select_video(ctx->router, video_route, &selected_video) != 0))) {
+        route_clear(&selected_video);
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"请选择已配置的文生视频路由，片段时长为 3 或 4 秒\"}");
+        return 0;
+    }
+    route_clear(&selected_video);
+    cJSON *jviews = cJSON_GetObjectItemCaseSensitive(root, "character_views");
+    int character_views = cJSON_IsTrue(jviews);
+    if (jviews && !cJSON_IsBool(jviews)) {
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"character_views must be a boolean\"}");
+        return 0;
+    }
     cJSON *jimage_route = cJSON_GetObjectItemCaseSensitive(root, "image_route");
     const char *image_route = cJSON_GetStringValue(jimage_route);
+    char chosen_image_route[128];
     route selected_image = {0};
-    if (jimage_route && (!image_route || !*image_route || strlen(image_route) >= 128 ||
-                         router_select_image(ctx->router, image_route, &selected_image) != 0)) {
+    if ((jimage_route && ((video_route && !character_views) || !image_route || !*image_route)) ||
+        ((jimage_route || character_views) &&
+         (router_select_image(ctx->router, image_route, &selected_image) != 0 ||
+          !selected_image.name || strlen(selected_image.name) >= sizeof chosen_image_route))) {
+        route_clear(&selected_image);
         cJSON_Delete(root);
         resp->status = 400;
         http_resp_json(resp, "{\"error\":\"image_route must identify a configured text-to-image model\"}");
         return 0;
+    }
+    if (selected_image.name) {
+        snprintf(chosen_image_route, sizeof chosen_image_route, "%s", selected_image.name);
+        image_route = chosen_image_route;
     }
     route_clear(&selected_image);
     cJSON *jtext_route = cJSON_GetObjectItemCaseSensitive(root, "text_route");
@@ -1469,7 +1502,7 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     route selected_text = {0};
     if (jtext_route && (!text_route || !*text_route || strlen(text_route) >= 128 ||
                         router_copy_named(ctx->router, text_route, &selected_text) != 0 ||
-                        route_is_image(&selected_text))) {
+                        !route_is_chat(&selected_text))) {
         route_clear(&selected_text);
         cJSON_Delete(root);
         resp->status = 400;
@@ -1662,7 +1695,9 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     cJSON_AddItemToObject(dag, "edges", edges);
     const char *ids[4] = {"step1", "step2", "step3", "step4"};
     const char *agents[4] = {"manju-director", "manju-artist", "manju-voice", "manju-editor"};
-    const char *tasks[4] = {task1, task2, task3, task4};
+    const char *tasks[4] = {task1,
+        video_route ? "按剧情顺序为每个分镜生成并验证 3–4 秒竖版视频，生成短视频清单。" : task2,
+        task3, video_route ? "按分镜顺序合并短视频，对齐配音与字幕，校验后交付整集 MP4。" : task4};
     for (int i = 0; i < 4; i++) {
         cJSON *nd = cJSON_CreateObject();
         cJSON_AddStringToObject(nd, "id", ids[i]);
@@ -1672,18 +1707,38 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
             cJSON_AddNumberToObject(nd, "manju_story_episode", episode);
             cJSON_AddStringToObject(nd, "manju_chapter", chapter_rel);
             if (text_route) cJSON_AddStringToObject(nd, "manju_text_route", text_route);
+            if (video_route) cJSON_AddNumberToObject(nd, "manju_clip_seconds", seconds);
         }
         if (i == 1) {
-            cJSON_AddNumberToObject(nd, "manju_paint_episode", episode);
-            if (image_route && *image_route) cJSON_AddStringToObject(nd, "manju_image_route", image_route);
+            if (video_route) {
+                cJSON_AddNumberToObject(nd, "manju_video_episode", episode);
+                cJSON_AddStringToObject(nd, "manju_video_route", video_route);
+                cJSON_AddNumberToObject(nd, "manju_clip_seconds", seconds);
+            } else {
+                cJSON_AddNumberToObject(nd, "manju_paint_episode", episode);
+                if (image_route && *image_route) cJSON_AddStringToObject(nd, "manju_image_route", image_route);
+            }
         }
-        if (i == 3) cJSON_AddNumberToObject(nd, "manju_compose_episode", episode);
+        if (i == 3) {
+            cJSON_AddNumberToObject(nd, "manju_compose_episode", episode);
+            if (video_route) cJSON_AddBoolToObject(nd, "manju_compose_clips", 1);
+        }
         if (i == 2) cJSON_AddNumberToObject(nd, "manju_voice_episode", episode);
         cJSON_AddItemToArray(nodes, nd);
     }
-    const char *from[4] = {"step1", "step1", "step2", "step3"};
-    const char *to[4] = {"step2", "step3", "step4", "step4"};
-    for (int i = 0; i < 4; i++) {
+    if (character_views) {
+        cJSON *nd = cJSON_CreateObject();
+        cJSON_AddStringToObject(nd, "id", "character");
+        cJSON_AddStringToObject(nd, "agent", "manju-artist");
+        cJSON_AddStringToObject(nd, "task", "使用本集配置的文生图路由产出角色正面、侧面和背面全身设定。");
+        cJSON_AddNumberToObject(nd, "manju_character_episode", episode);
+        cJSON_AddStringToObject(nd, "manju_image_route", image_route);
+        cJSON_AddItemToArray(nodes, nd);
+    }
+    const char *assets_after = character_views ? "character" : "step1";
+    const char *from[] = {assets_after, assets_after, "step2", "step3", "step1"};
+    const char *to[] = {"step2", "step3", "step4", "step4", "character"};
+    for (int i = 0; i < (character_views ? 5 : 4); i++) {
         cJSON *e = cJSON_CreateObject();
         cJSON_AddStringToObject(e, "from", from[i]);
         cJSON_AddStringToObject(e, "to", to[i]);
@@ -2957,7 +3012,7 @@ static int h_route_add(const http_request *req, http_response *resp, void *ud) {
         const char *caps = json_str(root, "caps");
         route proposed = {.provider = (char *)provider, .model = (char *)model, .caps = (char *)caps};
         const char *active_key = config_get_str(ctx->config, "llm.api_key", "");
-        int refresh_active = !route_is_image(&proposed) && key && strcmp(key, active_key) &&
+        int refresh_active = route_is_chat(&proposed) && key && strcmp(key, active_key) &&
             !strcmp(provider, config_get_str(ctx->config, "llm.provider", "")) &&
             !strcmp(base ? base : "", config_get_str(ctx->config, "llm.base_url", "")) &&
             !strcmp(model ? model : "", config_get_str(ctx->config, "llm.model", ""));
@@ -3484,18 +3539,18 @@ static int h_config_llm(const http_request *req, http_response *resp, void *ud) 
     const char *model = json_str(root, "model");
     const char *api_key = json_str(root, "api_key");
     route proposed = {.provider = (char *)provider, .model = (char *)model, .caps = (char *)json_str(root, "caps")};
-    int image = route_is_image(&proposed);
-    for (int i = 0; !image && i < router_count(ctx->router); ++i) {
+    int media = !route_is_chat(&proposed);
+    for (int i = 0; !media && i < router_count(ctx->router); ++i) {
         const route *saved = router_get(ctx->router, (size_t)i);
         if (saved && saved->provider && !strcmp(saved->provider, provider) &&
             !strcmp(saved->model ? saved->model : "", model ? model : "") &&
             !strcmp(saved->base_url ? saved->base_url : "", base_url ? base_url : ""))
-            image = route_is_image(saved);
+            media = !route_is_chat(saved);
     }
-    if (image) {
+    if (media) {
         cJSON_Delete(root);
         resp->status = 400;
-        http_resp_json(resp, "{\"error\":\"Image generation routes cannot be activated as chat models\"}");
+        http_resp_json(resp, "{\"error\":\"Image or video generation routes cannot be activated as chat models\"}");
         return 0;
     }
     /* set_llm dups every value; keep the JSON alive until after the call
@@ -3669,7 +3724,17 @@ static void llm_probe_thread(void *arg) {
     llm_response lr = {0};
     int rc;
 
-    if (route_is_image(cfg)) {
+    if (route_is_video(cfg)) {
+        size_t bytes = 0;
+        char *error = NULL;
+        g_llm_probe.ok = llm_video_probe(cfg, &bytes, &error) == 0;
+        if (g_llm_probe.ok)
+            snprintf(g_llm_probe.reply, sizeof(g_llm_probe.reply), "Generated video/mp4 (%zu bytes)", bytes);
+        else
+            snprintf(g_llm_probe.reply, sizeof(g_llm_probe.reply), "%s",
+                     error ? error : "Video generation failed");
+        free(error);
+    } else if (route_is_image(cfg)) {
         llm_image_result result = {0};
         const char *size = cfg->model && !strncmp(cfg->model, "qwen-image-", 11) ? "512x512" : NULL;
         rc = llm_image_generate(cfg, "A plain blue square centered on a white background.", size, &result);

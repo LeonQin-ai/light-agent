@@ -1544,18 +1544,38 @@ panels.agents = `
   </div>
   <div class="card">
     <h2>📖 漫剧工房 · 一键导入小说</h2>
-    <div class="hint">导入小说后，先生成分镜，再并行出图与配音，最后合成整集。需要文生图路由和本机 Python、Edge TTS、FFmpeg。进度在「协作任务」中跟踪。</div>
+    <div class="hint">导入小说后，先生成分镜，再并行制作画面和配音，最后合成整集。进度在「协作任务」中跟踪。</div>
     <div class="row" style="margin-top:8px">
       <input id="manju-title" type="text" placeholder="小说标题（如 讨债人）" style="flex:1;min-width:160px">
       <label class="hint" for="manju-episode" style="align-self:center">集号</label>
-      <input id="manju-episode" type="number" min="1" value="1" style="width:70px">
+      <input id="manju-episode" type="number" min="1" max="500" value="1" style="width:70px">
       <input id="manju-file" type="file" accept=".txt,.md" multiple style="flex:1;min-width:200px">
     </div>
     <div class="row" style="margin-top:8px">
       <label for="manju-text-route">分镜模型</label>
       <select id="manju-text-route"><option value="">使用当前对话模型</option></select>
-      <label for="manju-image-route">画面模型</label>
-      <select id="manju-image-route"><option value="">使用已配置的文生图模型</option></select>
+      <label for="manju-media-mode">画面方式</label>
+      <select id="manju-media-mode" onchange="updateManjuMediaFields()">
+        <option value="image">静态分镜</option>
+        <option value="video">文生视频</option>
+      </select>
+    </div>
+    <div style="margin-top:8px">
+      <div id="manju-character-option" hidden><label><input id="manju-character-views" type="checkbox" onchange="updateManjuMediaFields()"> 生成角色正面、侧面、背面设定图</label></div>
+      <div id="manju-image-fields">
+        <label id="manju-image-label" for="manju-image-route">画面模型</label>
+        <select id="manju-image-route"><option value="">使用已配置的文生图模型</option></select>
+      </div>
+      <div id="manju-video-fields" hidden>
+        <label for="manju-video-route">视频模型</label>
+        <select id="manju-video-route" onchange="updateManjuMediaFields()"><option value="">选择已配置的视频模型</option></select>
+        <label for="manju-clip-seconds">每段时长</label>
+        <select id="manju-clip-seconds" onchange="updateManjuMediaFields()">
+          <option value="3">3 秒</option>
+          <option value="4" selected>4 秒</option>
+        </select>
+        <div class="hint">每个分镜生成一段竖屏视频，按剧情顺序与配音、字幕合成。<span id="manju-seedance-hint" hidden>Seedance 先生成 4 秒，再裁成 3 秒。</span></div>
+      </div>
     </div>
     <div class="row" style="margin-top:8px">
       <input id="manju-path" type="text" placeholder="或服务器上的小说文件/章节目录（如 D:/…/novel/fanqie_xin_shu）" style="flex:1;min-width:240px">
@@ -2209,6 +2229,9 @@ panels.models = `
       <select id="r-provider" style="flex:0 0 auto">
         <option value="openai">OpenAI</option>
         <option value="qwen_image">通义千问文生图（百炼 Token Plan）</option>
+        <option value="happyhorse_video">HappyHorse 文生视频（百炼 Token Plan）</option>
+        <option value="kling_video">可灵 3.0 Turbo 文生视频（阿里云百炼）</option>
+        <option value="seedance_video">Seedance 2.0 文生视频（火山方舟）</option>
         <option value="anthropic">Anthropic Claude</option>
         <option value="deepseek">DeepSeek（OpenAI 兼容）</option>
         <option value="deepseek_a">DeepSeek（Anthropic 端点）</option>
@@ -2227,6 +2250,7 @@ panels.models = `
       <select id="r-purpose" style="flex:0 0 auto" aria-label="模型路由用途">
         <option value="">自动识别用途</option>
         <option value="image_generation">文生图</option>
+        <option value="video_generation">文生视频</option>
       </select>
     </div>
     <div class="row">
@@ -2538,7 +2562,7 @@ async function fillAgentModelSelect(){
   const sel = $('agent-model'); if(!sel) return;
   const keep=sel.value;
   const r = await call('GET', '/v1/routes');
-  const routes = Array.isArray(r.obj) ? r.obj.filter(x => !isImageRoute(x)) : [];
+  const routes = Array.isArray(r.obj) ? r.obj.filter(x => !isMediaRoute(x)) : [];
   let html = '<option value="">（当前激活模型）</option>';
   routes.forEach(x => {
     const val = (x.provider || '') + '|' + (x.model || '');
@@ -2561,20 +2585,29 @@ async function loadAgents(){
   /* 模型选项来自路由表：每个 agent 可单独换模型（PUT /v1/agents/<name>） */
   const rr = await call('GET', '/v1/routes');
   const allRoutes = Array.isArray(rr.obj) ? rr.obj : [];
-  const routes = allRoutes.filter(x => !isImageRoute(x));
-  for(const [id, label, options] of [
-    ['manju-text-route','使用当前对话模型',routes],
-    ['manju-image-route','使用已配置的文生图模型',allRoutes.filter(isImageRoute)]
+  const routes = allRoutes.filter(x => !isMediaRoute(x));
+  const images = allRoutes.filter(x => isImageRoute(x) && !isVideoRoute(x));
+  const videos = allRoutes.filter(isVideoRoute);
+  for(const [id, label, options, preferred] of [
+    ['manju-text-route','使用当前对话模型',routes,routes.find(x => /^deepseek-v4\.1-flash/i.test(x.model || ''))],
+    ['manju-image-route','使用已配置的文生图模型',images,images.find(x => x.model === 'qwen-image-3.0-pro')],
+    ['manju-video-route','选择已配置的视频模型',videos,videos.length === 1 ? videos[0] : null]
   ]){
     const field = $(id);
     if(!field) continue;
     const selection = field.value;
     field.replaceChildren(new Option(label, ''));
     for(const item of options) field.add(new Option(item.model || item.name, item.name));
-    const preferred = id === 'manju-text-route'
-      ? options.find(x => /^deepseek-v4\.1-flash/i.test(x.model || ''))
-      : options.find(x => x.model === 'qwen-image-3.0-pro');
-    field.value = options.some(x => x.name === selection) ? selection : (preferred?.name || '');
+    const keep = field.dataset.loaded && Array.from(field.options).some(x => x.value === selection);
+    field.value = keep ? selection : (preferred?.name || '');
+    field.dataset.loaded = '1';
+  }
+  const characterOption = $('manju-character-option');
+  if(characterOption){
+    const enabled = images.length > 0;
+    if(enabled && characterOption.hidden) $('manju-character-views').checked = true;
+    characterOption.hidden = !enabled;
+    updateManjuMediaFields();
   }
   const modelOptions = (cur) => {
     let h = '<option value="">（当前激活模型）</option>';
@@ -2694,17 +2727,43 @@ async function agentTeamCompose(){
 }
 
 /* 一键导入小说：切章 + 注册漫剧团队 + 排队 分镜→画师‖配音→合成 流水线 */
+function updateManjuMediaFields(){
+  const videoMode = $('manju-media-mode').value === 'video';
+  const characterViews = !$('manju-character-option').hidden && $('manju-character-views').checked;
+  const videoModel = $('manju-video-route').selectedOptions[0]?.textContent || '';
+  $('manju-video-fields').hidden = !videoMode;
+  $('manju-image-fields').hidden = videoMode && !characterViews;
+  $('manju-image-label').textContent = videoMode ? '角色设定图模型' : '画面模型';
+  $('manju-seedance-hint').hidden = !/^doubao-seedance-/i.test(videoModel) || $('manju-clip-seconds').value !== '3';
+}
+
 async function manjuImport(){
   const st = $('manju-stat');
   const title = $('manju-title').value.trim();
-  const episode = Math.max(1, parseInt($('manju-episode').value || '1', 10) || 1);
+  const episode = Number($('manju-episode').value || '1');
+  if(!Number.isInteger(episode) || episode < 1 || episode > 500){
+    st.textContent = '集号需为 1 到 500 的整数。';
+    return;
+  }
   const path = $('manju-path').value.trim();
   const files = $('manju-file').files;
   const body = {episode};
   const textRoute = $('manju-text-route')?.value;
   const imageRoute = $('manju-image-route')?.value;
+  const videoMode = $('manju-media-mode').value === 'video';
+  const characterViews = !$('manju-character-option').hidden && $('manju-character-views').checked;
   if(textRoute) body.text_route = textRoute;
-  if(imageRoute) body.image_route = imageRoute;
+  if(characterViews) body.character_views = true;
+  if(imageRoute && (!videoMode || characterViews)) body.image_route = imageRoute;
+  if(videoMode){
+    const videoRoute = $('manju-video-route').value;
+    if(!videoRoute){
+      st.textContent = '请选择视频模型。可在 Models 中添加视频路由。';
+      return;
+    }
+    body.video_route = videoRoute;
+    body.clip_seconds = Number($('manju-clip-seconds').value);
+  }
   if(title) body.title = title;
   if(path){
     body.path = path;
@@ -2725,7 +2784,7 @@ async function manjuImport(){
   }
   const o = r.obj || {};
   st.textContent = '✔ 已切 ' + o.chapters + ' 章，团队已就位，第' + o.episode + '集任务 #' + o.id + ' 已排队';
-  toast('🎬 漫剧团队已组队：分镜导演 → 画师‖配音 → 合成');
+  toast('🎬 漫剧团队已组队：分镜 → ' + (videoMode ? '视频' : '画面') + '‖配音 → 合成');
   loadAgents();
   loadFlowTasks();
 }
@@ -4293,7 +4352,7 @@ async function fillChatModelSelect(){
   const curProv = (cur.obj && cur.obj.provider) || '';
   const curModel = (cur.obj && cur.obj.model) || '';
   if(CHAT_SESSION!==session || !sel.isConnected)return;
-  CHAT_ROUTES = routes.filter(x => !isImageRoute(x));
+  CHAT_ROUTES = routes.filter(x => !isMediaRoute(x));
   let html = '<option value="@cur">默认模型：'+esc(curModel || curProv)+'</option>';
   let matched = false;
   CHAT_ROUTES.forEach(x => {
@@ -4305,7 +4364,7 @@ async function fillChatModelSelect(){
   });
   sel.innerHTML = html;
   const chosen=chatOptions(session).route;
-  if(chosen && routes.some(x => x.name===chosen && isImageRoute(x))) chatOptionSet('route',null);
+  if(chosen && routes.some(x => x.name===chosen && isMediaRoute(x))) chatOptionSet('route',null);
   sel.value=chosen && CHAT_ROUTES.some(x=>x.name===chosen)?chosen:'@cur';
 
 }
@@ -5854,9 +5913,15 @@ async function refreshFlowTaskProgress(){
         ? '<button class="sec sm" onclick="flowTaskCancel(' + id + ')">取消</button>'
         : (t.status !== 'DONE' ? '<button class="sec sm" onclick="flowTaskResume(' + id + ')">继续</button>' : '') + '<button class="sec sm" onclick="flowTaskEdit(' + id + ')">修改</button>';
       const nodes = Array.isArray(t.flow_nodes) ? t.flow_nodes : [];
-      const counters = nodes.map(n => (n.id || '?') + (n.agent ? ' (' + n.agent + ')' : '') +
-        ' · 模型请求 ' + (n.llm_calls ?? '未知') + ' · 工具 ' + (n.tool_calls ?? '未知') +
-        ' · token ' + (n.tokens_in != null && n.tokens_out != null ? n.tokens_in + n.tokens_out : '未知')).join('\n');
+      const counters = nodes.map(n => {
+        const label = (n.id || '?') + (n.agent ? ' (' + n.agent + ')' : '');
+        if(n.clips_total != null) return label + ' · 视频 ' + (n.clips_ready ?? 0) + '/' + n.clips_total +
+          ' · 视频生成请求 ' + (n.video_requests ?? 0);
+        if(n.images_total != null) return label + ' · 图片 ' + (n.images_ready ?? 0) + '/' + n.images_total +
+          ' · 出图请求 ' + (n.image_requests ?? 0);
+        return label + ' · 模型请求 ' + (n.llm_calls ?? '未知') + ' · 工具 ' + (n.tool_calls ?? '未知') +
+          ' · token ' + (n.tokens_in != null && n.tokens_out != null ? n.tokens_in + n.tokens_out : '未知');
+      }).join('\n');
       const recent = nodes.flatMap(n => (n.steps || []).slice(-2).flatMap(s => ['[' + (n.id || '?') + '] ' + stepLines(s).join('\n')])).slice(-6).join('\n');
       const text = '执行任务 #' + tid + '\n' + flowTaskStatus(t) + (counters ? '\n' + counters : '') + (recent ? '\n最近动作：\n' + recent : '');
       // Keep existing result disclosure and scroll position during unchanged polls.
@@ -6062,6 +6127,9 @@ const PROVIDER_PRESETS = {
   mock:      {provider:'mock',      base:'',                                                                 model:''},
   openai:    {provider:'openai',    base:'https://api.openai.com/v1',                                        model:'gpt-4o'},
   qwen_image:{provider:'openai',    base:'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1', model:'qwen-image-3.0-pro', caps:'image_generation'},
+  happyhorse_video:{provider:'openai', base:'https://token-plan.cn-beijing.maas.aliyuncs.com', model:'happyhorse-1.1-t2v', caps:'video_generation'},
+  kling_video:{provider:'openai', base:'https://dashscope.aliyuncs.com', model:'kling/kling-v3-turbo-video-generation', caps:'video_generation'},
+  seedance_video:{provider:'openai', base:'https://ark.cn-beijing.volces.com/api/v3', model:'doubao-seedance-2-0-260128', caps:'video_generation'},
   anthropic: {provider:'anthropic', base:'https://api.anthropic.com',                                        model:'claude-sonnet-4-6'},
   deepseek:  {provider:'openai',    base:'https://api.deepseek.com/v1',                                      model:'deepseek-chat'},
   deepseek_a:{provider:'anthropic', base:'https://api.deepseek.com/anthropic',                               model:'deepseek-v4-pro'},
@@ -6082,6 +6150,25 @@ function isImageRoute(route){
   if(route?.provider && route.provider !== 'openai') return false;
   return String(route?.caps || '').split(',').some(cap => cap.trim() === 'image_generation')
     || /^(qwen-image-|wan2\.7-image|gpt-image-|dall-e-)/i.test(route?.model || '');
+}
+
+function isVideoRoute(route){
+  if(typeof route?.video_generation === 'boolean') return route.video_generation;
+  if(route?.provider && route.provider !== 'openai') return false;
+  return String(route?.caps || '').split(',').some(cap => cap.trim() === 'video_generation')
+    || /^(happyhorse-1\.1-t2v$|kling\/kling-v3-turbo-video-generation$|doubao-seedance-)/i.test(route?.model || '');
+}
+
+function mediaRoutePurpose(route){
+  if(isVideoRoute(route)) return 'video_generation';
+  if(isImageRoute(route)) return 'image_generation';
+  return '';
+}
+
+function isMediaRoute(route){ return Boolean(mediaRoutePurpose(route)); }
+
+function mediaRouteLabel(route){
+  return isVideoRoute(route) ? '文生视频' : isImageRoute(route) ? '文生图' : '';
 }
 
 let ROUTES = [];
@@ -6106,7 +6193,7 @@ async function loadModelPlaza(){
         : '') + '</div>' +
     '<div class="row"><button class="sec sm" onclick="modelPlazaUse(' + i + ')">配置</button>' +
     '<button class="sec sm" onclick="modelPlazaTest(' + i + ')">测试</button>' +
-    (isImageRoute(m) ? '' : '<button class="sm" onclick="modelPlazaSet(' + i + ')">配置并设为当前</button>') + '</div></div>'
+    (isMediaRoute(m) ? '' : '<button class="sm" onclick="modelPlazaSet(' + i + ')">配置并设为当前</button>') + '</div></div>'
   ).join('');
 }
 
@@ -6115,7 +6202,7 @@ function modelPlazaFill(i){
   $('r-name').value = m.id;
   $('r-base').value = m.base_url;
   $('r-model').value = m.model;
-  $('r-purpose').value = isImageRoute(m) ? 'image_generation' : '';
+  $('r-purpose').value = mediaRoutePurpose(m);
 }
 
 function modelPlazaUse(i){
@@ -6124,7 +6211,7 @@ function modelPlazaUse(i){
 }
 
 async function modelPlazaSet(i){
-  const m = MODEL_PLAZA[i]; if(!m || isImageRoute(m)) return;
+  const m = MODEL_PLAZA[i]; if(!m || isMediaRoute(m)) return;
   modelPlazaFill(i);
   const key = ($('r-key') && $('r-key').value.trim()) || '';
   const r = await call('POST', '/v1/config/llm', {provider: m.provider, base_url: m.base_url, model: m.model, api_key: key});
@@ -6136,7 +6223,7 @@ async function modelPlazaTest(i){
   const m = MODEL_PLAZA[i]; if(!m) return;
   const key = ($('r-key') && $('r-key').value.trim()) || '';
   await testLlm({provider: m.provider, base_url: m.base_url, model: m.model, api_key: key,
-                 caps: isImageRoute(m) ? 'image_generation' : undefined},
+                 caps: mediaRoutePurpose(m) || undefined},
                 (m.model || m.name) + ' ');
 }
 
@@ -6156,7 +6243,7 @@ async function loadModels(){
     for(const [i,row] of Array.from($('routes-body')?.rows || []).entries()){
       const route=ROUTES[i];
       if(!route || !row.cells[7])continue;
-      const active=!isImageRoute(route) && ['provider','model','base_url'].every(key=>(route[key]||'')===(ACTIVE[key]||''));
+      const active=!isMediaRoute(route) && ['provider','model','base_url'].every(key=>(route[key]||'')===(ACTIVE[key]||''));
       row.classList.toggle('active-row',active);
       row.cells[0].innerHTML=esc(route.name||'')+(active?' <span class="badge badge-ok">active</span>':'');
       const activate=row.cells[7].querySelector('button[onclick^="setActive("]');
@@ -6173,7 +6260,7 @@ async function loadModels(){
       if(rb) rb.value = p.base;
       if(rm){
         rm.placeholder = p.model || 'model (可选)';
-        if(!rm.value || p.caps || rm.value === PROVIDER_PRESETS.qwen_image.model) rm.value = p.model;
+        if(!rm.value || p.caps || isMediaRoute({model:rm.value})) rm.value = p.model;
       }
       $('r-purpose').value = p.caps || '';
     });
@@ -6188,8 +6275,8 @@ async function loadModels(){
   const ap = ACTIVE.provider || '';
   t.innerHTML = ROUTES.map((x, i) => {
     /* active = 路由与当前激活 LLM 的 provider+model+base_url 一致（自动路由已不再按名对应） */
-    const image = isImageRoute(x);
-    const isActive = !image && (x.provider || '') === ap
+    const mediaLabel = mediaRouteLabel(x);
+    const isActive = !mediaLabel && (x.provider || '') === ap
       && (x.model || '') === (ACTIVE.model || '')
       && (x.base_url || '') === (ACTIVE.base_url || '');
     return '<tr class="' + (isActive ? 'active-row' : '') + '">'
@@ -6197,12 +6284,12 @@ async function loadModels(){
       + '<td>' + esc(x.provider || '') + '</td>'
       + '<td>' + esc(x.model || '') + '</td>'
       + '<td class="muted">' + esc(x.base_url || '') + '</td>'
-      + '<td>' + (image ? '文生图' : routeContextLabel(x)) + '</td>'
+      + '<td>' + (mediaLabel || routeContextLabel(x)) + '</td>'
       + '<td>' + (x.weight != null ? x.weight : 1) + '</td>'
       + '<td>' + (x.calls != null ? x.calls : 0) + '</td>'
-      + '<td><button onclick="testRoute(' + i + ')" class="sec sm">' + (image ? '测试出图' : 'Test') + '</button> '
+      + '<td><button onclick="testRoute(' + i + ')" class="sec sm">' + (isVideoRoute(x) ? '测试出视频' : mediaLabel ? '测试出图' : 'Test') + '</button> '
       + '<button onclick="editRouteKey(' + i + ')" class="sec sm">改Key</button> '
-      + (image ? '' : '<button onclick="setRouteContext(' + i + ')" class="sec sm">上下文</button> '
+      + (mediaLabel ? '' : '<button onclick="setRouteContext(' + i + ')" class="sec sm">上下文</button> '
       + '<button onclick="refreshRouteContext(' + i + ')" class="sec sm">核实上下文</button> '
       + '<button onclick="setActive(' + i + ')" class="sec sm"' + (isActive ? ' disabled' : '') + '>Set active</button> ')
       + '<button onclick="deleteRoute(' + i + ')" class="sec sm danger">Delete</button>'
@@ -6212,7 +6299,7 @@ async function loadModels(){
 }
 
 async function setActive(i){
-  const x = ROUTES[i]; if(!x || isImageRoute(x)) return;
+  const x = ROUTES[i]; if(!x || isMediaRoute(x)) return;
   const st = $('models-stat'); if(st) st.textContent = 'switching…';
   const r = await call('POST', '/v1/config/llm', {
     provider: x.provider, base_url: x.base_url || '', model: x.model || '', api_key: x.api_key || ''
@@ -6237,7 +6324,7 @@ async function editRouteKey(i){
   const st = $('models-stat'); if(st) st.textContent = 'updating key…';
   const r = await call('POST', '/v1/routes', {
     name: x.name, provider: x.provider, base_url: x.base_url || '', model: x.model || '',
-    api_key: k.trim(), weight: x.weight != null ? x.weight : 1, caps: x.caps
+    api_key: k.trim(), weight: x.weight != null ? x.weight : 1, caps: x.caps || mediaRoutePurpose(x)
   });
   if(r.status < 200 || r.status >= 300){
     if(st) st.textContent = r.obj?.error || 'API Key 更新失败';
@@ -6250,7 +6337,7 @@ async function editRouteKey(i){
 /* 手动设置路由的真实上下文窗口：供应商元数据/目录都拿不到时的兜底，
  * 经 POST /v1/routes 以 context_source=configured 持久化 */
 async function setRouteContext(i){
-  const x = ROUTES[i]; if(!x || isImageRoute(x)) return;
+  const x = ROUTES[i]; if(!x || isMediaRoute(x)) return;
   const cur = Number(x.context_window || x.context_window_tokens) || '';
   const k = prompt('路由 ' + x.name + ' 的真实上下文窗口（tokens，1024–4000000）：', cur);
   if(k === null) return;
@@ -6290,7 +6377,7 @@ function fetchedModelId(model){
 }
 
 async function refreshRouteContext(i){
-  const route=ROUTES[i]; if(!route || isImageRoute(route)) return;
+  const route=ROUTES[i]; if(!route || isMediaRoute(route)) return;
   const st=$('models-stat'); if(st) st.textContent='正在向供应商核实上下文…';
   const started=await call('POST','/v1/routes/models',{route_name:route.name});
   if(started.status>=300 || started.obj?.running){ if(st) st.textContent='模型查询忙或启动失败，请稍后重试'; return; }
@@ -6351,8 +6438,8 @@ function renderFetchedModels(){
   box.innerHTML = FETCHED_MODELS.map((m, i) => {
     const id = fetchedModelId(m);
     const context = Number(m && (m.context_window || m.context_window_tokens)) || 0;
-    const title = isImageRoute({model:id}) ? '文生图' :
-      context ? '上下文窗口：' + context.toLocaleString() + ' tokens' : '模型未提供上下文元数据，使用默认 256K';
+    const title = mediaRouteLabel({model:id}) ||
+      (context ? '上下文窗口：' + context.toLocaleString() + ' tokens' : '模型未提供上下文元数据，使用默认 256K');
     return '<button class="sec sm" onclick="pickFetchedModel(' + i + ')" title="' + esc(title) + '">' + esc(id) + '</button>';
   }).join(' ');
   if(btn) btn.style.display = '';
@@ -6368,15 +6455,17 @@ async function pickFetchedModel(index){
   const key = $('r-key') ? $('r-key').value.trim() : '';
   const name = (provider + '-' + String(m).replace(/[^A-Za-z0-9._-]/g, '-')).slice(0, 60);
   const existing = ROUTES.find(x => x.name === name);
+  const selected = existing || {provider, model:m};
+  const routePurpose = mediaRoutePurpose(selected);
   const r = await call('POST', '/v1/routes', {name, provider, base_url: base, model: m,
     api_key: key || (existing && existing.api_key) || '', weight: existing && existing.weight != null ? existing.weight : 1,
-    caps: existing?.caps, ...fetchedModelMetadata(modelInfo)});
+    caps: existing?.caps || routePurpose || undefined, ...fetchedModelMetadata(modelInfo)});
   if(!(r.status < 300)){ toast('创建路由失败：HTTP ' + r.status); return; }
   const inp = $('r-model'); if(inp) inp.value = m;
   const purpose = $('r-purpose');
-  if(purpose) purpose.value = existing?.caps?.split(',').includes('image_generation') ? 'image_generation' : '';
-  if(isImageRoute(existing || {provider, model:m})){
-    toast('已保存文生图路由 ' + m);
+  if(purpose) purpose.value = routePurpose;
+  if(routePurpose){
+    toast('已保存' + mediaRouteLabel(selected) + '路由 ' + m);
     loadModels();
     return;
   }
@@ -6402,7 +6491,8 @@ async function addFetchedModels(){
     const name = (provider + '-' + m.replace(/[^A-Za-z0-9._-]/g, '-')).slice(0, 60);
     if(have.has(name)){ skipped++; continue; }
     have.add(name);
-    const r = await call('POST', '/v1/routes', {name, provider, base_url: base, model: m, api_key: key, weight: 1, ...fetchedModelMetadata(modelInfo)});
+    const r = await call('POST', '/v1/routes', {name, provider, base_url: base, model: m, api_key: key, weight: 1,
+      caps: mediaRoutePurpose({provider, model:m}) || undefined, ...fetchedModelMetadata(modelInfo)});
     if(r.status < 300) created++; else skipped++;
   }
   if(st) st.textContent = '✔ 已创建 ' + created + ' 条路由' + (skipped ? '（跳过 ' + skipped + ' 条已存在）' : '');
@@ -6460,7 +6550,7 @@ async function testLlm(body, prefix, routeName){
   const config = routeName === undefined ? body : (ROUTES.find(route => route.name === routeName) || body);
   const slowNvidiaModel = (config.model || '').toLowerCase().includes('deepseek-v4.1-flash')
     && (config.base_url || '').toLowerCase().includes('integrate.api.nvidia.com');
-  const deadline = started + (slowNvidiaModel || isImageRoute(config) ? 300000 : 60000);
+  const deadline = started + (isVideoRoute(config) ? 480000 : slowNvidiaModel || isImageRoute(config) ? 300000 : 60000);
   try {
   const r0 = await call('POST', '/v1/config/llm/test', body, deadline-Date.now());
   if(r0.status === 0 || r0.status >= 300 || r0.obj?.error)

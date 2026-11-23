@@ -14,7 +14,7 @@
       画师：标题卡 + 每镜一张 + 片尾卡 PNG（panel_000.png ...）+ poster.png + panels.json
   tts     --shots <shots.json> --out <dir> [--ep <N>]
       配音：edge_tts 并发合成（逐句验证、断点续跑），44100 单声道，audio.json
-  compose --shots <shots.json> --panels <dir> --audio <dir> --out <ep.mp4> --ep <N>
+  compose --shots <shots.json> (--panels <dir> | --clips <dir>) --audio <dir> --out <ep.mp4> --ep <N>
           [--manifest <path>]
       合成：逐帧推拉/平移/手持抖动 + 雨丝 + 颗粒 + 字幕淡入，rawvideo 管道进 ffmpeg，
       语音按镜补零 + 低频 drone amix；cv2/ffmpeg 双重校验；写/合并 manifest；失败 exit 1。
@@ -697,6 +697,62 @@ def manifest_asset(directory, filename):
     return path
 
 
+def clip_manifest(directory, storyboard):
+    manifest = load_json(manifest_asset(directory, "clips.json"))
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("clips"), list):
+        raise ValueError("视频片段清单必须包含 clips 数组")
+    seconds = manifest.get("clip_seconds")
+    if type(seconds) is not int or seconds not in (3, 4):
+        raise ValueError("视频片段时长必须为 3 或 4 秒")
+    fingerprint = manifest.get("storyboard_fingerprint")
+    if fingerprint is not None:
+        value = 0xcbf29ce484222325
+        with open(storyboard, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                for byte in chunk:
+                    value = ((value ^ byte) * 0x100000001b3) & 0xffffffffffffffff
+        if fingerprint != f"{value:016x}":
+            raise ValueError("视频片段清单与当前分镜不匹配，请重新生成受影响的镜头")
+    return manifest, seconds
+
+
+def decode_clip(path, target_frames):
+    """Yield normalized portrait frames, excluding the video provider's audio."""
+    if not path.lower().endswith(".mp4") or not os.path.isfile(path):
+        raise ValueError("缺少 MP4 片段：%s" % path)
+    ff = imageio_ffmpeg.get_ffmpeg_exe()
+    filters = ("fps=%d,scale=%d:%d:force_original_aspect_ratio=increase,"
+               "crop=%d:%d,setsar=1" % (FPS, W, H, W, H))
+    cmd = [ff, "-hide_banner", "-loglevel", "error", "-nostdin", "-xerror",
+           "-protocol_whitelist", "file,pipe", "-f", "mov", "-i", path,
+           "-map", "0:v:0", "-an", "-sn", "-dn", "-vf", filters,
+           "-frames:v", str(target_frames), "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "1", "-"]
+    with tempfile.TemporaryFile() as log, subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=log) as proc:
+        count = 0
+        last = None
+        try:
+            for _ in range(target_frames):
+                data = proc.stdout.read(W * H * 3)
+                if not data:
+                    break
+                if len(data) != W * H * 3:
+                    raise ValueError("视频片段帧不完整：%s" % path)
+                last = np.frombuffer(data, dtype=np.uint8).reshape((H, W, 3))
+                count += 1
+                yield last
+            code = proc.wait(timeout=20)
+            if code or count < target_frames - 1:
+                log.seek(0)
+                error = log.read(500).decode("utf-8", "replace").strip()
+                raise ValueError("视频片段解码失败或不足预期时长：%s（%d/%d 帧）%s" %
+                                 (path, count, target_frames, error))
+            if count < target_frames:
+                yield last  # 容许提供商输出的末帧取整误差
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+
+
 def shot_plan_meta(shots, ep):
     """标题卡 + 每镜 + 片尾的镜头元数据（kind→panel 映射 / 推拉 / 平移，取自 manju_av + manju_anim）。
 
@@ -852,7 +908,16 @@ def cmd_tts(args):
 # ---------------------------------------------------------------- 子命令：compose
 def cmd_compose(args):
     doc = load_json(args.shots)
-    pj = load_json(manifest_asset(args.panels, "panels.json"))
+    video_mode = args.clips is not None
+    if video_mode:
+        pj, clip_seconds = clip_manifest(args.clips, args.shots)
+        visual_dir = args.clips
+        entries = pj["clips"]
+        clip_frames = clip_seconds * FPS
+    else:
+        pj = load_json(manifest_asset(args.panels, "panels.json"))
+        visual_dir = args.panels
+        entries = pj["panels"]
     aj = load_json(manifest_asset(args.audio, "audio.json"))
     ep = args.ep
     p = palette_of(ep)
@@ -860,10 +925,9 @@ def cmd_compose(args):
     title, badge = doc["title"], doc["badge"]
     shots = doc["shots"]
 
-    entries = pj["panels"]
     audio_entries = aj["entries"]
     if len(entries) != len(shots) + 2 or len(audio_entries) != len(entries):
-        print("[compose] ERROR: panels(%d)/audio(%d) 与 shots(%d)+2 不一致"
+        print("[compose] ERROR: 画面(%d)/audio(%d) 与 shots(%d)+2 不一致"
               % (len(entries), len(audio_entries), len(shots)), flush=True)
         sys.exit(1)
     for index, (panel, audio, expected) in enumerate(zip(entries, audio_entries, shot_plan_meta(shots, ep))):
@@ -876,20 +940,7 @@ def cmd_compose(args):
     ovls = build_overlays(doc, ep, p)
     plan = []
     for i, (e, ae) in enumerate(zip(entries, audio_entries)):
-        bgr = cv2.imdecode(np.fromfile(manifest_asset(args.panels, e["file"]), dtype=np.uint8),
-                           cv2.IMREAD_COLOR)
-        if bgr is None:
-            print("[compose] ERROR: 缺少面板 %s" % e["file"], flush=True)
-            sys.exit(1)
-        height, width = bgr.shape[:2]
-        if (width, height) != (BW, BH):
-            # Generated assets may be landscape or square. Crop to the
-            # portrait canvas before applying the fixed camera coordinates.
-            crop_w = min(width, max(1, round(height * BW / BH)))
-            crop_h = min(height, max(1, round(width * BH / BW)))
-            left, top = (width - crop_w) // 2, (height - crop_h) // 2
-            bgr = cv2.resize(bgr[top:top + crop_h, left:left + crop_w], (BW, BH))
-        panel = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        visual_path = manifest_asset(visual_dir, e["file"])
         wav_path = manifest_asset(args.audio, ae["file"])
         data, sr = sf.read(wav_path, dtype="float32", always_2d=False)
         if data.ndim > 1:
@@ -898,9 +949,26 @@ def cmd_compose(args):
             n = int(round(len(data) * SR / sr))
             idx = np.linspace(0, len(data) - 1, n, dtype=np.float32)
             data = np.interp(idx, np.arange(len(data), dtype=np.float32), data).astype(np.float32)
-        plan.append(dict(panel=panel, ovl=ovls[i], n=int(ae["frames"]), audio=data,
-                         z0=e["z0"], z1=e["z1"], cx=e["cx"], cy=e["cy"],
-                         px=e.get("px", 0.0), py=e.get("py", 0.0), ph=e.get("ph", 0.0)))
+        n = ae["frames"]
+        if video_mode:
+            # A clip stays in motion for 3–4s. Hold its last frame if speech
+            # needs longer, preserving the last syllable and the subtitle.
+            n = max(n, clip_frames, math.ceil(len(data) * FPS / SR))
+            plan.append(dict(clip=visual_path, ovl=ovls[i], n=n, audio=data))
+        else:
+            bgr = cv2.imdecode(np.fromfile(visual_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if bgr is None:
+                raise ValueError("缺少面板 %s" % e["file"])
+            height, width = bgr.shape[:2]
+            if (width, height) != (BW, BH):
+                crop_w = min(width, max(1, round(height * BW / BH)))
+                crop_h = min(height, max(1, round(width * BH / BW)))
+                left, top = (width - crop_w) // 2, (height - crop_h) // 2
+                bgr = cv2.resize(bgr[top:top + crop_h, left:left + crop_w], (BW, BH))
+            panel = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            plan.append(dict(panel=panel, ovl=ovls[i], n=n, audio=data,
+                             z0=e["z0"], z1=e["z1"], cx=e["cx"], cy=e["cy"],
+                             px=e.get("px", 0.0), py=e.get("py", 0.0), ph=e.get("ph", 0.0)))
 
     total_frames = sum(s["n"] for s in plan)
     dur = total_frames / float(FPS)
@@ -913,10 +981,19 @@ def cmd_compose(args):
     voice = np.concatenate(chunks) if chunks else np.zeros(1, dtype=np.float32)
 
     # 逐帧：推拉 + 平移 + 正弦手持抖动（manju_anim）+ 雨丝 + 快速颗粒 + 淡入合成
-    def frames():
+    def frames(pending_poster):
         fi = 0
-        for s in plan:
+        for index, s in enumerate(plan):
             n = s["n"]
+            if video_mode:
+                for k, fr in enumerate(decode_clip(s["clip"], clip_frames)):
+                    if index == 0 and k == 0 and pending_poster:
+                        Image.fromarray(fr).save(pending_poster)
+                    with_subtitle = fast_composite(fr.copy(), s["ovl"], min(1.0, (k + 1) / 4.0))
+                    yield with_subtitle
+                for _ in range(clip_frames, n):
+                    yield with_subtitle
+                continue
             for k in range(n):
                 t = k / float(max(1, n - 1))
                 z = s["z0"] + (s["z1"] - s["z0"]) * t
@@ -933,8 +1010,10 @@ def cmd_compose(args):
 
     out_path = os.path.abspath(args.out)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    poster_path = manifest_asset(args.panels, pj.get("poster", "poster.png"))
-    if not os.path.isfile(poster_path):
+    generate_poster = video_mode and "poster" not in pj
+    poster_path = (os.path.splitext(out_path)[0] + "-poster.png" if generate_poster else
+                   manifest_asset(visual_dir, pj.get("poster", "poster.png")))
+    if not generate_poster and not os.path.isfile(poster_path):
         raise ValueError("缺少封面图片")
     manifest = os.path.abspath(args.manifest or os.path.join(os.path.dirname(out_path), "manifest.json"))
     os.makedirs(os.path.dirname(manifest), exist_ok=True)
@@ -943,11 +1022,14 @@ def cmd_compose(args):
     # fails, and never put an unverified episode in the manifest.
     with tempfile.TemporaryDirectory(prefix=".compose-", dir=os.path.dirname(out_path)) as stage:
         tmp_video = os.path.join(stage, "episode.mp4")
+        pending_poster = os.path.join(stage, "poster.png") if generate_poster else None
         voice_wav = os.path.join(stage, "voice.wav")
         sf.write(voice_wav, voice, SR, subtype="PCM_16")
-        encode(frames(), tmp_video, dur, voice_wav, 92 + ep * 3)
+        encode(frames(pending_poster), tmp_video, dur, voice_wav, 92 + ep * 3)
         rec = verify_episode(tmp_video, ep_name, title, len(shots), total_frames, poster_path)
-        publish_episode(tmp_video, out_path, manifest, rec)
+        if video_mode:
+            rec.update(visual_mode="video", clip_seconds=clip_seconds, video_model=pj.get("video_model"))
+        publish_episode(tmp_video, out_path, manifest, rec, pending_poster)
 
     print("[ep] %s | %s | shots=%d | %.2fs | %d frames | %.2f MB | audio=%s | open=%s/%s"
           % (ep_name, title, len(shots), rec["seconds"], rec["frames"], rec["bytes"] / 1048576.0,
@@ -981,7 +1063,7 @@ def verify_episode(path, ep_name, title, shot_count, expected_frames, poster_pat
     return rec
 
 
-def publish_episode(tmp_video, out_path, manifest, rec):
+def publish_episode(tmp_video, out_path, manifest, rec, pending_poster=None):
     # manifest 合并（按 ep 键去重，排序写回）
     recs = load_json(manifest) if os.path.exists(manifest) else []
     if not isinstance(recs, list) or any(not isinstance(r, dict) or not isinstance(r.get("ep"), str)
@@ -993,6 +1075,8 @@ def publish_episode(tmp_video, out_path, manifest, rec):
         tmp_manifest = os.path.join(stage, "manifest.json")
         save_json(tmp_manifest, [done[k] for k in sorted(done)])
         os.replace(tmp_video, out_path)
+        if pending_poster:
+            os.replace(pending_poster, rec["poster"])
         os.replace(tmp_manifest, manifest)
 
 
@@ -1019,9 +1103,11 @@ def main():
                    help="话数（用于标题/片尾念白，默认 1）")
     s.set_defaults(fn=cmd_tts)
 
-    s = sub.add_parser("compose", help="合成：面板+配音 -> mp4（含校验与 manifest）")
+    s = sub.add_parser("compose", help="合成：面板或视频片段 + 配音 -> MP4（含校验和清单）")
     s.add_argument("--shots", required=True)
-    s.add_argument("--panels", required=True)
+    visuals = s.add_mutually_exclusive_group(required=True)
+    visuals.add_argument("--panels")
+    visuals.add_argument("--clips")
     s.add_argument("--audio", required=True)
     s.add_argument("--out", required=True)
     s.add_argument("--ep", type=int, required=True)
