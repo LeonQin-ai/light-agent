@@ -182,22 +182,22 @@ const fs = require('node:fs');
     await page.waitForFunction(expected=>CHAT_SESSION===expected,`new-session-${beforeOldTaskNewChat+1}`);
     await page.waitForFunction(()=>CHAT_CACHE['old-task-session']?.[1]?.progress?.stage==='completed');
     const oldTaskRow=page.locator('#side-recent .side-recent-row').filter({hasText:'旧会话'});
-    assert.equal(await oldTaskRow.locator('.recent-task-status').textContent(),'已完成',
-      'old task is shown as completed after new-chat click when its latest journal state is DONE');
+    assert.equal(await oldTaskRow.locator('.recent-task-status').textContent(),'空闲',
+      'the latest DONE journal entry leaves the old session idle after a new chat');
     assert.equal(await page.evaluate(()=>CHAT_CACHE['old-task-session'][1].progress.stage),'completed');
     await page.evaluate(()=>{
       const entry=CHAT_CACHE['old-task-session'][1];
       entry.progress={...entry.progress,stage:'failed'}; entry.text='旧版本缓存的失败状态';
       sideRecent(CHAT_TABS_CACHE);
     });
-    assert.equal(await oldTaskRow.locator('.recent-task-status').textContent(),'失败',
-      'the fixture represents an old false-failure state retained in sessionStorage');
+    assert.equal(await oldTaskRow.locator('.recent-task-status').textContent(),'空闲',
+      'an obsolete cached failure does not alter the old session activity indicator');
     const beforeRefreshNewChat=sessionCreates;
     await page.locator('#nav-newchat').click();
     await page.waitForFunction(expected=>CHAT_SESSION===expected,`new-session-${beforeRefreshNewChat+1}`);
     await page.waitForFunction(()=>CHAT_CACHE['old-task-session']?.[1]?.progress?.stage==='completed');
-    assert.equal(await oldTaskRow.locator('.recent-task-status').textContent(),'已完成',
-      'new-chat refresh reconciles a persisted false failure with the latest successful journal state');
+    assert.equal(await oldTaskRow.locator('.recent-task-status').textContent(),'空闲',
+      'the session remains idle after the refresh reconciles its cached task details');
     const historyRecovery=await page.evaluate(taskId=>chatHistoryEntries([], [
       {id:taskId,status:'RUNNING',input:'历史中的任务',output:'',ts:2}
     ]),staleTaskId);

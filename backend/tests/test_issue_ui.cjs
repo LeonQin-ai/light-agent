@@ -43,12 +43,12 @@ const assert = require('node:assert/strict');
       CHAT_TASKS['status-test']=999;
       CHAT_CACHE['status-test']=[{role:'bot',progress:{stage:'planning'}}]; sideRecent(CHAT_TABS_CACHE);
     });
-    assert.match(await page.locator('#side-recent').innerText(),/执行中/);
+    assert.equal(await page.locator('.recent-task-status').filter({hasText:'繁忙'}).count(),1);
     await page.evaluate(()=>{
       CHAT_TABS_CACHE[0].title='这是一个非常长的源码阅读任务标题需要验证状态不会被遮住';
       $('side-recent').style.width='180px'; sideRecent(CHAT_TABS_CACHE);
     });
-    const status=page.locator('.recent-task-status').filter({hasText:'执行中'});
+    const status=page.locator('.recent-task-status').filter({hasText:'繁忙'});
     const statusBox=await status.boundingBox();
     const row=status.locator('..');
     const titleBox=await row.locator('.recent-session-title').boundingBox();
@@ -58,13 +58,13 @@ const assert = require('node:assert/strict');
     assert(statusBox.x+statusBox.width<=titleBox.x, 'Status must precede the clipped title');
     assert.equal(await status.evaluate(el=>getComputedStyle(el).flexShrink),'0');
     assert.equal(await status.evaluate(el=>getComputedStyle(el).order),'-1');
-    assert.equal(await status.getAttribute('data-state'),'running');
     console.log('PASS #111: left status remains fully visible with a long title in a narrow sidebar');
     await page.evaluate(()=>{
       delete CHAT_TASKS['status-test']; CHAT_CACHE['status-test'][0].progress.stage='failed'; sideRecent(CHAT_TABS_CACHE);
     });
-    assert.match(await page.locator('#side-recent').innerText(),/失败/);
-    console.log('PASS #102: recent sessions show active and failed status');
+    const failedSession=page.locator('.side-recent-row').filter({hasText:'非常长的源码阅读任务标题'});
+    assert.equal(await failedSession.locator('.recent-task-status').innerText(),'空闲');
+    console.log('PASS #102: recent sessions become idle after a failed task');
     await page.route('http://ui.test/v1/flows/list',route=>route.fulfill({status:200,contentType:'application/json',
       body:JSON.stringify({records:[{id:42,status:'RUNNING',name:'很长的多Agent源码阅读任务标题'.repeat(30),created_ms:1,updated_ms:1}]})}));
     await page.evaluate(async()=>{

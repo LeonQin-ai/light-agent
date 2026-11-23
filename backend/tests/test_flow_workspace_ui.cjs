@@ -16,9 +16,23 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  });
  await page.goto('http://ui.test/');await page.waitForFunction(()=>CHAT_SESSION==='s');
  await page.evaluate(()=>{for(const id of Object.keys(CHAT_CACHE))delete CHAT_CACHE[id];sideRecent([{id:'s',title:'Failed session',workspace:'D:/default',last_run:{id:42,status:'FAILED'}}]);});
- assert.equal(await page.locator('.recent-task-status').innerText(),'失败','cold sidebar restores durable status without browser cache');
- await page.evaluate(()=>{CHAT_CACHE.s=[{role:'bot',taskId:42,progress:{stage:'failed'}}];sideRecent([{id:'s',workspace:'D:/default',last_run:{id:42,status:'DONE'}}]);});
- assert.equal(await page.locator('.recent-task-status').innerText(),'已完成','server success overrides an obsolete cached failure');
+ const recentStatus=page.locator('.recent-task-status');
+ assert.equal(await recentStatus.innerText(),'空闲','a durable failure leaves the session idle after a cold load');
+ for(const [state,label] of [['QUEUED','繁忙'],['RUNNING','繁忙'],['DONE','空闲'],['CANCELLED','空闲'],['TIMEOUT','空闲'],['INTERRUPTED','空闲']]){
+  const actual=await page.evaluate(status=>{
+   sideRecent([{id:'s',workspace:'D:/default',last_run:{id:43,status}}]);
+   return document.querySelector('.recent-task-status').textContent;
+  },state);
+  assert.equal(actual,label,`sidebar activity for ${state}`);
+ }
+ const activityAfterPoll=await page.evaluate(()=>{
+  const entry={role:'bot',taskId:43,pending:true,progress:{stage:'executing'}};
+  CHAT_CACHE.s=[entry];CHAT_TASKS.s=43;
+  chatFinish('s',43,entry,'verified','completed');
+  sideRecent([{id:'s',running:true,workspace:'D:/default',last_run:{id:43,status:'RUNNING'}}]);
+  return document.querySelector('.recent-task-status').textContent;
+ });
+ assert.equal(activityAfterPoll,'空闲','a completed task poll overrides stale activity for the same task');
  const history=await page.evaluate(()=>chatHistoryEntries([], [{id:42,status:'FAILED',input:'failed request',output:'failure evidence',trace:[{stage:'failed',elapsed_ms:880000,steps:[{tool:'file_read',ok:0,target:'missing'}]}]}]));
  assert.equal(history[1].progress.stage,'failed');assert.equal(history[1].progress.elapsed_ms,880000);assert.equal(history[1].progress.steps[0].ok,0);
  await page.evaluate(()=>switchPanel('agents'));await page.locator('#flow-workspace option[value="D:/selected"]').waitFor({state:'attached'});
@@ -30,5 +44,5 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
  assert.deepEqual(submitted.map(x=>x.body.workspace),['D:/selected','D:/selected']);assert.ok(submitted[1].body.flow.nodes);
  await page.evaluate(()=>switchPanel('chat'));await page.evaluate(()=>switchPanel('agents'));
  await page.waitForFunction(()=>$('flow-workspace').value==='D:/selected');assert.equal(await page.locator('#flow-task-100').count(),1);
- assert.deepEqual(errors,[]);console.log('PASS: auto/manual selected workspace, immediate recent records, panel return and failed status/history without browser storage');
+ assert.deepEqual(errors,[]);console.log('PASS: selected Flow workspace, recent sessions show activity, and task history retains failure details');
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
