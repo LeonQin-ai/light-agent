@@ -671,6 +671,8 @@
 .chat-copy{position:absolute;right:4px;top:-10px;opacity:0;padding:3px 8px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--muted);font-size:11px;cursor:pointer;transition:opacity var(--tr-dur)}
 .chat-message:hover .chat-copy,.chat-copy:focus-visible{opacity:1}
 .chat-message.bot>.chat-copy{position:static;display:block;margin:10px 0 0;opacity:1}
+.chat-user-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chat-user-actions>.chat-copy{position:static;opacity:1}
 .chat-answer{font-family:var(--sans);font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;margin:18px 0 0;max-height:none;overflow:visible}
 .chat-image{display:block;max-width:min(300px,100%);max-height:240px;object-fit:contain;border-radius:12px;cursor:zoom-in;margin:6px 0}
 .chat-images{display:flex;flex-wrap:wrap;gap:8px;max-width:100%}
@@ -1543,13 +1545,13 @@ panels.agents = `
     </div>
   </div>
   <div class="card">
-    <h2>📖 漫剧工房 · 一键导入小说</h2>
+    <h2>📖 漫剧工房 · 一键导入</h2>
     <div class="hint">导入小说后，先生成分镜，再并行制作画面和配音，最后合成整集。进度在「协作任务」中跟踪。</div>
     <div class="row" style="margin-top:8px">
       <input id="manju-title" type="text" placeholder="小说标题（如 讨债人）" style="flex:1;min-width:160px">
       <label class="hint" for="manju-episode" style="align-self:center">集号</label>
       <input id="manju-episode" type="number" min="1" max="500" value="1" style="width:70px">
-      <input id="manju-file" type="file" accept=".txt,.md" multiple style="flex:1;min-width:200px">
+      <input id="manju-file" type="file" accept=".txt,.md,.json" multiple style="flex:1;min-width:200px">
     </div>
     <div class="row" style="margin-top:8px">
       <label for="manju-text-route">分镜模型</label>
@@ -1558,6 +1560,7 @@ panels.agents = `
       <select id="manju-media-mode" onchange="updateManjuMediaFields()">
         <option value="image">静态分镜</option>
         <option value="video">文生视频</option>
+        <option value="mixed">按镜头选视频模型</option>
       </select>
     </div>
     <div style="margin-top:8px">
@@ -1567,8 +1570,18 @@ panels.agents = `
         <select id="manju-image-route"><option value="">使用已配置的文生图模型</option></select>
       </div>
       <div id="manju-video-fields" hidden>
-        <label for="manju-video-route">视频模型</label>
-        <select id="manju-video-route" onchange="updateManjuMediaFields()"><option value="">选择已配置的视频模型</option></select>
+        <div id="manju-video-single">
+          <label for="manju-video-route">视频模型</label>
+          <select id="manju-video-route" onchange="updateManjuMediaFields()"><option value="">选择已配置的视频模型</option></select>
+        </div>
+        <div id="manju-video-mixed" hidden>
+          <label for="manju-video-text">空镜 · 文生视频</label>
+          <select id="manju-video-text"><option value="">选择文生视频模型</option></select>
+          <label for="manju-video-first-frame">接续 · 图生视频</label>
+          <select id="manju-video-first-frame"><option value="">选择图生视频模型</option></select>
+          <label for="manju-video-reference">角色 · 参考生视频</label>
+          <select id="manju-video-reference"><option value="">选择参考生视频模型</option></select>
+        </div>
         <label for="manju-clip-seconds">每段时长</label>
         <select id="manju-clip-seconds" onchange="updateManjuMediaFields()">
           <option value="3">3 秒</option>
@@ -1578,10 +1591,16 @@ panels.agents = `
       </div>
     </div>
     <div class="row" style="margin-top:8px">
-      <input id="manju-path" type="text" placeholder="或服务器上的小说文件/章节目录（如 D:/…/novel/fanqie_xin_shu）" style="flex:1;min-width:240px">
-      <button onclick="manjuImport()">🎬 导入并组队制作</button>
-      <span id="manju-stat" class="muted"></span>
+      <input id="manju-path" type="text" placeholder="服务器小说文件或章节目录（可选）" style="flex:1;min-width:240px">
+      <button class="sec" type="button" onclick="loadManjuPromo()">加载三镜宣传样片</button>
+      <button id="manju-submit" onclick="manjuImport()">🎬 导入并组队制作</button>
+      <button id="manju-progress" type="button" class="sec" onclick="$('flow-tasks').scrollIntoView({block:'start'})" hidden>查看制作进度</button>
+      <span id="manju-stat" class="muted" role="status"></span>
     </div>
+    <details id="manju-board" hidden>
+      <summary>预览分镜</summary>
+      <textarea id="manju-board-json" aria-label="分镜 JSON" rows="8" style="width:100%"></textarea>
+    </details>
   </div>
   <div class="card">
     <div class="card-head">
@@ -2230,6 +2249,8 @@ panels.models = `
         <option value="openai">OpenAI</option>
         <option value="qwen_image">通义千问文生图（百炼 Token Plan）</option>
         <option value="happyhorse_video">HappyHorse 文生视频（百炼 Token Plan）</option>
+        <option value="happyhorse_first_frame">HappyHorse 首帧生视频（百炼 Token Plan）</option>
+        <option value="happyhorse_reference">HappyHorse 参考生视频（百炼 Token Plan）</option>
         <option value="kling_video">可灵 3.0 Turbo 文生视频（阿里云百炼）</option>
         <option value="seedance_video">Seedance 2.0 文生视频（火山方舟）</option>
         <option value="anthropic">Anthropic Claude</option>
@@ -2250,7 +2271,7 @@ panels.models = `
       <select id="r-purpose" style="flex:0 0 auto" aria-label="模型路由用途">
         <option value="">自动识别用途</option>
         <option value="image_generation">文生图</option>
-        <option value="video_generation">文生视频</option>
+        <option value="video_generation">视频生成</option>
       </select>
     </div>
     <div class="row">
@@ -2587,11 +2608,16 @@ async function loadAgents(){
   const allRoutes = Array.isArray(rr.obj) ? rr.obj : [];
   const routes = allRoutes.filter(x => !isMediaRoute(x));
   const images = allRoutes.filter(x => isImageRoute(x) && !isVideoRoute(x));
-  const videos = allRoutes.filter(isVideoRoute);
+  const videos = allRoutes.filter(x => videoInput(x) === 'text');
+  const firstFrameRoutes = allRoutes.filter(x => videoInput(x) === 'first_frame');
+  const referenceRoutes = allRoutes.filter(x => videoInput(x) === 'reference');
   for(const [id, label, options, preferred] of [
     ['manju-text-route','使用当前对话模型',routes,routes.find(x => /^deepseek-v4\.1-flash/i.test(x.model || ''))],
     ['manju-image-route','使用已配置的文生图模型',images,images.find(x => x.model === 'qwen-image-3.0-pro')],
-    ['manju-video-route','选择已配置的视频模型',videos,videos.length === 1 ? videos[0] : null]
+    ['manju-video-route','选择已配置的视频模型',videos,videos.length === 1 ? videos[0] : null],
+    ['manju-video-text','选择文生视频模型',videos,videos.find(x => x.model === 'happyhorse-1.1-t2v')],
+    ['manju-video-first-frame','选择图生视频模型',firstFrameRoutes,firstFrameRoutes.find(x => x.model === 'happyhorse-1.1-i2v')],
+    ['manju-video-reference','选择参考生视频模型',referenceRoutes,referenceRoutes.find(x => x.model === 'happyhorse-1.1-r2v')]
   ]){
     const field = $(id);
     if(!field) continue;
@@ -2605,6 +2631,7 @@ async function loadAgents(){
   const characterOption = $('manju-character-option');
   if(characterOption){
     const enabled = images.length > 0;
+    characterOption.dataset.available = enabled ? '1' : '0';
     if(enabled && characterOption.hidden) $('manju-character-views').checked = true;
     characterOption.hidden = !enabled;
     updateManjuMediaFields();
@@ -2726,19 +2753,57 @@ async function agentTeamCompose(){
   loadAgents();
 }
 
-/* 一键导入小说：切章 + 注册漫剧团队 + 排队 分镜→画师‖配音→合成 流水线 */
+/* The same cast description is used for first-frame and reference assets. */
+function loadManjuPromo(){
+  const visual = '成年女守灯人阿澄，深黑齐肩短发，右鬓一枚黄铜发夹，青蓝色长雨衣，橙色围巾，棕色短靴，提圆形黄铜灯，原创手绘赛璐璐漫画';
+  const board = {
+    title:'拾光守灯人',
+    badge:'light-agent · 三镜宣传样片',
+    characters:[{id:'acheng',name:'阿澄',visual}],
+    shots:[
+      {kind:'narration',text:'长夜里，一座灯塔等着天亮。',speaker:'narrator',character_ids:[],scene:'蓝色黎明前的海崖',
+       video_mode:'text',image_prompt:'9:16 竖幅，蓝色黎明前的海崖，白色旧灯塔和涌浪，无人物，手绘电影漫画。',
+       video_prompt:'镜头低低掠过海浪，缓慢抬升到悬崖上尚未点亮的白色灯塔。'},
+      {kind:'narration',text:'阿澄提着灯，推开塔门。',speaker:'narrator',character_ids:['acheng'],scene:'灯塔石阶和青铜塔门',
+       video_mode:'first_frame',image_prompt:'9:16 竖幅，长雨衣女守灯人阿澄顺着湿润石阶走到青铜塔门前。她一手提圆形黄铜灯，另一手扶门，清晨蓝金对比，手绘电影漫画。',
+       video_prompt:'保留首帧女主角的全部外观、灯笼和门的位置。阿澄缓缓推开青铜塔门，一束柔暖光照亮她的侧脸，镜头沿石阶轻推。'},
+      {kind:'narration',text:'她把第一束光留给归航的人。',speaker:'narrator',character_ids:['acheng'],scene:'灯塔顶层与海平面',
+       video_mode:'reference',image_prompt:'9:16 竖幅，同一位女守灯人阿澄站在灯塔顶层，面向海面，身旁巨大的透镜亮起，手绘电影漫画。',
+       video_prompt:'按参考图保持同一女主角的脸、黑色齐肩发、黄铜发夹、青蓝雨衣、橙围巾。阿澄调好灯塔透镜，金色光柱扫向归航的小船，镜头从她的侧后方回转至面部。'}
+    ]
+  };
+  $('manju-title').value = board.title;
+  $('manju-episode').value = '1';
+  $('manju-path').value = '';
+  $('manju-file').value = '';
+  $('manju-media-mode').value = 'mixed';
+  $('manju-clip-seconds').value = '4';
+  $('manju-board-json').value = JSON.stringify(board, null, 2);
+  $('manju-board').hidden = false;
+  if($('manju-character-option').dataset.available === '1') $('manju-character-views').checked = true;
+  updateManjuMediaFields();
+  $('manju-stat').textContent = '已加载三镜。检查模型后，点击「导入并组队制作」开始。';
+}
+
+/* 一键导入：小说或分镜 → 画面和配音 → 合成 */
 function updateManjuMediaFields(){
-  const videoMode = $('manju-media-mode').value === 'video';
+  const mode = $('manju-media-mode').value;
+  const videoMode = mode !== 'image';
+  const mixed = mode === 'mixed';
   const characterViews = !$('manju-character-option').hidden && $('manju-character-views').checked;
   const videoModel = $('manju-video-route').selectedOptions[0]?.textContent || '';
   $('manju-video-fields').hidden = !videoMode;
-  $('manju-image-fields').hidden = videoMode && !characterViews;
-  $('manju-image-label').textContent = videoMode ? '角色设定图模型' : '画面模型';
-  $('manju-seedance-hint').hidden = !/^doubao-seedance-/i.test(videoModel) || $('manju-clip-seconds').value !== '3';
+  $('manju-video-single').hidden = mixed;
+  $('manju-video-mixed').hidden = !mixed;
+  $('manju-image-fields').hidden = videoMode && !mixed && !characterViews;
+  $('manju-image-label').textContent = mixed ? '首帧和角色图模型' : videoMode ? '角色设定图模型' : '画面模型';
+  $('manju-seedance-hint').hidden = mixed || !/^doubao-seedance-/i.test(videoModel) || $('manju-clip-seconds').value !== '3';
 }
 
 async function manjuImport(){
   const st = $('manju-stat');
+  const submit = $('manju-submit');
+  if(submit.disabled) return;
   const title = $('manju-title').value.trim();
   const episode = Number($('manju-episode').value || '1');
   if(!Number.isInteger(episode) || episode < 1 || episode > 500){
@@ -2750,43 +2815,75 @@ async function manjuImport(){
   const body = {episode};
   const textRoute = $('manju-text-route')?.value;
   const imageRoute = $('manju-image-route')?.value;
-  const videoMode = $('manju-media-mode').value === 'video';
+  const mode = $('manju-media-mode').value;
+  const videoMode = mode !== 'image';
+  const mixed = mode === 'mixed';
   const characterViews = !$('manju-character-option').hidden && $('manju-character-views').checked;
   if(textRoute) body.text_route = textRoute;
   if(characterViews) body.character_views = true;
-  if(imageRoute && (!videoMode || characterViews)) body.image_route = imageRoute;
-  if(videoMode){
+  if(imageRoute && (!videoMode || mixed || characterViews)) body.image_route = imageRoute;
+  if(mixed){
+    const videoRoutes = {text:$('manju-video-text').value,first_frame:$('manju-video-first-frame').value,reference:$('manju-video-reference').value};
+    if(Object.values(videoRoutes).some(route => !route)){
+      st.textContent = '请为文生、图生和参考生视频各选一个路由。可在 Models 中添加。';
+      return;
+    }
+    body.video_routes = videoRoutes;
+  } else if(videoMode){
     const videoRoute = $('manju-video-route').value;
     if(!videoRoute){
       st.textContent = '请选择视频模型。可在 Models 中添加视频路由。';
       return;
     }
     body.video_route = videoRoute;
-    body.clip_seconds = Number($('manju-clip-seconds').value);
   }
+  if(videoMode) body.clip_seconds = Number($('manju-clip-seconds').value);
   if(title) body.title = title;
-  if(path){
-    body.path = path;
-  } else if(files && files.length){
-    st.textContent = '读取小说文件…';
-    const parts = [];
-    for(const f of files) parts.push(await f.text());
-    body.text = parts.join('\n\n');
-  } else {
-    st.textContent = '先选择小说文件（.txt/.md）或填写服务器路径';
-    return;
+  const board = $('manju-board');
+  const draft = board.hidden ? '' : $('manju-board-json').value.trim();
+  submit.disabled = true;
+  try{
+    const jsonFile = files && files.length === 1 && /\.json$/i.test(files[0].name);
+    if(path){
+      body.path = path;
+    } else if(jsonFile || draft && !files?.length){
+      const text = jsonFile ? await files[0].text() : draft;
+      let storyboard;
+      try{ storyboard = JSON.parse(text.replace(/^\uFEFF/, '')); }
+      catch{ st.textContent = '分镜 JSON 无法解析，请检查文件格式。'; return; }
+      if(!storyboard || !Array.isArray(storyboard.shots) || !storyboard.shots.length){
+        st.textContent = '分镜 JSON 需要包含非空的 shots 数组。';
+        return;
+      }
+      body.storyboard = storyboard;
+      delete body.text_route;
+    } else if(files && files.length){
+      st.textContent = '读取小说文件…';
+      const parts = [];
+      for(const f of files) parts.push(await f.text());
+      body.text = parts.join('\n\n');
+    } else {
+      st.textContent = '先选择小说文件（.txt/.md）、分镜 JSON 或填写服务器路径';
+      return;
+    }
+    st.textContent = '导入中…';
+    const r = await call('POST', '/v1/manju/import', body);
+    if(r.status >= 300 || !r.obj || r.obj.id == null){
+      st.textContent = '导入失败: ' + ((r.obj && r.obj.error) || r.text || ('HTTP ' + r.status));
+      return;
+    }
+    const o = r.obj;
+    const imported = body.storyboard ? ('已导入 ' + body.storyboard.shots.length + ' 镜分镜') : ('已切 ' + o.chapters + ' 章');
+    st.textContent = '✔ ' + imported + '，第' + o.episode + '集任务 #' + o.id + ' 已排队';
+    $('manju-progress').hidden = false;
+    toast('🎬 漫剧制作已排队');
+    await loadFlowTasks();
+    void loadAgents();
+  } catch(e){
+    st.textContent = '导入失败: ' + e.message;
+  } finally{
+    submit.disabled = false;
   }
-  st.textContent = '导入中…';
-  const r = await call('POST', '/v1/manju/import', body);
-  if(r.status >= 300){
-    st.textContent = '导入失败: ' + ((r.obj && r.obj.error) || r.text || ('HTTP ' + r.status));
-    return;
-  }
-  const o = r.obj || {};
-  st.textContent = '✔ 已切 ' + o.chapters + ' 章，团队已就位，第' + o.episode + '集任务 #' + o.id + ' 已排队';
-  toast('🎬 漫剧团队已组队：分镜 → ' + (videoMode ? '视频' : '画面') + '‖配音 → 合成');
-  loadAgents();
-  loadFlowTasks();
 }
 
 function agentAdd(){
@@ -5124,7 +5221,11 @@ async function chatDeleteSession(id){
 
 function chatImageSource(value){
   if(/^data:image\/(png|jpeg|webp|gif);base64,[a-z0-9+/=\s]+$/i.test(value || '')) return value;
-  try { const url=new URL(value,location.href); return /^https?:$/.test(url.protocol) ? url.href : ''; } catch(e){ return ''; }
+  if(!/^https?:\/\//i.test(value || ''))return '';
+  try {
+    const url=new URL(value);
+    return ['localhost','127.0.0.1','[::1]'].includes(url.hostname) || url.origin===location.origin ? '' : url.href;
+  } catch(e){ return ''; }
 }
 function chatImageButton(src,name){
   const button=document.createElement('button'); button.type='button'; button.className='chat-image-button';
@@ -5270,6 +5371,14 @@ function chatAppendCopy(wrap, getText){
   copy.onclick = () => copyText(getText() || '');
   wrap.appendChild(copy);
 }
+function chatUserActions(wrap){
+  let actions=wrap.querySelector(':scope > .chat-user-actions');
+  if(!actions){
+    actions=document.createElement('div');actions.className='chat-user-actions';
+    wrap.append(actions);
+  }
+  return actions;
+}
 function chatAddBubble(role, text, push = true){
   const box = $('chat-box'); if(!box) return null;
   const follow = CHAT_FOLLOW || chatNearBottom();
@@ -5284,7 +5393,7 @@ function chatAddBubble(role, text, push = true){
   } else if(role !== 'bot'){
     chatRenderText(wrap,text);
   }
-  if(text) chatAppendCopy(wrap, () => text);
+  if(text) chatAppendCopy(role==='user' ? chatUserActions(wrap) : wrap, () => text);
   box.appendChild(wrap);
   if(push){
     const entry={role,text,pending:false,el:wrap,timestamp_ms:Date.now()};
@@ -6128,6 +6237,8 @@ const PROVIDER_PRESETS = {
   openai:    {provider:'openai',    base:'https://api.openai.com/v1',                                        model:'gpt-4o'},
   qwen_image:{provider:'openai',    base:'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1', model:'qwen-image-3.0-pro', caps:'image_generation'},
   happyhorse_video:{provider:'openai', base:'https://token-plan.cn-beijing.maas.aliyuncs.com', model:'happyhorse-1.1-t2v', caps:'video_generation'},
+  happyhorse_first_frame:{provider:'openai', base:'https://token-plan.cn-beijing.maas.aliyuncs.com', model:'happyhorse-1.1-i2v', caps:'video_generation'},
+  happyhorse_reference:{provider:'openai', base:'https://token-plan.cn-beijing.maas.aliyuncs.com', model:'happyhorse-1.1-r2v', caps:'video_generation'},
   kling_video:{provider:'openai', base:'https://dashscope.aliyuncs.com', model:'kling/kling-v3-turbo-video-generation', caps:'video_generation'},
   seedance_video:{provider:'openai', base:'https://ark.cn-beijing.volces.com/api/v3', model:'doubao-seedance-2-0-260128', caps:'video_generation'},
   anthropic: {provider:'anthropic', base:'https://api.anthropic.com',                                        model:'claude-sonnet-4-6'},
@@ -6156,7 +6267,14 @@ function isVideoRoute(route){
   if(typeof route?.video_generation === 'boolean') return route.video_generation;
   if(route?.provider && route.provider !== 'openai') return false;
   return String(route?.caps || '').split(',').some(cap => cap.trim() === 'video_generation')
-    || /^(happyhorse-1\.1-t2v$|kling\/kling-v3-turbo-video-generation$|doubao-seedance-)/i.test(route?.model || '');
+    || /^(happyhorse-1\.1-[tir]2v$|kling\/kling-v3-turbo-video-generation$|doubao-seedance-)/i.test(route?.model || '');
+}
+
+function videoInput(route){
+  if(!isVideoRoute(route)) return '';
+  if(route.video_input === 'first_frame' || /-i2v$/i.test(route.model || '')) return 'first_frame';
+  if(route.video_input === 'reference' || /-r2v$/i.test(route.model || '')) return 'reference';
+  return 'text';
 }
 
 function mediaRoutePurpose(route){
@@ -6168,7 +6286,8 @@ function mediaRoutePurpose(route){
 function isMediaRoute(route){ return Boolean(mediaRoutePurpose(route)); }
 
 function mediaRouteLabel(route){
-  return isVideoRoute(route) ? '文生视频' : isImageRoute(route) ? '文生图' : '';
+  if(isVideoRoute(route)) return {text:'文生视频',first_frame:'图生视频',reference:'参考生视频'}[videoInput(route)];
+  return isImageRoute(route) ? '文生图' : '';
 }
 
 let ROUTES = [];
@@ -6864,10 +6983,10 @@ function renderChatEntry(entry){
     if(entry.turnIndex != null && !entry.pending && !chatIsBusy(CHAT_SESSION)
        && !el.querySelector('.chat-rewind')){
       const rw=document.createElement('button');
-      rw.className='chat-copy chat-rewind';rw.textContent='回滚到此';
+      rw.type='button';rw.className='chat-copy chat-rewind';rw.textContent='回滚到此';
       rw.title='回滚到这条提问之前（可选恢复文件），提问填回输入框';
       rw.onclick=()=>chatRewindSession(CHAT_SESSION,entry);
-      el.append(rw);
+      chatUserActions(el).append(rw);
     }
     return;
   }
@@ -7088,9 +7207,12 @@ function renderChatEntry(entry){
   // A reply may reference previews from earlier snapshots, including restored history.
   const snapshots=[...(entry.progressEvents || []),entry.progress || {}];
   const reads=snapshots.flatMap(p=>p.steps || []).filter(s=>s.ok===1 && (s.tool==='file_read' || s.image_preview));
-  const images=[...(entry.images || []),...snapshots.flatMap(p=>p.images || []),...reads.map(s=>s.image_preview)];
+  const images=[...(entry.images || []),...reads.map(s=>s.image_preview),...snapshots.flatMap(p=>p.images || [])];
   const imageKey=i=>i.session+':'+i.id;
-  const merged=new Map(images.filter(i=>i?.id && i?.session).map(i=>[imageKey(i),i]));
+  const merged=new Map();
+  for(const item of images){
+    if(item?.id && item?.session)merged.set(imageKey(item),{...merged.get(imageKey(item)),...item});
+  }
   const inline=new Set();
   if(entry.text && !entry.pending){
     const answer = document.createElement('pre'); answer.className = 'chat-answer';
@@ -7104,14 +7226,24 @@ function renderChatEntry(entry){
         }catch{return;}
       }
       path=path.replace(/^\.\//,'');
-      const matches=new Map();
-      for(const step of reads){
-        const target=String(step.target || '').replace(/\\/g,'/').replace(/^\.\//,'');
-        const relative=localUrl || !/^(?:[a-z]:|\/)/i.test(path);
+      const relative=localUrl || !/^(?:[a-z]:|\/)/i.test(path);
+      const matchPath=target=>{
+        target=String(target || '').replace(/\\/g,'/').replace(/^\.\//,'');
         const windows=/^[a-z]:\//i.test(target);
         const [left,right]=windows?[target.toLowerCase(),path.toLowerCase()]:[target,path];
-        if(left!==right && !(relative && left.endsWith('/'+right)))continue;
-        matches.set(left,step.image_preview || matches.get(left));
+        return left===right || (relative && left.endsWith('/'+right)) ? left : null;
+      };
+      const matches=new Map();
+      for(const item of merged.values()){
+        const key=matchPath(item.path);
+        if(key)matches.set(key,item);
+      }
+      if(!matches.size){
+        // Older histories identify the image through the read step.
+        for(const step of reads){
+          const key=matchPath(step.target);
+          if(key)matches.set(key,step.image_preview || matches.get(key));
+        }
       }
       if(matches.size!==1)return;
       let item=matches.values().next().value;
@@ -7329,7 +7461,8 @@ async function chatSubmit(resume = false){
   userEntry.text=r.obj?.display_message ?? (gate==='full'?'消息未显示':full);
   if(userEntry.el?.isConnected && preview!==userEntry.text){
     userEntry.el.replaceChildren();chatRenderText(userEntry.el,userEntry.text);
-    chatAppendCopy(userEntry.el,()=>userEntry.text);renderChatEntry(userEntry);
+    if(userEntry.text) chatAppendCopy(chatUserActions(userEntry.el),()=>userEntry.text);
+    renderChatEntry(userEntry);
     if(userEntry.images?.length)chatRenderImages(userEntry.el,userEntry.images);
   }
   if(!Number.isInteger(r.obj?.id)){

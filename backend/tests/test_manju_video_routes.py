@@ -1,6 +1,7 @@
 """Test video generation routing, saved task IDs, and ordered Manju clips."""
 
 import argparse
+import base64
 import collections
 import http.server
 import json
@@ -12,11 +13,14 @@ import tempfile
 import threading
 import time
 import urllib.request
+import zlib
 
 from test_image_routes import probe, request
 
 
 MODEL = "happyhorse-1.1-t2v"
+FIRST_FRAME = "happyhorse-1.1-i2v"
+REFERENCE = "happyhorse-1.1-r2v"
 KLING = "kling/kling-v3-turbo-video-generation"
 SEEDANCE = "doubao-seedance-2-0-260128"
 SUBMIT = "/api/v1/services/aigc/video-generation/video-synthesis"
@@ -62,12 +66,27 @@ class Provider(http.server.BaseHTTPRequestHandler):
             valid = (self.path == ARK_TASKS and duration == 4 and body.get("ratio") == "9:16"
                      and body.get("generate_audio") is False)
         else:
-            prompt = body.get("input", {}).get("prompt", "")
+            source = body.get("input", {})
+            prompt = source.get("prompt", "")
             duration = params.get("duration")
+            media = source.get("media", [])
+            visual_input = False
+            if model in (FIRST_FRAME, REFERENCE) and len(media) == 1:
+                item = media[0]
+                expected_type = "first_frame" if model == FIRST_FRAME else "reference_image"
+                prefix = "data:image/png;base64,"
+                url = item.get("url", "")
+                if item.get("type") == expected_type and url.startswith(prefix):
+                    image = base64.b64decode(url[len(prefix):], validate=True)
+                    width, height = struct.unpack(">II", image[16:24])
+                    visual_input = (image.startswith(b"\x89PNG\r\n\x1a\n") and min(width, height) >= 400
+                                    and (("ratio" not in params) if model == FIRST_FRAME else
+                                         (params.get("ratio") == "9:16" and "[Image 1]" in prompt)))
             valid = (self.path == SUBMIT and self.headers.get("X-DashScope-Async") == "enable"
                      and duration in (3, 4)
-                     and ((model == MODEL and params.get("ratio") == "9:16") or
-                          (model == KLING and params.get("aspect_ratio") == "9:16" and params.get("mode") == "std")))
+                     and ((model == MODEL and not media and params.get("ratio") == "9:16") or
+                          (model == KLING and params.get("aspect_ratio") == "9:16" and params.get("mode") == "std")
+                          or visual_input))
         if not valid or self.headers.get("Authorization") != TOKEN or not prompt:
             self.reply({"code": "InvalidFixtureRequest"}, 400)
             return
@@ -94,6 +113,15 @@ class Provider(http.server.BaseHTTPRequestHandler):
             with self.server.lock:
                 fail = self.server.fail_download
                 self.server.fail_download = False
+                cut = self.server.cut_download
+                self.server.cut_download = False
+            if cut:
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(MP4)))
+                self.send_header("Content-Type", "video/mp4")
+                self.end_headers()
+                self.wfile.write(MP4[:-3])
+                return
             self.send(503 if fail else 200, b"" if fail else MP4, "video/mp4")
         else:
             self.reply({}, 400)
@@ -147,6 +175,41 @@ def check_flow(base, provider, work):
     print("PASS: ordered 4s clips and resume after failed download without duplicate submissions")
 
 
+def check_mixed(base, provider, work):
+    def chunk(kind, payload):
+        return struct.pack(">I4s", len(payload), kind) + payload + struct.pack(">I", zlib.crc32(kind + payload))
+
+    pixels = (b"\0" + b"\x60\x70\x80" * 400) * 400
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 400, 400, 8, 2, 0, 0, 0)) +
+           chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b""))
+    (work / "hero.png").write_bytes(png)
+    episode = work / "manju" / "ep03"
+    episode.mkdir(parents=True)
+    board = {"title": "Same hero", "badge": "Fixture", "shots": [
+        {"kind": "narration", "text": "A ship appears", "video_mode": "text"},
+        {"kind": "narration", "text": "The hero wakes", "first_frame": "hero.png"},
+        {"kind": "narration", "text": "The hero returns", "reference_images": ["hero.png"]},
+    ]}
+    (episode / "shots.json").write_text(json.dumps(board), encoding="utf-8")
+    flow = {"nodes": [{"id": "step2", "agent": "manju-artist", "task": "Produce mixed clips",
+        "manju_video_episode": 3, "manju_clip_seconds": 4, "manju_video_routes": {
+            "text": "fixture-video", "first_frame": FIRST_FRAME, "reference": REFERENCE,
+        }}], "edges": []}
+    with provider.lock:
+        provider.cut_download = True
+    complete = terminal(base, flow)
+    assert complete["status"] == "DONE", complete
+    clips = json.loads((episode / "clips" / "clips.json").read_text(encoding="utf-8"))["clips"]
+    assert [entry["model"] for entry in clips[1:-1]] == [MODEL, FIRST_FRAME, REFERENCE]
+    assert clips[0]["file"] == clips[1]["file"] and clips[3]["file"] == clips[4]["file"]
+    assert complete["flow_nodes"][0]["video_requests"] == 3, complete
+    assert provider.durations[MODEL, 4] == 4
+    assert provider.durations[FIRST_FRAME, 4] == provider.durations[REFERENCE, 4] == 1
+    cached = terminal(base, flow)
+    assert cached["status"] == "DONE" and cached["flow_nodes"][0]["video_requests"] == 0, cached
+    print("PASS: same episode routes three clips by input type with no title/end or resume submissions")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
@@ -159,6 +222,7 @@ def main():
         provider.durations = collections.Counter()
         provider.polls = collections.Counter()
         provider.fail_download = False
+        provider.cut_download = False
         threading.Thread(target=provider.serve_forever, daemon=True).start()
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
@@ -188,14 +252,20 @@ def main():
             test = probe(base, {"route_name": route["name"]})
             assert test["ok"] and provider.durations[MODEL, 3] == 1, test
             print("PASS: saved video route tests a 3s asynchronous generation and stays out of chat")
-            for model, duration, prefix in ((KLING, 3, ""), (SEEDANCE, 4, "/api/v3")):
+            for model, duration, prefix, mode in ((KLING, 3, "", "text"),
+                    (SEEDANCE, 4, "/api/v3", "text"), (FIRST_FRAME, 3, "", "first_frame"),
+                    (REFERENCE, 3, "", "reference")):
                 branch = {**route, "name": model, "model": model,
                           "base_url": f"http://127.0.0.1:{provider.server_port}{prefix}"}
-                assert request(base, "/v1/routes", branch)[0] == 200
+                status, routes = request(base, "/v1/routes", branch)
+                assert status == 200
+                assert next(item for item in routes if item["name"] == branch["name"])["video_input"] == mode
+                assert request(base, "/v1/config/llm", branch)[0] == 400
                 test = probe(base, {"route_name": branch["name"]})
                 assert test["ok"] and provider.durations[model, duration] == 1, (model, test)
                 print(f"PASS: {model} uses the corresponding asynchronous protocol")
             check_flow(base, provider, pathlib.Path(tmp))
+            check_mixed(base, provider, pathlib.Path(tmp))
         finally:
             process.terminate()
             process.wait(timeout=10)

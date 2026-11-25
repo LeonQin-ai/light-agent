@@ -8,6 +8,7 @@
 #include "runtime/scheduler.h"
 #include "cognition/planner.h"
 #include "runtime/flow.h"
+#include "runtime/manju_story.h"
 #include "runtime/cron.h"
 #include "runtime/tasklog.h"
 #include "runtime/flow_store.h"
@@ -1440,8 +1441,30 @@ static int manju_ensure_agent(runtime_ctx *ctx, const char *name, const char *ro
     return 0;
 }
 
+static int manju_valid_imported_board(const cJSON *board) {
+    const char *title = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(board, "title"));
+    const char *badge = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(board, "badge"));
+    const cJSON *shots = cJSON_GetObjectItemCaseSensitive(board, "shots");
+    int count = cJSON_GetArraySize(shots);
+    if (!title || !*title || strlen(title) > 480 || !badge || !*badge || strlen(badge) > 360 ||
+        !cJSON_IsArray(shots) || count < 1 || count > 180) return 0;
+    const cJSON *shot;
+    cJSON_ArrayForEach(shot, shots) {
+        const char *line = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(shot, "text"));
+        const char *kind = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(shot, "kind"));
+        const cJSON *mode_field = cJSON_GetObjectItemCaseSensitive(shot, "video_mode");
+        const char *mode = cJSON_GetStringValue(mode_field);
+        if (!line || !*line || strlen(line) > 12000 || !kind ||
+            (strcmp(kind,"dialogue") && strcmp(kind,"narration") && strcmp(kind,"sys")) ||
+            (mode_field && (!mode || (strcmp(mode, "text") && strcmp(mode, "first_frame") && strcmp(mode, "reference")))))
+            return 0;
+    }
+    return 1;
+}
+
 static int h_manju_import(const http_request *req, http_response *resp, void *ud) {
     runtime_ctx *ctx = (runtime_ctx *)ud;
+    if (!authz_ok(ctx, req, resp)) return 0;
     char *b = body_str(req);
     cJSON *root = b ? cJSON_Parse(b) : NULL;
     free(b);
@@ -1454,14 +1477,36 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     const char *text = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "text"));
     const char *path = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "path"));
     const char *title = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "title"));
+    cJSON *board = cJSON_GetObjectItemCaseSensitive(root, "storyboard");
+    if (board && (!cJSON_IsObject(board) || !manju_valid_imported_board(board) || text || path)) {
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"请单独导入有效分镜 JSON，包含 title、badge 与 shots\"}");
+        return 0;
+    }
+    if (board && (!title || !*title))
+        title = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(board, "title"));
     cJSON *jvideo = cJSON_GetObjectItemCaseSensitive(root, "video_route");
     const char *video_route = cJSON_GetStringValue(jvideo);
+    cJSON *mixed = cJSON_GetObjectItemCaseSensitive(root, "video_routes");
+    int video_mode = jvideo || mixed;
     cJSON *jseconds = cJSON_GetObjectItemCaseSensitive(root, "clip_seconds");
     double seconds = jseconds ? cJSON_GetNumberValue(jseconds) : 4;
     route selected_video = {0};
-    if ((jseconds && !jvideo) ||
+    int valid_mixed = cJSON_IsObject(mixed);
+    if (valid_mixed) {
+        static const char *keys[] = {"text", "first_frame", "reference"};
+        for (int i = 0; valid_mixed && i < 3; i++) {
+            const char *name = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(mixed, keys[i]));
+            valid_mixed = name && *name && strlen(name) < 128 &&
+                router_select_video(ctx->router, name, &selected_video) == 0 &&
+                (int)llm_video_input_kind(&selected_video) == i;
+            route_clear(&selected_video);
+        }
+    }
+    if ((jseconds && !video_mode) || (mixed && (jvideo || !valid_mixed)) ||
+        (video_mode && seconds != 3 && seconds != 4) ||
         (jvideo && (!video_route || !*video_route || strlen(video_route) >= 128 ||
-                    (seconds != 3 && seconds != 4) ||
                     router_select_video(ctx->router, video_route, &selected_video) != 0))) {
         route_clear(&selected_video);
         cJSON_Delete(root);
@@ -1469,6 +1514,7 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         http_resp_json(resp, "{\"error\":\"请选择已配置的文生视频路由，片段时长为 3 或 4 秒\"}");
         return 0;
     }
+    int input_kind = llm_video_input_kind(&selected_video);
     route_clear(&selected_video);
     cJSON *jviews = cJSON_GetObjectItemCaseSensitive(root, "character_views");
     int character_views = cJSON_IsTrue(jviews);
@@ -1482,7 +1528,8 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     const char *image_route = cJSON_GetStringValue(jimage_route);
     char chosen_image_route[128];
     route selected_image = {0};
-    if ((jimage_route && ((video_route && !character_views) || !image_route || !*image_route)) ||
+    if ((jimage_route && ((video_mode && !character_views && !mixed && input_kind != LLM_VIDEO_FIRST_FRAME) ||
+                          !image_route || !*image_route)) ||
         ((jimage_route || character_views) &&
          (router_select_image(ctx->router, image_route, &selected_image) != 0 ||
           !selected_image.name || strlen(selected_image.name) >= sizeof chosen_image_route))) {
@@ -1520,7 +1567,7 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         return 0;
     }
     int episode = (int)episode_value;
-    if ((!text || !*text) && (!path || !*path)) {
+    if (!board && (!text || !*text) && (!path || !*path)) {
         cJSON_Delete(root);
         resp->status = 400;
         http_resp_json(resp, "{\"error\":\"need 'text' (novel content) or 'path' (server file/dir)\"}");
@@ -1540,7 +1587,9 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     char **chapters = NULL;
     int nch = 0;
     char *owned_text = NULL;
-    if (text && *text) {
+    if (board) {
+        /* An imported storyboard is the director's artifact. */
+    } else if (text && *text) {
         chapters = manju_split_chapters(text, &nch);
     } else {
         long long sz = fs_file_size(path);
@@ -1577,7 +1626,7 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         }
     }
     free(owned_text);
-    if (!chapters || nch <= 0) {
+    if (!board && (!chapters || nch <= 0)) {
         manju_free_chapters(chapters, nch);
         free(directory);
         cJSON_Delete(root);
@@ -1599,7 +1648,7 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     char novel_dir[256], novel_abs[2048];
     snprintf(novel_dir, sizeof(novel_dir), "novel/%s", slug);
     path_join(novel_abs, sizeof(novel_abs), directory, novel_dir);
-    if (fs_mkdirs(novel_abs) != 0) {
+    if (!board && fs_mkdirs(novel_abs) != 0) {
         manju_free_chapters(chapters, nch);
         free(directory);
         cJSON_Delete(root);
@@ -1666,6 +1715,28 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     path_join(audio_abs,sizeof(audio_abs),directory,audio);
     path_join(video_abs,sizeof(video_abs),directory,video);
     path_join(manifest_abs,sizeof(manifest_abs),directory,manifest);
+    if (board) {
+        char episode_abs[2048];
+        path_join(episode_abs, sizeof episode_abs, directory, epdir);
+        char *serialized = cJSON_PrintUnformatted(board);
+        size_t n = serialized ? strlen(serialized) : 0;
+        size_t prior_len = 0;
+        int more = 0;
+        int existing = fs_exists(shots_abs);
+        char *prior = existing ? fs_read_file_slice(shots_abs, 0, 512 * 1024, &prior_len, &more) : NULL;
+        int ok = n && n <= 512 * 1024 && (existing ?
+            prior && !more && n == prior_len && !memcmp(prior, serialized, n) :
+            fs_mkdirs(episode_abs) == 0 && fs_write_file(shots_abs, serialized, n) == 0);
+        free(prior);
+        free(serialized);
+        if (!ok) {
+            cJSON_Delete(root);
+            free(directory);
+            resp->status = existing ? 409 : 400;
+            http_resp_json(resp, "{\"error\":\"无法写入分镜，已有不同分镜时请选择其他集号或工作区\"}");
+            return 0;
+        }
+    }
     snprintf(task1, sizeof(task1),
              "把小说《%s》第%d章改编成漫剧第%d集镜头脚本。章节文件：%s。"
              "完整读入 \"%s\" 后按戏剧节奏编排。"
@@ -1696,9 +1767,9 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     const char *ids[4] = {"step1", "step2", "step3", "step4"};
     const char *agents[4] = {"manju-director", "manju-artist", "manju-voice", "manju-editor"};
     const char *tasks[4] = {task1,
-        video_route ? "按剧情顺序为每个分镜生成并验证 3–4 秒竖版视频，生成短视频清单。" : task2,
-        task3, video_route ? "按分镜顺序合并短视频，对齐配音与字幕，校验后交付整集 MP4。" : task4};
-    for (int i = 0; i < 4; i++) {
+        video_mode ? "按剧情顺序为每个分镜生成并验证 3–4 秒竖版视频，生成短视频清单。" : task2,
+        task3, video_mode ? "按分镜顺序合并短视频，对齐配音与字幕，校验后交付整集 MP4。" : task4};
+    for (int i = board ? 1 : 0; i < 4; i++) {
         cJSON *nd = cJSON_CreateObject();
         cJSON_AddStringToObject(nd, "id", ids[i]);
         cJSON_AddStringToObject(nd, "agent", agents[i]);
@@ -1707,12 +1778,16 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
             cJSON_AddNumberToObject(nd, "manju_story_episode", episode);
             cJSON_AddStringToObject(nd, "manju_chapter", chapter_rel);
             if (text_route) cJSON_AddStringToObject(nd, "manju_text_route", text_route);
-            if (video_route) cJSON_AddNumberToObject(nd, "manju_clip_seconds", seconds);
+            if (video_mode) cJSON_AddNumberToObject(nd, "manju_clip_seconds", seconds);
+            if (mixed) cJSON_AddNumberToObject(nd, "manju_story_video_mode",
+                character_views ? MANJU_STORY_VIDEO_WITH_CHARACTER_VIEWS : MANJU_STORY_VIDEO_MIXED);
         }
         if (i == 1) {
-            if (video_route) {
+            if (video_mode) {
                 cJSON_AddNumberToObject(nd, "manju_video_episode", episode);
-                cJSON_AddStringToObject(nd, "manju_video_route", video_route);
+                if (mixed) cJSON_AddItemToObject(nd, "manju_video_routes", cJSON_Duplicate(mixed, 1));
+                else cJSON_AddStringToObject(nd, "manju_video_route", video_route);
+                if (image_route) cJSON_AddStringToObject(nd, "manju_image_route", image_route);
                 cJSON_AddNumberToObject(nd, "manju_clip_seconds", seconds);
             } else {
                 cJSON_AddNumberToObject(nd, "manju_paint_episode", episode);
@@ -1721,7 +1796,7 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         }
         if (i == 3) {
             cJSON_AddNumberToObject(nd, "manju_compose_episode", episode);
-            if (video_route) cJSON_AddBoolToObject(nd, "manju_compose_clips", 1);
+            if (video_mode) cJSON_AddBoolToObject(nd, "manju_compose_clips", 1);
         }
         if (i == 2) cJSON_AddNumberToObject(nd, "manju_voice_episode", episode);
         cJSON_AddItemToArray(nodes, nd);
@@ -1736,9 +1811,10 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         cJSON_AddItemToArray(nodes, nd);
     }
     const char *assets_after = character_views ? "character" : "step1";
-    const char *from[] = {assets_after, assets_after, "step2", "step3", "step1"};
+    const char *from[] = {assets_after, "step1", "step2", "step3", "step1"};
     const char *to[] = {"step2", "step3", "step4", "step4", "character"};
     for (int i = 0; i < (character_views ? 5 : 4); i++) {
+        if (board && !strcmp(from[i], "step1")) continue;
         cJSON *e = cJSON_CreateObject();
         cJSON_AddStringToObject(e, "from", from[i]);
         cJSON_AddStringToObject(e, "to", to[i]);
@@ -1760,7 +1836,8 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
 
     char name_buf[192], input_buf[512];
     snprintf(name_buf, sizeof(name_buf), "漫剧《%s》第%d集", ntitle, episode);
-    snprintf(input_buf, sizeof(input_buf), "一键导入小说《%s》（%d 章），多 agent 组队制作漫剧第%d集", ntitle, nch, episode);
+    if (board) snprintf(input_buf, sizeof(input_buf), "一键导入分镜《%s》，制作漫剧第%d集", ntitle, episode);
+    else snprintf(input_buf, sizeof(input_buf), "一键导入小说《%s》（%d 章），多 agent 组队制作漫剧第%d集", ntitle, nch, episode);
     /* userdata marker 2 routes the task runner to flow_run */
     int64_t id = scheduler_submit_access(ctx->scheduler, 0, dag_json, (void *)2, 0, "flow", 0, NULL, directory, 0, 0);
     if (id < 0) {

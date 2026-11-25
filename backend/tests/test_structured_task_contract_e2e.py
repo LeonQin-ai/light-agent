@@ -33,6 +33,30 @@ def exercise(protocol,mode,prompt='Verify the requested result.',live_image_rout
             replies=[contract,contract,write,read,done];expected='DONE'
         else:
             replies=[contract];expected='FAILED'
+    elif mode.startswith('report_scope_'):
+        html = 'report.html'
+        html_write = action('file_write', path=html, content='<html>Verified report</html>')
+        html_read = action('file_read', path=html)
+        complete = action('complete_task', status='complete', requires_tools=False, answer=FINAL)
+        prompt = '整理一个 HTML 报告'
+        expected = 'DONE'
+        if mode == 'report_scope_recovery':
+            replies = [declare(artifacts=['docs/first-choice.html']), action('file_read', path='tiny'),
+                       declare(artifacts=[html], full_reads=['tiny']), declare(artifacts=['wrong.md']),
+                       declare(artifacts=['other.md']), html_write, html_read, complete]
+        elif mode == 'report_scope_fixed':
+            acceptance = {'artifacts': [html]}
+            replies = [declare(artifacts=['redirect.html']), html_write, html_read, complete]
+        elif mode == 'report_scope_written':
+            replies = [declare(artifacts=[html]), html_write,
+                       declare(artifacts=['redirect.html']), html_read, complete]
+        elif mode == 'report_scope_multiple':
+            prompt = 'Create an HTML report and a Markdown appendix.'
+            replies = [declare(artifacts=[html]), html_write, html_read,
+                       declare(artifacts=['appendix.md']), action('file_write', path='appendix.md', content=CONTENT),
+                       action('file_read', path='appendix.md'), done]
+        else:
+            raise ValueError(mode)
     elif mode in ('artifact','missing','erase','preexisting','write_only','stale'):
         replies=[declare(artifacts=['report.any'])]
         if mode in ('artifact','write_only','stale'):replies += [write]
@@ -162,6 +186,13 @@ def exercise(protocol,mode,prompt='Verify the requested result.',live_image_rout
                 return
             if mode.startswith('declaration_'):
                 declaration_requests.append(request)
+            if mode=='report_scope_recovery' and calls==5:
+                context = json.loads(request)['messages'][-1]['content']
+                contract = context.split('## Runtime acceptance contract\n', 1)[1].splitlines()[0]
+                required = json.loads(contract)
+                assert [Path(path).name for path in required['artifacts']] == ['report.html'], required
+                assert [Path(path).name for path in required['full_reads']] == ['tiny'], required
+                assert 'Declare one artifact with the requested file extension' in context
             if mode=='script_late_contract' and calls==3:
                 assert b'Previous completion was rejected:' not in request
             if mode=='script_budget_readback' and calls==4:
@@ -289,6 +320,11 @@ def exercise(protocol,mode,prompt='Verify the requested result.',live_image_rout
                             assert 'no committed action receipt is present' not in task['output'],task
                             assert not (work/'report.any').exists(),task
                     if mode=='full':assert task['tool_calls']==3,task
+                    if mode.startswith('report_scope_'):
+                        assert (work/'report.html').read_text(encoding='utf-8') == '<html>Verified report</html>'
+                        assert not (work/'redirect.html').exists() and not (work/'wrong.md').exists()
+                        assert (work/'appendix.md').exists() == (mode=='report_scope_multiple')
+                        assert len(replies) <= calls <= len(replies)+1, (calls, task)
                     if mode=='optional':assert task['tool_calls']==1,task
                     if mode.startswith('cache_'):
                         steps=task['steps']
@@ -316,6 +352,9 @@ def exercise(protocol,mode,prompt='Verify the requested result.',live_image_rout
     finally:server.shutdown();server.server_close()
 
 if __name__=='__main__':
+    for protocol in ('native', 'legacy'):
+        for mode in ('report_scope_recovery', 'report_scope_fixed', 'report_scope_written', 'report_scope_multiple'):
+            exercise(protocol, mode)
     exercise('native','ui_artwork')
     exercise('native','image_history')
     exercise('native','script_late_contract')

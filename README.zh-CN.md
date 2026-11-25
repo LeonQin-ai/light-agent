@@ -14,7 +14,7 @@
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-lightgrey.svg)](#快速开始)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**[下载体验](https://github.com/LeonQin-ai/light-agent/releases/latest) · [快速开始](#快速开始) · [开发文档](backend/README.md) · [English](README.md)**
+**[下载体验](https://github.com/LeonQin-ai/light-agent/releases/latest) · [快速开始](#快速开始) · [桌面端演示](#桌面端演示) · [开发文档](backend/README.md) · [English](README.md)**
 
 </div>
 
@@ -31,6 +31,7 @@
 | **理解一个代码仓库** | 搜索源码、分段阅读、运行命令，输出有文件依据的分析。 |
 | **制作文档与可视化报告** | 配合已安装的文档、Python 或 shell 工具生成文件，并检查实际产物。 |
 | **组织多个专业 Agent** | 用 Flow DAG 串联审核、实现、测试，或让不同角色围绕同一话题相互讨论。 |
+| **制作动态漫剧** | 导入小说或分镜，用 Flow 生成镜头和配音，剪辑后导出 MP4。 |
 | **处理周期性工作** | 设置定时任务，在同一控制台查看执行结果。 |
 | **为自己的应用加入 Agent** | 通过 HTTP 提交任务，读取状态、工具步骤、输出和指标。 |
 
@@ -107,8 +108,6 @@ CLI 部署可以显式指定执行目录和状态存储位置：
 
 多 Agent Flow 用 DAG 表达任务依赖；群聊让注册角色在可配置的轮次内阅读并回应其他成员。Skills、MCP 和插件提供扩展入口。
 
-在「多 Agent & Flow → 漫剧工房」可导入小说，选定本集分镜、文生图和视频路由。开启角色三视图后，画师会先生成正面、侧面和背面设定，镜头沿用同一套角色外观说明。短视频模式支持百炼 HappyHorse、百炼可灵和火山方舟 Seedance。先在「Model routes」配置并测试视频路由，再选每镜 3 秒或 4 秒。任务保存已完成的片段，等配音就绪后合成动态版 `epNN-motion.mp4`。配音和合成需要本机 Python 及漫剧依赖。
-
 <details>
 <summary>展开查看 Skills 与插件管理界面</summary>
 
@@ -119,6 +118,41 @@ CLI 部署可以显式指定执行目录和状态存储位置：
 </details>
 
 截图使用本地演示配置与 mock 执行，不作为真实模型任务能力的证明。
+
+## 用 HappyHorse 1.1 制作漫剧
+
+桌面端「漫剧工房」用同一个 Flow 管理分镜、画面、配音和剪辑。「按镜头选视频模型」可以在同一集里按输入素材选择三种路由。
+
+| 模型 | 输入 | 适合的镜头 |
+|---|---|---|
+| `happyhorse-1.1-t2v` | 文本提示词 | 场景空镜、远景和无需固定角色的特效 |
+| `happyhorse-1.1-i2v` | 1 张首帧图与提示词 | 控制开场构图，或用提供的衔接画面作为起点 |
+| `happyhorse-1.1-r2v` | 1～9 张参考图与提示词 | 跨镜头复用人物、服装和道具的参考素材 |
+
+文生图路由可生成分镜首帧和角色正面、侧面、背面设定图。参考素材有助于保留角色外观，成片可逐镜核对人物一致性。[阿里云 Token Plan 视频接入](https://help.aliyun.com/en/model-studio/token-plan-video-generation) · [首帧生成 API](https://help.aliyun.com/en/model-studio/happyhorse-image-to-video-api-reference) · [参考生成 API](https://help.aliyun.com/en/model-studio/happyhorse-reference-to-video-api-reference)
+
+1. 在 **更多 → Models** 分别添加三个 **HappyHorse（百炼 Token Plan）** 预设。需要生成首帧及角色参考图时，添加 `qwen-image-3.0-pro` 等文生图路由。点击各路由条目的 **Test** 检查配置。
+2. 打开 **多 Agent & Flow → 漫剧工房**。导入 `.txt` 或 `.md` 章节、导入分镜 `.json`，或点击 **加载三镜宣传样片**。内置《拾光守灯人》用 T2V 展示灯塔空镜，后两镜分别用 I2V 和 R2V 演出同一位原创守灯人阿澄。
+3. 检查三种视频路由和文生图路由，选每镜 3 秒或 4 秒。点击 **导入并组队制作**，再从 **查看制作进度** 跟踪处理过程。自定义分镜可将每个镜头的 `video_mode` 设为 `text`、`first_frame` 或 `reference`。
+4. 制作完成后，在工作区打开 `manju/epNN/videos/epNN-motion.mp4`。中断后继续运行时，任务会复用已保存的片段。配音与合成需要本机 Python 和漫剧依赖。
+
+「文生视频」模式还可以选择百炼可灵或火山方舟 Seedance，以单路由制作整集。
+
+### 桌面端演示
+
+Windows 桌面端首次制作调用了已配置的三个 HappyHorse 真实模型，用时 4 分 45 秒。内置样片直接使用预写分镜，跳过导演模型调用，R2V 参考图由 `qwen-image-3.0-pro` 生成。为了改善角色衔接，补跑时以阿澄的画面作为首帧，仅新增 1 次视频生成请求。视频下载中断后，沿用原任务 ID 恢复。最终成片长 20.4 秒，分辨率 720 × 1280。
+
+| 功能 | 演示 |
+|---|---|
+| 《拾光守灯人》三镜宣传样片 | [观看成片](docs/demo/happyhorse-promo.mp4) |
+| 桌面端漫剧工房首次制作，从导入到完成 | [观看未剪辑全程录像](docs/demo/manju-desktop.mp4) |
+| 改善主角衔接的补跑过程 | [观看未剪辑全程录像](docs/demo/manju-continuity.mp4) |
+| 对话、执行与桌面主要页面 | [观看剪辑版功能演示](docs/demo/feature-tour.mp4) |
+| 工作区与历史会话切换 | [观看 GIF](docs/demo/workspace.gif) |
+| 模型路由与能力标签 | [观看 GIF](docs/demo/model-routes.gif) |
+| 外观设置 | [观看 GIF](docs/demo/appearance.gif) |
+
+功能演示包含 DeepSeek 真实对话、Token 统计和按条目测试模型，也展示多 Agent 与 Flow、角色池、定时任务、MCP、Skills、插件、模型路由、策略、会话凭据授权、IM、记忆、快照、监控、集群、指标和仪表盘。管理类页面演示导航与配置入口。
 
 ## 架构与设计
 

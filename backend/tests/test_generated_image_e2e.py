@@ -1,5 +1,5 @@
 """#241: actual image bytes, read receipts, model vision and scoped previews."""
-import base64,json,os,socket,subprocess,tempfile,threading,time,urllib.request,urllib.error
+import base64,json,os,socket,struct,subprocess,tempfile,threading,time,urllib.request,urllib.error,zlib
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from fixture_http_response import respond_json
@@ -11,10 +11,18 @@ def exercise(protocol,mode):
     calls=[];errors=[];seen=[False];invalid=mode.startswith('invalid');expected='FAILED' if invalid else 'DONE'
     data=JPEG if mode=='jpeg' else PNG
     filename='picture.jpg' if mode=='jpeg' else 'picture.png'
-    actions=[('file_read',{'path':filename})]
-    if mode=='generated':actions.insert(0,('shell',{'command':'python make.py','outputs':[filename]}))
-    if mode=='cached':actions.append(('file_read',{'path':filename,'max_bytes':4}))
-    actions.append(('complete_task',{'status':'complete','requires_tools':False,'answer':filename}))
+    images_on_disk={filename:data}
+    if mode=='batch':
+        images_on_disk={}
+        for i in range(9):
+            label=b'tEXt'+b'Comment\x00'+str(i).encode()
+            unique=PNG[:-12]+struct.pack('>I',len(label)-4)+label+struct.pack('>I',zlib.crc32(label))+PNG[-12:]
+            images_on_disk[f'post-{i+1}/picture.png']=unique
+    rounds=[[('file_read',{'path':path}) for path in images_on_disk]]
+    if mode=='generated':rounds.insert(0,[('shell',{'command':'python make.py','outputs':[filename]})])
+    if mode=='cached':rounds.append([('file_read',{'path':filename,'max_bytes':4})])
+    answer='\n'.join(images_on_disk)
+    rounds.append([('complete_task',{'status':'complete','requires_tools':False,'answer':answer})])
     class Provider(BaseHTTPRequestHandler):
         def log_message(self,*_):pass
         def do_POST(self):
@@ -35,14 +43,18 @@ def exercise(protocol,mode):
                 # Images are attached once (sent marker); later text-only
                 # completion-review rounds must not resend or leak them.
                 if after_read and not invalid:
-                    assert images==[base64.b64encode(data).decode()] or (not images and seen[0]),images
+                    expected_images=[base64.b64encode(src).decode() for src in list(images_on_disk.values())[-4:]]
+                    assert images==expected_images or (not images and seen[0]),images
                     seen[0]=seen[0] or bool(images)
                 elif not after_read or invalid:assert not images,images
-                name,args=actions[min(n,len(actions)-1)]
-                if protocol=='anthropic':reply={'content':[{'type':'tool_use','id':f'c{n}','name':name,'input':args}],'stop_reason':'tool_use'}
+                batch=rounds[min(n,len(rounds)-1)]
+                if mode=='batch' and images:
+                    prompt=json.dumps(body,ensure_ascii=False)
+                    assert '省略 5 张' in prompt,prompt[:200]
+                if protocol=='anthropic':reply={'content':[{'type':'tool_use','id':f'c{n}-{i}','name':name,'input':args} for i,(name,args) in enumerate(batch)],'stop_reason':'tool_use'}
                 else:
-                    message={'content':json.dumps([{'tool':name,'args':args}])}
-                    if protocol=='native':message={'content':'正在读取图片以核实交付内容。','tool_calls':[{'id':f'c{n}','type':'function','function':{'name':name,'arguments':json.dumps(args)}}]}
+                    message={'content':json.dumps([{'tool':name,'args':args} for name,args in batch])}
+                    if protocol=='native':message={'content':'正在读取图片以核实交付内容。','tool_calls':[{'id':f'c{n}-{i}','type':'function','function':{'name':name,'arguments':json.dumps(args)}} for i,(name,args) in enumerate(batch)]}
                     reply={'choices':[{'message':message,'finish_reason':'stop'}]}
                 respond_json(self,json.dumps(reply).encode())
             except Exception as e:errors.append(repr(e));self.send_error(500)
@@ -50,8 +62,12 @@ def exercise(protocol,mode):
     try:
         with tempfile.TemporaryDirectory(prefix='coa-image-read-') as folder:
             state=Path(folder)
-            if mode=='invalid_layout':data=data[:8]+data[12:16]+data[8:12]+data[16:]
-            if mode!='generated':(state/filename).write_bytes(b'not an image\x00' if mode=='invalid' else data)
+            if mode=='invalid_layout':images_on_disk[filename]=data[:8]+data[12:16]+data[8:12]+data[16:]
+            if mode!='generated':
+                for relative,src in images_on_disk.items():
+                    path=state/relative
+                    path.parent.mkdir(parents=True,exist_ok=True)
+                    path.write_bytes(b'not an image\x00' if mode=='invalid' else src)
             (state/'make.py').write_text("import base64\nopen('picture.png','wb').write(base64.b64decode("+repr(base64.b64encode(PNG).decode())+"))\n")
             (state/'light-agent.json').write_text(json.dumps({'llm.provider':'anthropic' if protocol=='anthropic' else 'openai','llm.model':'image-fixture','llm.api_key':'fixture','llm.base_url':f'http://127.0.0.1:{server.server_port}','reasoning.max_rounds':8}))
             with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
@@ -65,7 +81,7 @@ def exercise(protocol,mode):
                         try:api('/v1/scheduler');break
                         except OSError:assert proc.poll() is None;time.sleep(.05)
                     acceptance={'artifacts':[filename]} if mode=='generated' else {'requires_observation':True}
-                    tid=api('/v1/chat',{'message':'Display the image.','session':'image-test','acceptance':acceptance})['id'];deadline=time.monotonic()+30
+                    tid=api('/v1/chat',{'message':'Display all requested images.','session':'image-test','acceptance':acceptance})['id'];deadline=time.monotonic()+30
                     while True:
                         task=api(f'/v1/tasks/{tid}')
                         if task['status'] not in ('RUNNING','QUEUED'):break
@@ -84,10 +100,19 @@ def exercise(protocol,mode):
                         assert any(event.get('commentary')=='正在读取图片以核实交付内容。' for run in terminal for event in run.get('trace',[])),history
                     if expected=='DONE':
                         previews=[s['image_preview'] for s in task['steps'] if s.get('image_preview')]
-                        assert previews and len({p['id'] for p in previews})==1,task
+                        assert previews and len({p['id'] for p in previews})==len(images_on_disk),task
                         preview=previews[-1];result=api('/v1/uploads/preview?id='+preview['id']+'&session=image-test')
-                        assert base64.b64decode(result['data_url'].split(',',1)[1])==data
+                        assert base64.b64decode(result['data_url'].split(',',1)[1])==list(images_on_disk.values())[-1]
                         assert base64.b64encode(data).decode() not in json.dumps(task),'raw image leaked into progress/context text'
+                        if mode=='batch':
+                            for inventory in [task['images'],terminal[-1]['trace'][-1]['images']]:
+                                assert len(inventory)==len(images_on_disk),inventory
+                                assert len({p['id'] for p in inventory})==len(inventory),inventory
+                                for preview,(relative,src) in zip(inventory,images_on_disk.items()):
+                                    assert set(preview)=={'id','name','session','path'},preview
+                                    assert preview['path'].replace('\\','/').endswith('/'+relative),preview
+                                    result=api('/v1/uploads/preview?id='+preview['id']+'&session=image-test')
+                                    assert base64.b64decode(result['data_url'].split(',',1)[1])==src
                         try:api('/v1/uploads/preview?id='+preview['id']+'&session=other');raise AssertionError('cross-session preview exposed')
                         except urllib.error.HTTPError as e:assert e.code==404
                     else:
@@ -100,3 +125,4 @@ def exercise(protocol,mode):
 if __name__=='__main__':
     for protocol in ('legacy','native','anthropic'):
         for mode in ('existing','jpeg','cached','generated','invalid','invalid_layout'):exercise(protocol,mode)
+    exercise('native','batch')

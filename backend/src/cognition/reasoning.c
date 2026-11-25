@@ -38,6 +38,7 @@
 #include "api/auth.h"
 
 #include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
@@ -352,8 +353,11 @@ struct reasoning {
     char file_check_error[600];
     int planner_output_escalated; /* one bounded 32K -> 64K retry after truncation */
     int completion_review_required; /* legacy review must make an explicit decision */
-    cJSON *acceptance; /* monotonic structured obligations, never inferred from prose */
-    cJSON *tool_images; /* bounded session-scoped visual observations, never tool text */
+    cJSON *acceptance;
+    const char *report_format; /* explicit single-report scope in the user's current request */
+    int report_path_fixed;
+    const char *acceptance_error;
+    cJSON *tool_images; /* session-scoped image descriptors; bytes remain on disk */
     char *default_acceptance_json;
     int acceptance_invalid;
     char last_model_error[1024];
@@ -784,9 +788,73 @@ int reasoning_acceptance_validate(const char *json) {
     cJSON_Delete(o);return valid?0:-1;
 }
 static uint64_t observation_json_hash(const cJSON *item);
-/* Pure merge of `input` obligations into `base`: returns the merged contract
- * (caller frees) or NULL when the declaration is invalid. */
-static cJSON *acceptance_merge_result(reasoning *r,const cJSON *base,const cJSON *input) {
+
+static const char *skip_report_spacing(const char *s) {
+    while (*s == ' ' || *s == '\t' || *s == '`') ++s;
+    return s;
+}
+
+/* An unspecified path is a planning choice only when the user explicitly
+ * requests one report in a named format. Other deliverables keep their
+ * structured rules, including requests for more than one file. */
+static const char *single_report_format(const char *prompt) {
+    static const char *const quantities[] = {"一个", "一份", "一篇", "one ", "an ", "a "};
+    static const struct { const char *word, *suffix; } formats[] = {
+        {"html", ".html"}, {"pdf", ".pdf"}, {"markdown", ".md"}
+    };
+    char *lower = xstrdup(prompt);
+    if (!lower) return NULL;
+    for (char *p = lower; *p; ++p) *p = (char)tolower((unsigned char)*p);
+    const char *format = NULL;
+    if (strstr(lower, "另附") || strstr(lower, "外加") || strstr(lower, " and a ") ||
+        strstr(lower, " and an ") || strstr(lower, " plus a ")) goto done;
+    for (const char *p = lower; *p; ++p) {
+        for (size_t i = 0; i < sizeof quantities / sizeof *quantities; ++i) {
+            size_t n = strlen(quantities[i]);
+            if ((i >= 3 && p != lower && isalnum((unsigned char)p[-1])) ||
+                strncmp(p, quantities[i], n)) continue;
+            const char *type = skip_report_spacing(p + n);
+            for (size_t k = 0; k < sizeof formats / sizeof *formats; ++k) {
+                size_t length = strlen(formats[k].word);
+                if (strncmp(type, formats[k].word, length)) continue;
+                const char *noun = skip_report_spacing(type + length);
+                if (!strncmp(noun, "的", strlen("的"))) noun = skip_report_spacing(noun + strlen("的"));
+                if (!strncmp(noun, "报告", strlen("报告")) || !strncmp(noun, "文档", strlen("文档")) ||
+                    (!strncmp(noun, "report", 6) && !isalnum((unsigned char)noun[6])) ||
+                    (!strncmp(noun, "document", 8) && !isalnum((unsigned char)noun[8]))) {
+                    if (format) { format = NULL; goto done; }
+                    format = formats[k].suffix;
+                }
+            }
+        }
+    }
+done:
+    free(lower);
+    return format;
+}
+
+static int report_extension_matches(const char *path, const char *suffix) {
+    const char *dot = strrchr(path, '.');
+    if (!dot || strlen(dot) > 5) return 0;
+    char ending[6];
+    size_t i = 0;
+    do { ending[i] = (char)tolower((unsigned char)dot[i]); } while (dot[i++]);
+    return !strcmp(ending, suffix) || (!strcmp(suffix, ".html") && !strcmp(ending, ".htm"));
+}
+
+static int report_has_write_receipt(reasoning *r, const char *path) {
+    for (int i = 0; i < r->file_receipts_n; ++i)
+        if (r->file_receipts[i].written && !strcmp(r->file_receipts[i].path, path)) return 1;
+    for (int i = 0; i < r->artifact_seen_n; ++i)
+        if (!strcmp(r->artifact_seen[i].path, path)) return 1;
+    return 0;
+}
+
+/* A nonempty proposal may revise the unwritten path for a single report;
+ * separate read/action obligations are still merged monotonically. */
+static cJSON *acceptance_merge_result(reasoning *r,const cJSON *base,const cJSON *input,
+                                       const char **problem) {
+    *problem = "Invalid structured acceptance contract.";
     char *text=cJSON_PrintUnformatted(input);
     if(!text||reasoning_acceptance_validate(text)){free(text);return NULL;}
     free(text);cJSON *next=base?cJSON_Duplicate(base,1):cJSON_CreateObject();
@@ -808,6 +876,21 @@ static cJSON *acceptance_merge_result(reasoning *r,const cJSON *base,const cJSON
                     if(!strcmp(previous,full)){found=1;break;}
                 }
                 if(!found) {
+                    if (r->report_format && !strcmp(field->string, "artifacts")) {
+                        const char *old_path = cJSON_GetStringValue(cJSON_GetArrayItem(paths, 0));
+                        if (!report_extension_matches(full, r->report_format) ||
+                            cJSON_GetArraySize(field) != 1) {
+                            *problem = "The request is for one report in a specified format. Declare one artifact with the requested file extension.";
+                            cJSON_Delete(next);
+                            return NULL;
+                        }
+                        if (r->report_path_fixed || (old_path && report_has_write_receipt(r, old_path))) {
+                            *problem = "The requested report path already has an explicit requirement or a write receipt. Keep the current path and finish its verification.";
+                            cJSON_Delete(next);
+                            return NULL;
+                        }
+                        if (old_path) cJSON_DeleteItemFromArray(paths, 0);
+                    }
                     cJSON *entry=cJSON_CreateString(full);
                     if(cJSON_GetArraySize(paths)>=64||!entry||!cJSON_AddItemToArray(paths,entry)){cJSON_Delete(entry);cJSON_Delete(next);return NULL;}
                 }
@@ -818,23 +901,9 @@ static cJSON *acceptance_merge_result(reasoning *r,const cJSON *base,const cJSON
 }
 static void merge_acceptance(reasoning *r,const cJSON *input) {
     if(!input)return;
-    cJSON *next=acceptance_merge_result(r,r->acceptance,input);
+    cJSON *next=acceptance_merge_result(r,r->acceptance,input,&r->acceptance_error);
     if(!next){r->acceptance_invalid=1;return;}
-    cJSON_Delete(r->acceptance);r->acceptance=next;r->acceptance_invalid=0;
-}
-/* Would merging this declaration add any obligation the current contract
- * does not already carry? Pure check; nothing is mutated (#270/#271). */
-static int acceptance_decl_grows(reasoning *r,const cJSON *input) {
-    if(!input)return 0;
-    cJSON *merged=acceptance_merge_result(r,r->acceptance,input);
-    int grows=1;
-    if(merged) {
-        uint64_t after=observation_json_hash(merged);
-        uint64_t before=r->acceptance?observation_json_hash(r->acceptance):0;
-        grows=after!=before;
-    }
-    cJSON_Delete(merged);
-    return grows;
+    cJSON_Delete(r->acceptance);r->acceptance=next;r->acceptance_invalid=0;r->acceptance_error=NULL;
 }
 static void verify_completion_files(reasoning *r,const char *completion_json){
     cJSON *decision=cJSON_Parse(completion_json?completion_json:"{}");
@@ -874,7 +943,7 @@ static void verify_completion_files(reasoning *r,const char *completion_json){
         if(equal!=1){r->file_checks_failed=1;snprintf(r->file_check_error,sizeof(r->file_check_error),
             "Runtime byte equality check failed: %.200s != %.200s (%s). Repair the artifact or report blocked; do not omit the declared check.",a,b,equal==0?"different bytes":"unreadable, denied, changed during verification, or over 64 MiB");break;}
     }
-    if(r->acceptance_invalid){r->file_checks_failed=1;snprintf(r->file_check_error,sizeof(r->file_check_error),"Invalid structured acceptance contract.");}
+    if(r->acceptance_invalid){r->file_checks_failed=1;snprintf(r->file_check_error,sizeof(r->file_check_error),"%s",r->acceptance_error?r->acceptance_error:"Invalid structured acceptance contract.");}
     if(!r->file_checks_failed && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(r->acceptance,"requires_action")) && !r->run_mutated){r->file_checks_failed=1;snprintf(r->file_check_error,sizeof(r->file_check_error),"Acceptance requires a successful action; no committed action receipt is present.");}
     if(!r->file_checks_failed && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(r->acceptance,"requires_observation")) && !r->run_successful_tools){r->file_checks_failed=1;snprintf(r->file_check_error,sizeof(r->file_check_error),"Acceptance requires a successful tool observation.");}
     if (!r->file_checks_failed &&
@@ -1043,10 +1112,14 @@ static void progress_emit(reasoning *r, const char *stage) {
         cJSON_ArrayForEach(image,r->tool_images) {
             cJSON *item=cJSON_CreateObject();
             const char *keys[]={"id","name","session"};
-            for(int k=0;k<3;k++) {
+            for(size_t k=0;k<sizeof(keys)/sizeof(keys[0]);k++) {
                 cJSON *value=cJSON_GetObjectItemCaseSensitive(image,keys[k]);
                 if(cJSON_IsString(value))cJSON_AddStringToObject(item,keys[k],value->valuestring);
             }
+            const char *path=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(image,"path"));
+            char *safe=path?secret_redact_ssh_passwords(path,strlen(path),NULL):NULL;
+            if(safe)cJSON_AddStringToObject(item,"path",safe);
+            free(safe);
             cJSON_AddItemToArray(images,item);
         }
     }
@@ -2537,6 +2610,8 @@ static char *build_context(reasoning *r, const char *prompt) {
             strbuf_appendf(&b,"- %s: offset_bytes=%llu; required=%s\n",r->pending_reads[i].path,
                 r->pending_reads[i].next,path_requires_full_read(r,r->pending_reads[i].path)?"true":"false");
     }
+    if (!r->gate_mode && r->report_format)
+        strbuf_appendf(&b,"The current request calls for one %s report. When no path has been requested or declared, use report%s in the workspace. Proceed to writing and verifying the report.\n",r->report_format,r->report_format);
     if(r->acceptance){char *contract=cJSON_PrintUnformatted(r->acceptance);strbuf_append(&b,"## Runtime acceptance contract\n");strbuf_append(&b,contract?contract:"{}");strbuf_append(&b,"\n");free(contract);
         if(cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(r->acceptance,"artifacts")))
             strbuf_append(&b,"For each artifact, produce the requested file in this run and read it back after the last write. A successful shell producer with the path in outputs[] is a valid write receipt if it changed the file. If this run already produced the file, proceed directly to file_read; do not rerun the producer for reassurance. A read of a previous run's file alone is not production.\n");
@@ -2666,25 +2741,42 @@ static size_t image_b64_budget(void) {
     }
     return budget;
 }
-/* Bounded visual selection: unsent tool observations first, then base
- * attachments, at most 4 items AND a total base64 byte budget. Oldest
- * observations are dropped first — the newest ones are what the model just
- * asked to see. Dropped names/sizes go into *note_out for the prompt so the
- * model crops/downscales instead of re-uploading the same full image (#275). */
+/* The model transport has its own count/bytes budgets. The attachment
+ * descriptors remain available for delivery, even if not sent to the model. */
 static char *planning_images(reasoning *r, char **note_out) {
     *note_out=NULL;
     const char *original=r->run_task?r->run_task->attachments_json:NULL;
     cJSON *all=cJSON_CreateArray(),*base=original?cJSON_Parse(original):NULL,*item;
+    enum { VISUAL_LIMIT = 4 };
+    const cJSON *recent[VISUAL_LIMIT]={0};
+    int observed=0;
     cJSON_ArrayForEach(item,r->tool_images) {
         if (!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(item,"sent")))
-            cJSON_AddItemToArray(all,cJSON_Duplicate(item,1));
+            recent[observed++ % VISUAL_LIMIT]=item;
+    }
+    int selected=observed>VISUAL_LIMIT?VISUAL_LIMIT:observed;
+    int limited=observed-selected, unavailable=0;
+    for(int i=observed-selected;i<observed;i++) {
+        const cJSON *descriptor=recent[i % VISUAL_LIMIT];
+        const char *id=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(descriptor,"id"));
+        const char *session=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(descriptor,"session"));
+        cJSON *ids=id?cJSON_CreateStringArray(&id,1):NULL;
+        char *snapshot=ids?attachment_snapshot(r->state_root,session,ids):NULL;
+        cJSON_Delete(ids);
+        cJSON *images=snapshot?cJSON_Parse(snapshot):NULL;
+        free(snapshot);
+        cJSON *image=cJSON_DetachItemFromArray(images,0);
+        cJSON_Delete(images);
+        if(image) {
+            if(!cJSON_AddItemToArray(all,image))cJSON_Delete(image);
+        } else unavailable++;
     }
     int image_count=cJSON_GetArraySize(all);
     cJSON_ArrayForEach(item,base) {
         /* The 4-item cap applies to visual observations; text attachments
          * are context and keep flowing as before. */
         if(image_item_b64_bytes(item)) {
-            if(image_count>=4)continue;
+            if(image_count>=VISUAL_LIMIT){limited++;continue;}
             image_count++;
         }
         cJSON_AddItemToArray(all,cJSON_Duplicate(item,1));
@@ -2692,19 +2784,26 @@ static char *planning_images(reasoning *r, char **note_out) {
     cJSON_Delete(base);
     size_t budget=image_b64_budget(),total=0;
     cJSON_ArrayForEach(item,all)total+=image_item_b64_bytes(item);
-    if(total>budget) {
-        strbuf note;strbuf_init(&note);
-        strbuf_appendf(&note,"[system] 图片 base64 总量预算 %zu 字节（COA_LLM_MAX_IMAGE_B64 可调），本轮候选共 %zu 字节。以下图片从最旧开始被丢弃：",budget,total);
-        int dropped=0;
-        while(total>budget && cJSON_GetArraySize(all)) {
-            cJSON *oldest=cJSON_GetArrayItem(all,0);
-            size_t bytes=image_item_b64_bytes(oldest);
-            const char *name=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(oldest,"name"));
-            strbuf_appendf(&note,"%s%s（%zu 字节）",dropped?"、":"",name?name:"未命名图片",bytes);
-            total-=bytes;dropped=1;
-            cJSON_DeleteItemFromArray(all,0);
+    if(limited || unavailable || total>budget) {
+        strbuf note;
+        strbuf_init(&note);
+        strbuf_append(&note,"[system] 本轮模型视觉输入受限。");
+        if(limited)strbuf_appendf(&note,"单次最多 %d 张，省略 %d 张。",VISUAL_LIMIT,limited);
+        if(unavailable)strbuf_appendf(&note,"%d 张无法准备模型预览。",unavailable);
+        if(total>budget) {
+            strbuf_appendf(&note,"图片 base64 总量预算 %zu 字节（COA_LLM_MAX_IMAGE_B64 可调），本轮候选共 %zu 字节。以下图片未发送：",budget,total);
+            int dropped=0, index=0;
+            while(total>budget && (item=cJSON_GetArrayItem(all,index))!=NULL) {
+                size_t bytes=image_item_b64_bytes(item);
+                if(!bytes){index++;continue;}
+                const char *name=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(item,"name"));
+                strbuf_appendf(&note,"%s%s（%zu 字节）",dropped?"、":"",name?name:"未命名图片",bytes);
+                total-=bytes;dropped=1;
+                cJSON_DeleteItemFromArray(all,index);
+            }
+            strbuf_append(&note,"。");
         }
-        strbuf_append(&note,"。如需查看被丢弃的图片，请裁剪所需区域或降低分辨率后用 file_read 重读，不要重复上传同一张全尺寸截图。");
+        strbuf_append(&note,"用户仍可查看已读取的图片。交付时把原路径用 Markdown 图片链接放在对应说明旁；未发送的图片不能作为视觉判断依据。如确需判断，可裁剪所需区域后用 file_read 读取新文件。");
         *note_out=strbuf_detach(&note);
     }
     char *text=cJSON_GetArraySize(all)?cJSON_PrintUnformatted(all):NULL;
@@ -2791,20 +2890,33 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
              * contracts are ignored — no evidence gates run in this mode. */
         } else if(r->acceptance_frozen) {
             round_log_append(r,"[system] 验收合同已锁定（本任务中合同已反复变更）；本轮声明未合并。请按当前合同交付，或用 blocked 说明真实受阻项。");
-        } else if(r->completion_candidate_seen && acceptance_decl_grows(r,acc)) {
-            round_log_append(r,"[system] 任务已进入完成阶段：不再接受模型新增的验收项，用户未要求的工作不得自行扩大合同。请按当前合同交付，或用 blocked 说明真实受阻项。");
         } else {
-            int grew=acceptance_decl_grows(r,acc);
-            merge_acceptance(r,acc);
-            if (!r->acceptance_invalid)
-                round_log_append(r,"[system] 验收合同已记录。");
-            if(grew && ++r->acceptance_declares>=3 && !r->acceptance_frozen){
-                r->acceptance_frozen=1;
-                round_log_append(r,"[system] 验收合同在本任务中已多次变更，已锁定为当前版本；后续声明不再合并。请完成当前合同，或用 blocked 说明真实受阻项。");
+            const char *problem;
+            cJSON *next = acceptance_merge_result(r,r->acceptance,acc,&problem);
+            if (!next) {
+                rc = -1;
+                free(plan_err);
+                plan_err = xstrdup(problem);
+            } else {
+                uint64_t previous = r->acceptance ? observation_json_hash(r->acceptance) : 0;
+                int changed = previous != observation_json_hash(next);
+                if (r->completion_candidate_seen && changed) {
+                    cJSON_Delete(next);
+                    round_log_append(r,"[system] 任务已进入完成阶段：不再接受模型新增的验收项，用户未要求的工作不得自行扩大合同。请按当前合同交付，或用 blocked 说明真实受阻项。");
+                } else {
+                    cJSON_Delete(r->acceptance);
+                    r->acceptance = next;
+                    r->acceptance_invalid = 0;
+                    r->acceptance_error = NULL;
+                    round_log_append(r,"[system] 验收合同已记录。");
+                    if (changed && ++r->acceptance_declares >= 3) {
+                        r->acceptance_frozen = 1;
+                        round_log_append(r,"[system] 验收合同在本任务中已多次变更，已锁定为当前版本；后续声明不再合并。请完成当前合同，或用 blocked 说明真实受阻项。");
+                    }
+                }
             }
         }
         cJSON_Delete(control);
-        if(rc==0 && r->acceptance_invalid){rc=-1;free(plan_err);plan_err=xstrdup("Invalid acceptance declaration; no tools executed.");}
     }
     /* A successful HTTP/planner span is not task completion. Preserve the
      * parsed decision so exported traces explain why no tool ran. Never store
@@ -3354,7 +3466,10 @@ static void remember_tool_image(reasoning *r,struct run_step *step) {
     const char *kind=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"kind"));
     cJSON *preview=cJSON_GetObjectItemCaseSensitive(o,"image_preview");
     const char *id=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(preview,"id"));
-    if(!kind || strcmp(kind,"image") || !id){cJSON_Delete(o);return;}
+    const char *session=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(preview,"session"));
+    if(!kind || strcmp(kind,"image") || !id || !session ||
+        strcmp(session,r->cur?r->cur->id:"default") ||
+        !attachment_has_image_preview(r->state_root,session,id)){cJSON_Delete(o);return;}
     size_t n=0;int more=0;char *head=fs_read_file_slice(step->evidence_path,0,32,&n,&more);
     const char *actual=head?tool_file_image_mime((unsigned char *)head,n):NULL;
     const char *mime=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"mime"));
@@ -3362,29 +3477,20 @@ static void remember_tool_image(reasoning *r,struct run_step *step) {
     free(head);
     const char *version=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(o,"file_version"));
     if(version){mutex_lock(&r->progress_mtx);step->evidence_version=strtoull(version,NULL,10);mutex_unlock(&r->progress_mtx);}
-    cJSON *ids=cJSON_CreateArray();cJSON_AddItemToArray(ids,cJSON_CreateString(id));
-    char *snapshot=attachment_snapshot(r->state_root,r->cur?r->cur->id:"default",ids);cJSON_Delete(ids);
-    cJSON *images=snapshot?cJSON_Parse(snapshot):NULL;free(snapshot);
-    if(cJSON_GetArraySize(images)) {
-        char *descriptor=cJSON_PrintUnformatted(preview);
-        mutex_lock(&r->progress_mtx);step->image_preview=descriptor;mutex_unlock(&r->progress_mtx);
-        if(!r->tool_images)r->tool_images=cJSON_CreateArray();
-        int duplicate=0;cJSON *item;
-        cJSON_ArrayForEach(item,r->tool_images) {
-            const char *old=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(item,"id"));
-            if(old && !strcmp(old,id)) {
-                /* The attachment id identifies the captured file version.
-                 * Reusing that observation must not upload the same image
-                 * again on every subsequent planning request. */
-                duplicate=1;
-            }
-        }
-        if(!duplicate) {
-            if(cJSON_GetArraySize(r->tool_images)>=4)cJSON_DeleteItemFromArray(r->tool_images,0);
-            cJSON_AddItemToArray(r->tool_images,cJSON_Duplicate(cJSON_GetArrayItem(images,0),1));
-        }
+    char *descriptor=cJSON_PrintUnformatted(preview);
+    mutex_lock(&r->progress_mtx);step->image_preview=descriptor;mutex_unlock(&r->progress_mtx);
+    if(!r->tool_images)r->tool_images=cJSON_CreateArray();
+    cJSON *item;
+    cJSON_ArrayForEach(item,r->tool_images) {
+        const char *old=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(item,"id"));
+        if(old && !strcmp(old,id))break;
     }
-    cJSON_Delete(images);cJSON_Delete(o);
+    if(!item) {
+        cJSON *saved=cJSON_Duplicate(preview,1);
+        if(!cJSON_AddStringToObject(saved,"path",step->evidence_path) ||
+            !cJSON_AddItemToArray(r->tool_images,saved))cJSON_Delete(saved);
+    }
+    cJSON_Delete(o);
 }
 /* A successful read-only shell/git probe is reusable for the rest of the run
  * while no mutating action has run (#272). Re-executing the same (repo, args)
@@ -5493,6 +5599,7 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     r->last_model_failure_call=0;
     r->completion_review_required=1;
     cJSON_Delete(r->acceptance);r->acceptance=NULL;r->acceptance_invalid=0;
+    r->acceptance_error=NULL;r->report_format=NULL;r->report_path_fixed=0;
     cJSON_Delete(r->tool_images);r->tool_images=NULL;
     r->prog_llm_ms = r->prog_tool_ms = 0;
     r->last_model_error[0]=0;
@@ -5574,6 +5681,9 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     r->completion_review_required = r->gate_mode ? 0 : !planner_uses_native_tools(r->llm);
     const char *contracts[]={r->default_acceptance_json,r->run_task?r->run_task->acceptance_json:NULL};
     for(int i=0;i<2;i++)if(contracts[i]){cJSON *contract=cJSON_Parse(contracts[i]);merge_acceptance(r,contract);cJSON_Delete(contract);}
+    int declared_artifacts = cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(r->acceptance,"artifacts"));
+    r->report_path_fixed = declared_artifacts > 0;
+    if (!r->gate_mode && declared_artifacts <= 1) r->report_format = single_report_format(prompt);
     void *caller_cancel_context=NULL;
     http_cancel_check caller_cancel=http_get_cancel_check(&caller_cancel_context);
     if(r->run_task || r->abort_parent)http_set_cancel_check(reasoning_http_cancel,r);
@@ -5718,6 +5828,8 @@ restart_planning:
             char *updated = malloc(size);
             if (!updated) { free(messages); st = ST_FAILED; break; }
             snprintf(updated, size, "%s%s%s", prompt, separator, messages);
+            const char *updated_format = single_report_format(messages);
+            if (updated_format && !r->report_path_fixed && !r->gate_mode) r->report_format = updated_format;
             free(messages); free(safe_prompt); safe_prompt = updated; prompt = updated;
             /* Only a trusted user update can revise acceptance obligations;
              * model retries/empty completion arrays must never erase them. */
@@ -6043,6 +6155,8 @@ restart_planning:
                 strcmp(r->actions[i].tool, "file_read") != 0 &&
                 strcmp(r->actions[i].tool, "list_dir") != 0) search_only = 0;
         search_only_rounds = search_only ? search_only_rounds + 1 : 0;
+        if (search_only_rounds == 3 && !r->run_mutated && r->report_format)
+            round_log_append(r,"[system] The requested report has not been written after three read/search rounds. Use the facts already gathered to produce and verify it, or identify the specific missing source that prevents writing.\n");
         if (r->n_actions > 0 && r->round_cached_action_skips == r->n_actions) {
             round_log_append(r, "[system] 本轮全部动作已经成功执行过，没有新增事实。"
                                 "先核对已有结果是否已满足原始请求：满足则按当前完成协议交付答案，不要再次执行原请求中的第一步。"
@@ -6200,6 +6314,15 @@ restart_planning:
             strbuf_appendf(&out,"\n原因：模型在没有新增工具证据期间有 %d 轮只声明验收合同，尚未提交可验证的执行结果，已停止规划。",
                            contract_rounds_without_progress);
             explained = 1;
+        }
+        const cJSON *artifacts = cJSON_GetObjectItemCaseSensitive(r->acceptance,"artifacts");
+        int artifact_count = cJSON_GetArraySize(artifacts);
+        if (artifact_count && (contract_stopped || (r->report_format && r->file_checks_failed))) {
+            strbuf_appendf(&out,"\n当前合同要求 %d 个产物。",artifact_count);
+            int shown = artifact_count < 8 ? artifact_count : 8;
+            for (int i = 0; i < shown; ++i)
+                strbuf_appendf(&out,"\n- %s",cJSON_GetStringValue(cJSON_GetArrayItem(artifacts,i)));
+            if (shown < artifact_count) strbuf_appendf(&out,"\n- 另有 %d 项。",artifact_count-shown);
         }
         if(no_action_stalled){strbuf_append(&out,"\n原因：恢复阶段连续多次没有返回可执行动作或合法完成声明，且没有新增执行进展，已停止重复规划。");explained=1;}
         if(!contract_stopped && r->file_checks_failed){strbuf_appendf(&out,"\n原因：%s",r->file_check_error);explained=1;}

@@ -5,6 +5,7 @@
 #include "runtime/manju_paint.h"
 #include "infra/util.h"
 #include "llm/video.h"
+#include "llm/image.h"
 #include "os/http_cancel.h"
 #include "os/os_fs.h"
 #include "os/os_thread.h"
@@ -24,15 +25,21 @@
 typedef struct clip {
     const char *kind;
     char *prompt;
+    char *first_frame_prompt;
+    char *media[9];
+    size_t media_count;
+    const route *model;
     char file[64];
     char error[224];
     int ready;
 } clip;
 
 typedef struct clip_run {
-    route model;
+    route models[3];
     const char *directory;
-    int seconds, total;
+    const char *workspace, *episode_dir, *image_route;
+    router *routes;
+    int seconds, total, requested;
     clip *clips;
     atomic_int next, failed;
     int ready, requests;
@@ -79,7 +86,7 @@ static void notify(clip_run *run, int ready, int requests) {
     mutex_lock(&run->progress_lock);
     run->ready += ready;
     run->requests += requests;
-    if (run->progress) run->progress(run->ready, run->total, run->requests, run->context);
+    if (run->progress) run->progress(run->ready, run->requested, run->requests, run->context);
     mutex_unlock(&run->progress_lock);
 }
 
@@ -122,7 +129,9 @@ static int load_or_submit(clip_run *run, clip *entry, const char *checkpoint,
         goto done;
     }
     notify(run, 0, 1);
-    int status = llm_video_submit(&run->model, entry->prompt, run->seconds, task_id, error);
+    int status = llm_video_submit_media(entry->model, entry->prompt, run->seconds,
+                                        (const char *const *)entry->media, entry->media_count,
+                                        task_id, error);
     if (status == -1) fs_remove(checkpoint);
     if (status != 0) goto done;
     if (atomic_write(checkpoint, task_id) != 0) {
@@ -135,13 +144,37 @@ done:
     return rc;
 }
 
+static char *generate_frame(router *routes, const char *route_name, const char *root,
+                            const char *episode_dir, const char *prompt);
+
 static void generate_clip(clip_run *run, clip *entry, int index) {
     char key[17], path[VIDEO_PATH_CAP], checkpoint[VIDEO_PATH_CAP], job[80], task_id[128];
     char *error = NULL, *url = NULL;
     strbuf identity;
     strbuf_init(&identity);
-    strbuf_appendf(&identity, "%s\n%s\n%d\n%s", run->model.base_url ? run->model.base_url : "",
-                   run->model.model, run->seconds, entry->prompt);
+    if (entry->first_frame_prompt) {
+        entry->media[0] = generate_frame(run->routes, run->image_route, run->workspace,
+                                         run->episode_dir, entry->first_frame_prompt);
+        if (!entry->media[0]) {
+            error = xstrdup("无法生成首帧，请检查文生图路由或给镜头指定 first_frame");
+            goto done;
+        }
+        entry->media_count = 1;
+    }
+    strbuf_appendf(&identity, "%s\n%s\n%d\n%s", entry->model->base_url ? entry->model->base_url : "",
+                   entry->model->model, run->seconds, entry->prompt);
+    for (size_t i = 0; i < entry->media_count; i++) {
+        size_t bytes = 0;
+        int more = 0;
+        char *data = fs_read_file_slice(entry->media[i], 0, 4 * 1024 * 1024, &bytes, &more);
+        if (!data || !bytes || more) {
+            free(data);
+            error = xstrdup("参考素材不可读或超过 4 MiB");
+            goto done;
+        }
+        strbuf_appendf(&identity, "\n%llu", (unsigned long long)hash64(data, bytes));
+        free(data);
+    }
     if (!identity.buf) goto done;
     hash_hex(key, hash64(identity.buf, identity.len));
     snprintf(entry->file, sizeof entry->file, "clip_%03d_%s.mp4", index, key);
@@ -162,9 +195,9 @@ static void generate_clip(clip_run *run, clip *entry, int index) {
         }
         free(error);
         error = NULL;
-        int poll = llm_video_poll(&run->model, task_id, &url, &error);
+        int poll = llm_video_poll(entry->model, task_id, &url, &error);
         if (poll == 1) {
-            if (llm_video_download(&run->model, url, path, &error) == 0)
+            if (llm_video_download(entry->model, url, path, &error) == 0)
                 entry->ready = 1;
             /* Keep the task ID so a damaged/missing download can be recovered. */
             break;
@@ -192,7 +225,7 @@ static void video_worker(void *context) {
     while (!cancelled(run) && !atomic_load(&run->failed)) {
         int i = atomic_fetch_add(&run->next, 1);
         if (i >= run->total) break;
-        generate_clip(run, &run->clips[i], i);
+        if (run->clips[i].model) generate_clip(run, &run->clips[i], i);
     }
     http_set_cancel_check(NULL, NULL);
 }
@@ -220,26 +253,168 @@ static char *make_prompt(const cJSON *board, const cJSON *shot, const char *visu
     return strbuf_detach(&prompt);
 }
 
-int manju_video_episode(router *routes, const char *route_name, const char *workspace,
-                        int episode, int seconds, int (*abort_check)(void *),
-                        manju_video_progress progress, void *context, char **result) {
+static char *media_path(const char *root, const char *base, const char *name) {
+    char path[VIDEO_PATH_CAP];
+    if (!name || !*name || strlen(base) + strlen(name) + 2 >= sizeof path) return NULL;
+    path_resolve(path, sizeof path, base, name);
+    if (!inside(root, path) || fs_is_dir(path)) return NULL;
+    return existing_path(path);
+}
+
+static int video_kind(const char *kind) {
+    if (!kind) return -1;
+    if (!strcmp(kind, "text")) return LLM_VIDEO_TEXT;
+    if (!strcmp(kind, "first_frame")) return LLM_VIDEO_FIRST_FRAME;
+    if (!strcmp(kind, "reference")) return LLM_VIDEO_REFERENCE;
+    return -1;
+}
+
+static char *generate_frame(router *routes, const char *route_name, const char *root,
+                            const char *episode_dir, const char *prompt) {
+    route image = {0};
+    llm_image_result generated = {0};
+    strbuf signature;
+    strbuf_init(&signature);
+    char path[VIDEO_PATH_CAP], dir[VIDEO_PATH_CAP], name[64], key[17];
+    char *out = NULL;
+    if (router_select_image(routes, route_name, &image) != 0) goto done;
+    path_join(dir, sizeof dir, episode_dir, "keyframes");
+    if (fs_mkdirs(dir) != 0 || !inside(root, dir)) goto done;
+    strbuf_appendf(&signature, "%s\n%s\n%s", image.base_url ? image.base_url : "", image.model, prompt);
+    if (!signature.buf) goto done;
+    hash_hex(key, hash64(signature.buf, signature.len));
+    const char *ext[] = {".png", ".jpg", ".webp"};
+    const char *mime[] = {"image/png", "image/jpeg", "image/webp"};
+    for (size_t i = 0; i < 3; i++) {
+        snprintf(name, sizeof name, "%s%s", key, ext[i]);
+        char *cached = media_path(root, dir, name);
+        if (!cached) continue;
+        size_t length = 0;
+        int more = 0;
+        char *data = fs_read_file_slice(cached, 0, 4 * 1024 * 1024, &length, &more);
+        const char *found = data && !more ? llm_image_mime((unsigned char *)data, length) : NULL;
+        int valid = found && !strcmp(found, mime[i]);
+        free(data);
+        if (valid) { out = cached; goto done; }
+        free(cached);
+    }
+    const char *size = strstr(image.model, "qwen-image-") ? "576x1024" : NULL;
+    if (llm_image_generate(&image, prompt, size, &generated) != 0 ||
+        !generated.len || generated.len > 4 * 1024 * 1024) goto done;
+    for (size_t i = 0; i < 3; i++) {
+        if (!generated.mime || strcmp(generated.mime, mime[i])) continue;
+        snprintf(name, sizeof name, "%s%s", key, ext[i]);
+        path_join(path, sizeof path, dir, name);
+        static atomic_uint seq;
+        char temp[VIDEO_PATH_CAP + 80];
+        snprintf(temp, sizeof temp, "%s.tmp-%lld-%u", path, (long long)time_now_us(), atomic_fetch_add(&seq, 1));
+        if (!fs_write_file(temp, generated.data, generated.len) &&
+            fs_file_size(temp) == (long long)generated.len && !fs_replace_file(temp, path))
+            out = existing_path(path);
+        else
+            fs_remove(temp);
+        break;
+    }
+done:
+    strbuf_free(&signature);
+    llm_image_result_free(&generated);
+    route_clear(&image);
+    return out;
+}
+
+static int clip_media(clip *entry, int kind, const cJSON *shot, const cJSON *assets,
+                      const char *root, const char *episode_dir, const cJSON *board,
+                      const char *visual) {
+    if (kind == LLM_VIDEO_TEXT) return 0;
+    if (kind == LLM_VIDEO_FIRST_FRAME) {
+        const char *name = field(shot, "first_frame");
+        if (name) {
+            entry->media[0] = media_path(root, root, name);
+            if (!entry->media[0]) return -1;
+            entry->media_count = 1;
+        } else {
+            strbuf first;
+            strbuf_init(&first);
+            strbuf_appendf(&first, "绘制一张 9:16 竖版漫画首帧，不含标题和字幕。\n%s",
+                           visual && *visual ? visual : entry->prompt);
+            manju_append_cast(&first, board, shot);
+            entry->first_frame_prompt = strbuf_detach(&first);
+            if (!entry->first_frame_prompt) return -1;
+        }
+        return 0;
+    }
+    const cJSON *explicit_refs = cJSON_GetObjectItemCaseSensitive(shot, "reference_images");
+    if (explicit_refs) {
+        if (!cJSON_IsArray(explicit_refs) || cJSON_GetArraySize(explicit_refs) > 9) return -1;
+        const cJSON *item;
+        cJSON_ArrayForEach(item, explicit_refs) {
+            char *path = media_path(root, root, cJSON_GetStringValue(item));
+            if (!path) return -1;
+            entry->media[entry->media_count++] = path;
+        }
+    } else {
+        char characters[VIDEO_PATH_CAP];
+        path_join(characters, sizeof characters, episode_dir, "characters");
+        const cJSON *id;
+        cJSON_ArrayForEach(id, cJSON_GetObjectItemCaseSensitive(shot, "character_ids")) {
+            const char *wanted = cJSON_GetStringValue(id);
+            const cJSON *asset;
+            cJSON_ArrayForEach(asset, cJSON_GetObjectItemCaseSensitive(assets, "characters")) {
+                const char *key = field(asset, "id");
+                if (!key || !wanted || strcmp(key, wanted)) continue;
+                if (entry->media_count >= 9) return -1;
+                char *path = media_path(root, characters, field(asset, "file"));
+                if (!path) return -1;
+                entry->media[entry->media_count++] = path;
+                break;
+            }
+        }
+    }
+    if (!entry->media_count) return -1;
+    strbuf linked;
+    strbuf_init(&linked);
+    strbuf_append(&linked, entry->prompt);
+    for (size_t i = 0; i < entry->media_count; i++)
+        strbuf_appendf(&linked, "\n[Image %zu] 是依次出现的角色或场景参考，保持其造型、颜色和典型细节。"
+                               "若参考为三视图，这是同一角色的三个角度，画面中只出现一个该角色。", i + 1);
+    char *prompt = strbuf_detach(&linked);
+    if (!prompt) return -1;
+    free(entry->prompt);
+    entry->prompt = prompt;
+    return 0;
+}
+
+static int video_episode(router *routes, const char *route_name, const char *const names[3],
+                         const char *image_route, const char *workspace, int episode,
+                         int seconds, int (*abort_check)(void *), manju_video_progress progress,
+                         void *context, char **result) {
     char relative[64], directory[VIDEO_PATH_CAP], path[VIDEO_PATH_CAP];
     char *root = NULL, *canonical_directory = NULL, *text = NULL, *manifest = NULL;
-    cJSON *board = NULL, *doc = NULL;
-    clip_run run = {.seconds = seconds, .abort_check = abort_check, .progress = progress, .context = context};
+    cJSON *board = NULL, *doc = NULL, *assets = NULL;
+    clip_run run = {.seconds = seconds, .routes = routes, .image_route = image_route,
+                    .abort_check = abort_check, .progress = progress, .context = context};
     const char *error = "无法准备视频分镜";
     strbuf report;
     strbuf_init(&report);
-    int rc = -1;
+    int rc = -1, preferred = LLM_VIDEO_TEXT, requested = 0;
     if ((seconds != 3 && seconds != 4) || episode < 1 || episode > 500) goto done;
-    if (router_select_video(routes, route_name, &run.model) != 0) {
-        error = "未找到选定的文生视频路由，请在模型路由中配置并测试";
-        goto done;
+    error = "未找到匹配的视频路由，请在模型路由中配置并测试";
+    if (names) {
+        for (int k = 0; k < 3; k++)
+            if (!names[k] || router_select_video(routes, names[k], &run.models[k]) != 0 ||
+                (int)llm_video_input_kind(&run.models[k]) != k) goto done;
+    } else {
+        route selected = {0};
+        if (router_select_video(routes, route_name, &selected) != 0) goto done;
+        preferred = llm_video_input_kind(&selected);
+        run.models[preferred] = selected;
     }
     root = existing_path(workspace && *workspace ? workspace : ".");
     if (!root || strlen(root) + 200 >= sizeof directory) goto done;
     snprintf(relative, sizeof relative, "manju/ep%02d", episode);
     path_join(directory, sizeof directory, root, relative);
+    char episode_dir[VIDEO_PATH_CAP];
+    snprintf(episode_dir, sizeof episode_dir, "%s", directory);
     path_join(path, sizeof path, directory, "shots.json");
     size_t bytes = 0;
     int more = 0;
@@ -252,6 +427,14 @@ int manju_video_episode(router *routes, const char *route_name, const char *work
     if (!title || !*title || !cJSON_IsArray(shots) || count < 1 || count > VIDEO_SHOTS_MAX) {
         error = "shots.json 缺少有效分镜";
         goto done;
+    }
+    path_join(path, sizeof path, episode_dir, "characters/characters.json");
+    if (inside(root, path)) {
+        size_t asset_bytes = 0;
+        int extra = 0;
+        char *json = fs_read_file_slice(path, 0, 512 * 1024, &asset_bytes, &extra);
+        if (json && !extra && asset_bytes == strlen(json)) assets = cJSON_ParseWithOpts(json, NULL, 1);
+        free(json);
     }
     run.total = count + 2;
     run.clips = calloc((size_t)run.total, sizeof(*run.clips));
@@ -270,6 +453,24 @@ int manju_video_episode(router *routes, const char *route_name, const char *work
                                    !i ? "title_image_prompt" : last ? "end_image_prompt" : "image_prompt");
         run.clips[i].prompt = make_prompt(board, shot, visual, seconds);
         if (!run.clips[i].prompt) goto done;
+        /* Reuse the nearest clip for unspecified cards to avoid extra cloud calls. */
+        if ((!i || last) && ((!visual || !*visual) || (!names && preferred != LLM_VIDEO_TEXT))) continue;
+        int mode = preferred;
+        if (names && shot) {
+            const char *explicit_mode = field(shot, "video_mode");
+            if (explicit_mode) mode = video_kind(explicit_mode);
+            else if (field(shot, "first_frame")) mode = LLM_VIDEO_FIRST_FRAME;
+            else if (cJSON_GetObjectItemCaseSensitive(shot, "reference_images") ||
+                     (assets && cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(shot, "character_ids"))))
+                mode = LLM_VIDEO_REFERENCE;
+        }
+        if (mode < 0 || !run.models[mode].model ||
+            clip_media(&run.clips[i], mode, shot, assets, root, episode_dir, board, visual) != 0) {
+            strbuf_appendf(&report, "镜头 %d 的视频模式无效、首帧生成失败或缺少对应角色的参考素材。", i);
+            goto done;
+        }
+        run.clips[i].model = &run.models[mode];
+        requested++;
     }
     snprintf(relative, sizeof relative, "manju/ep%02d/clips", episode);
     path_join(directory, sizeof directory, root, relative);
@@ -279,6 +480,9 @@ int manju_video_episode(router *routes, const char *route_name, const char *work
         goto done;
     }
     run.directory = canonical_directory;
+    run.workspace = root;
+    run.episode_dir = episode_dir;
+    run.requested = requested;
     if (mutex_init(&run.progress_lock) != 0) goto done;
     notify(&run, 0, 0);
     thread_t *workers[VIDEO_WORKERS];
@@ -289,13 +493,21 @@ int manju_video_episode(router *routes, const char *route_name, const char *work
         error = "短视频流程已停止，继续时将复用已保存片段";
         goto done;
     }
-    if (run.ready != run.total) {
+    if (run.ready != requested) {
         strbuf_appendf(&report, "短视频 %d/%d 准备完成，已提交 %d 次。继续时复用有效片段和任务编号。",
-                       run.ready, run.total, run.requests);
+                       run.ready, requested, run.requests);
         for (int i = 0; i < run.total; i++)
             if (run.clips[i].error[0])
                 strbuf_appendf(&report, "\n镜头 %d：%s", i, run.clips[i].error);
         goto done;
+    }
+    if (!run.clips[0].model) {
+        strcpy(run.clips[0].file, run.clips[1].file);
+        run.clips[0].model = run.clips[1].model;
+    }
+    if (!run.clips[count + 1].model) {
+        strcpy(run.clips[count + 1].file, run.clips[count].file);
+        run.clips[count + 1].model = run.clips[count].model;
     }
     char fingerprint[17];
     hash_hex(fingerprint, hash64(text, bytes));
@@ -303,14 +515,16 @@ int manju_video_episode(router *routes, const char *route_name, const char *work
     cJSON *entries = doc ? cJSON_AddArrayToObject(doc, "clips") : NULL;
     if (!entries || !cJSON_AddNumberToObject(doc, "ep", episode) ||
         !cJSON_AddStringToObject(doc, "title", title) ||
-        !cJSON_AddStringToObject(doc, "video_model", run.model.model) ||
+        !cJSON_AddStringToObject(doc, "video_model", names ? "mixed" : run.models[preferred].model) ||
         !cJSON_AddStringToObject(doc, "storyboard_fingerprint", fingerprint) ||
         !cJSON_AddNumberToObject(doc, "clip_seconds", seconds)) goto done;
     for (int i = 0; i < run.total; i++) {
         cJSON *item = cJSON_CreateObject();
         if (!item || !cJSON_AddStringToObject(item, "file", run.clips[i].file) ||
             !cJSON_AddStringToObject(item, "role", !i ? "title" : i == run.total - 1 ? "end" : "shot") ||
-            !cJSON_AddStringToObject(item, "kind", run.clips[i].kind) || !cJSON_AddItemToArray(entries, item)) {
+            !cJSON_AddStringToObject(item, "kind", run.clips[i].kind) ||
+            !cJSON_AddStringToObject(item, "model", run.clips[i].model->model) ||
+            !cJSON_AddItemToArray(entries, item)) {
             cJSON_Delete(item);
             goto done;
         }
@@ -322,12 +536,16 @@ int manju_video_episode(router *routes, const char *route_name, const char *work
         goto done;
     }
     strbuf_appendf(&report, "%s 完成 %d 个短视频（每段 %d 秒，%d 次新提交）。\n短视频清单：`%s`",
-                   run.model.model, run.total, seconds, run.requests, path);
+                   names ? "混合视频路由" : run.models[preferred].model, requested, seconds, run.requests, path);
     rc = 0;
 done:
     *result = report.len ? strbuf_detach(&report) : xstrdup(error);
     strbuf_free(&report);
-    for (int i = 0; run.clips && i < run.total; i++) free(run.clips[i].prompt);
+    for (int i = 0; run.clips && i < run.total; i++) {
+        free(run.clips[i].prompt);
+        free(run.clips[i].first_frame_prompt);
+        for (size_t k = 0; k < run.clips[i].media_count; k++) free(run.clips[i].media[k]);
+    }
     free(run.clips);
     free(manifest);
     free(text);
@@ -335,6 +553,30 @@ done:
     free(root);
     cJSON_Delete(doc);
     cJSON_Delete(board);
-    route_clear(&run.model);
+    cJSON_Delete(assets);
+    for (int i = 0; i < 3; i++) route_clear(&run.models[i]);
     return rc;
+}
+
+int manju_video_episode_mixed(router *routes, const char *const names[3],
+                              const char *image_route, const char *workspace, int episode,
+                              int seconds, int (*abort_check)(void *),
+                              manju_video_progress progress, void *context, char **result) {
+    return video_episode(routes, NULL, names, image_route, workspace,
+                         episode, seconds, abort_check, progress, context, result);
+}
+
+int manju_video_episode_selected(router *routes, const char *route_name, const char *image_route,
+                                 const char *workspace, int episode, int seconds,
+                                 int (*abort_check)(void *), manju_video_progress progress,
+                                 void *context, char **result) {
+    return video_episode(routes, route_name, NULL, image_route, workspace, episode, seconds,
+                         abort_check, progress, context, result);
+}
+
+int manju_video_episode(router *routes, const char *route_name, const char *workspace,
+                        int episode, int seconds, int (*abort_check)(void *),
+                        manju_video_progress progress, void *context, char **result) {
+    return video_episode(routes, route_name, NULL, NULL, workspace, episode, seconds,
+                         abort_check, progress, context, result);
 }

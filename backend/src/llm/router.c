@@ -1,6 +1,7 @@
 /* router.c — multi-provider model routing with pluggable selection policy
  * (round_robin / cost / latency / capability:<tag>). */
 #include "llm/router.h"
+#include "llm/video.h"
 #include "infra/catalog.h"
 #include "os/os_thread.h"
 #include "infra/util.h"
@@ -224,6 +225,7 @@ int route_is_video(const route *rt) {
     const char *model = rt->model ? rt->model : "";
     return route_has_cap(rt, "video_generation") ||
            !strcmp(model, "happyhorse-1.1-t2v") ||
+           llm_video_input_kind(rt) != LLM_VIDEO_TEXT ||
            !strcmp(model, "kling/kling-v3-turbo-video-generation") ||
            !strncmp(model, "doubao-seedance-", 16);
 }
@@ -421,6 +423,11 @@ char *router_json(router *r) {
         cJSON_AddStringToObject(o, "provider", e->provider);
         cJSON_AddBoolToObject(o, "image_generation", route_is_image(e));
         cJSON_AddBoolToObject(o, "video_generation", route_is_video(e));
+        if (route_is_video(e)) {
+            llm_video_input input = llm_video_input_kind(e);
+            cJSON_AddStringToObject(o, "video_input", input == LLM_VIDEO_FIRST_FRAME ? "first_frame" :
+                                    input == LLM_VIDEO_REFERENCE ? "reference" : "text");
+        }
         if (e->base_url)
             cJSON_AddStringToObject(o, "base_url", e->base_url);
         if (e->model)

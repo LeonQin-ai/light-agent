@@ -1,6 +1,8 @@
 #include "llm/video.h"
 #include "video_seedance.h"
+#include "api/websocket.h"
 #include "infra/util.h"
+#include "llm/image.h"
 #include "os/http.h"
 #include "os/os_fs.h"
 #include "os/os_time.h"
@@ -12,6 +14,8 @@
 #include <string.h>
 
 #define VIDEO_MAX_BYTES (32u * 1024u * 1024u)
+#define VIDEO_IMAGE_MAX_BYTES (4u * 1024u * 1024u)
+#define VIDEO_MEDIA_MAX_BYTES (12u * 1024u * 1024u)
 #define VIDEO_SUBMIT "/api/v1/services/aigc/video-generation/video-synthesis"
 #define VIDEO_QUERY "/api/v1/tasks/"
 
@@ -26,6 +30,14 @@ static int seedance_model(const route *rt) {
 
 static int kling_model(const route *rt) {
     return rt && rt->model && !strcmp(rt->model, "kling/kling-v3-turbo-video-generation");
+}
+
+llm_video_input llm_video_input_kind(const route *rt) {
+    if (rt && rt->model) {
+        if (!strcmp(rt->model, "happyhorse-1.1-i2v")) return LLM_VIDEO_FIRST_FRAME;
+        if (!strcmp(rt->model, "happyhorse-1.1-r2v")) return LLM_VIDEO_REFERENCE;
+    }
+    return LLM_VIDEO_TEXT;
 }
 
 static int suffix(const char *value, const char *end) {
@@ -115,18 +127,66 @@ static int api_failure(const http_response *response, int submit, char **error) 
     return fail(error, rc, message);
 }
 
-int llm_video_submit(const route *rt, const char *prompt, int seconds,
-                     char task_id[128], char **error) {
+static char *image_data_uri(const char *path, size_t *total) {
+    if (!path || !*path) return NULL;
+    int more = 0;
+    size_t bytes = 0;
+    char *data = fs_read_file_slice(path, 0, VIDEO_IMAGE_MAX_BYTES, &bytes, &more);
+    const char *mime = data && !more && bytes <= VIDEO_MEDIA_MAX_BYTES - *total ?
+        llm_image_mime((const unsigned char *)data, bytes) : NULL;
+    char *encoded = mime ? base64_encode((const unsigned char *)data, bytes) : NULL;
+    free(data);
+    if (!encoded) return NULL;
+    strbuf uri;
+    strbuf_init(&uri);
+    strbuf_appendf(&uri, "data:%s;base64,%s", mime, encoded);
+    free(encoded);
+    if (!uri.buf) return NULL;
+    *total += bytes;
+    return strbuf_detach(&uri);
+}
+
+static int append_media(cJSON *input, llm_video_input mode, const char *const *paths,
+                        size_t count, const char *sample) {
+    cJSON *items = cJSON_AddArrayToObject(input, "media");
+    if (!items) return 0;
+    const char *kind = mode == LLM_VIDEO_FIRST_FRAME ? "first_frame" : "reference_image";
+    size_t total = 0;
+    for (size_t i = 0; i < count; i++) {
+        char *uri = sample ? NULL : image_data_uri(paths[i], &total);
+        cJSON *item = cJSON_CreateObject();
+        int ok = (sample || uri) && cJSON_AddStringToObject(item, "type", kind) &&
+            cJSON_AddStringToObject(item, "url", sample ? sample : uri) &&
+            cJSON_AddItemToArray(items, item);
+        free(uri);
+        if (!ok) {
+            cJSON_Delete(item);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int submit_video(const route *rt, const char *prompt, int seconds,
+                        const char *const *media, size_t media_count, const char *sample,
+                        char task_id[128], char **error) {
     if (error) *error = NULL;
     task_id[0] = 0;
     if (!route_is_video(rt) || !rt->model || !prompt || !*prompt || strlen(prompt) > 7500 ||
         (seconds != 3 && seconds != 4))
         return fail(error, -1, "请选择视频模型，填写文案和 3 或 4 秒的片段时长");
+    llm_video_input mode = llm_video_input_kind(rt);
+    if ((media_count && !media && !sample) ||
+        (mode == LLM_VIDEO_TEXT && media_count) ||
+        (mode == LLM_VIDEO_FIRST_FRAME && media_count != 1) ||
+        (mode == LLM_VIDEO_REFERENCE && (!media_count || media_count > 9)))
+        return fail(error, -1, "文生视频不接收图片，首帧生视频需要一张图片，参考生视频需要 1–9 张图片");
     if (seedance_model(rt)) return video_seedance_submit(rt, prompt, seconds, task_id, error);
     char origin[256];
     int kling = kling_model(rt);
-    if ((!kling && strcmp(rt->model, "happyhorse-1.1-t2v")) || ali_origin(rt, origin) != 0)
-        return fail(error, -1, "该模型或地址不支持百炼文生视频 API");
+    if ((!kling && mode == LLM_VIDEO_TEXT && strcmp(rt->model, "happyhorse-1.1-t2v")) ||
+        ali_origin(rt, origin) != 0)
+        return fail(error, -1, "该模型或地址不支持百炼视频 API");
 
     cJSON *body = cJSON_CreateObject();
     cJSON *input = cJSON_AddObjectToObject(body, "input");
@@ -134,12 +194,16 @@ int llm_video_submit(const route *rt, const char *prompt, int seconds,
     int valid = cJSON_AddStringToObject(body, "model", rt->model) &&
         cJSON_AddStringToObject(input, "prompt", prompt) &&
         cJSON_AddNumberToObject(parameters, "duration", seconds);
+    if (valid && media_count && !append_media(input, mode, media, media_count, sample)) {
+        cJSON_Delete(body);
+        return fail(error, -1, "视频素材必须是完整的 PNG、JPEG 或 WebP，每张不超过 4 MiB，合计不超过 12 MiB");
+    }
     if (valid && kling)
         valid = cJSON_AddStringToObject(parameters, "mode", "std") &&
                 cJSON_AddStringToObject(parameters, "aspect_ratio", "9:16");
     else if (valid)
         valid = cJSON_AddStringToObject(parameters, "resolution", "480P") &&
-                cJSON_AddStringToObject(parameters, "ratio", "9:16");
+                (mode == LLM_VIDEO_FIRST_FRAME || cJSON_AddStringToObject(parameters, "ratio", "9:16"));
     char *payload = valid ? cJSON_PrintUnformatted(body) : NULL;
     cJSON_Delete(body);
     strmap headers = {0};
@@ -150,7 +214,7 @@ int llm_video_submit(const route *rt, const char *prompt, int seconds,
         return fail(error, -1, "无法准备视频请求，请检查路由 API Key");
     }
     http_response *response = http_post(origin, VIDEO_SUBMIT, payload, "application/json",
-                                        &headers, 30000);
+                                        &headers, media_count ? 60000 : 30000);
     strmap_free(&headers);
     free(payload);
     int result = api_failure(response, 1, error);
@@ -164,6 +228,17 @@ int llm_video_submit(const route *rt, const char *prompt, int seconds,
     }
     http_response_free(response);
     return result;
+}
+
+int llm_video_submit_media(const route *rt, const char *prompt, int seconds,
+                           const char *const *media, size_t media_count,
+                           char task_id[128], char **error) {
+    return submit_video(rt, prompt, seconds, media, media_count, NULL, task_id, error);
+}
+
+int llm_video_submit(const route *rt, const char *prompt, int seconds,
+                     char task_id[128], char **error) {
+    return llm_video_submit_media(rt, prompt, seconds, NULL, 0, task_id, error);
 }
 
 int llm_video_poll(const route *rt, const char *task_id, char **url, char **error) {
@@ -291,24 +366,43 @@ static int video_receive(const route *rt, const char *url, strbuf *body, char **
     strmap_set(&headers, "Accept", "video/mp4");
     /* Use a new request with no model credentials, even when the URL is
      * served by the provider itself. */
-    http_stream *stream = http_stream_open(origin, "GET", request, NULL, NULL, &headers, 60000);
-    strmap_free(&headers);
-    if (!stream || http_stream_status(stream) != 200) {
-        if (stream) http_stream_close(stream);
-        return fail(error, -1, "下载视频失败，可沿用现有任务 ID 重试");
-    }
     char buffer[16384];
-    int n = 0, read_ok = 1;
-    while ((n = http_stream_read(stream, buffer, sizeof buffer)) > 0) {
-        size_t expected = body->len + (size_t)n;
-        if (expected > VIDEO_MAX_BYTES) { read_ok = 0; break; }
-        strbuf_append_n(body, buffer, (size_t)n);
-        if (body->len != expected) { read_ok = 0; break; }
+    const char *message = "视频不完整或没有有效 MP4 视频轨，可沿用现有任务 ID 重试";
+    for (int attempt = 0; attempt < 2; attempt++) {
+        http_stream *stream = http_stream_open(origin, "GET", request, NULL, NULL, &headers, 60000);
+        if (!stream || http_stream_status(stream) != 200) {
+            if (stream) http_stream_close(stream);
+            message = "下载视频失败，可沿用现有任务 ID 重试";
+            break;
+        }
+        int n;
+        int read_ok = 1;
+        while ((n = http_stream_read(stream, buffer, sizeof buffer)) > 0) {
+            size_t expected = body->len + (size_t)n;
+            if (expected > VIDEO_MAX_BYTES) {
+                message = "视频超过 32 MiB 下载上限";
+                read_ok = 0;
+                break;
+            }
+            strbuf_append_n(body, buffer, (size_t)n);
+            if (body->len != expected) {
+                message = "无法分配视频下载缓冲区";
+                read_ok = 0;
+                break;
+            }
+        }
+        http_stream_close(stream);
+        if (!read_ok) break;
+        if (n == 0 && mp4_valid((const unsigned char *)body->buf, body->len)) {
+            strmap_free(&headers);
+            return 0;
+        }
+        /* A CDN can close a 200 response before delivering the complete MP4. */
+        strbuf_free(body);
+        strbuf_init(body);
     }
-    http_stream_close(stream);
-    if (n < 0 || !read_ok || !mp4_valid((const unsigned char *)body->buf, body->len))
-        return fail(error, -1, "视频不完整、超过 32 MiB 或没有有效 MP4 视频轨");
-    return 0;
+    strmap_free(&headers);
+    return fail(error, -1, message);
 }
 
 int llm_video_download(const route *rt, const char *url, const char *path, char **error) {
@@ -334,10 +428,21 @@ int llm_video_download(const route *rt, const char *url, const char *path, char 
 }
 
 int llm_video_probe(const route *rt, size_t *bytes, char **error) {
+    /* A small baked-in 450x800 horizon scene avoids uploading a user's file
+     * merely to test the model route. Both axes exceed the R2V minimum. */
+    static const char horizon[] =
+        "data:image/png;base64,"
+        "iVBORw0KGgoAAAANSUhEUgAAAcIAAAMgAQMAAACKxfCmAAAABlBMVEWTvOREbVEJE7/MAAAAYElE"
+        "QVR42u3LsQ0AAAgDoP7/tP7QzQg7CQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADww"
+        "LdM0TdM0TdM0TdM0TdM0TdM0TdM0TdM0TdM0TdM0TdM0zdtzAfH9Xg2o/2tSAAAAAElFTkSuQmCC";
     *bytes = 0;
     char id[128];
-    int rc = llm_video_submit(rt, "A white cloud drifts slowly across a clear blue sky, static camera.",
-                              seedance_model(rt) ? 4 : 3, id, error);
+    llm_video_input mode = llm_video_input_kind(rt);
+    const char *prompt = mode == LLM_VIDEO_REFERENCE ?
+        "Use the blue sky and green horizon from [Image 1]. A small white cloud drifts past." :
+        "A white cloud drifts slowly across a clear blue sky, static camera.";
+    int rc = submit_video(rt, prompt, seedance_model(rt) ? 4 : 3, NULL,
+                          mode != LLM_VIDEO_TEXT, mode != LLM_VIDEO_TEXT ? horizon : NULL, id, error);
     if (rc != 0) return -1;
     char *url = NULL;
     int64_t deadline = time_now_ms() + 360000;

@@ -80,6 +80,7 @@ typedef struct flow_node {
     int manju_paint_episode;
     int manju_voice_episode;
     int manju_story_episode;
+    manju_story_video_mode manju_story_video_mode;
     int manju_video_episode;
     int manju_character_episode;
     int manju_clip_seconds;
@@ -87,6 +88,7 @@ typedef struct flow_node {
     char manju_image_route[128];
     char manju_text_route[128];
     char manju_video_route[128];
+    char manju_video_routes[3][128];
     char manju_chapter[320];
     int layer;
     int indeg;
@@ -245,17 +247,36 @@ static int flow_parse(const char *dag_json, flow_dag *d, char **err) {
         }
         if (video) {
             double episode = cJSON_GetNumberValue(video);
-            const char *name = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(jn, "manju_video_route"));
+            const cJSON *single = cJSON_GetObjectItemCaseSensitive(jn, "manju_video_route");
+            const cJSON *mixed = cJSON_GetObjectItemCaseSensitive(jn, "manju_video_routes");
+            const char *name = cJSON_GetStringValue(single);
             if (strcmp(nd->agent, "manju-artist") || nd->manju_paint_episode || nd->manju_character_episode ||
                 !(episode >= 1 && episode <= 500) || (int)episode != episode ||
-                !name || !*name || strlen(name) >= sizeof nd->manju_video_route) {
+                (!!single == !!mixed) ||
+                (single && (!name || !*name || strlen(name) >= sizeof nd->manju_video_route)) ||
+                (image && (!cJSON_IsString(image) || !*image->valuestring ||
+                           strlen(image->valuestring) >= sizeof nd->manju_image_route))) {
                 cJSON_Delete(root);
                 flow_err(err, "manju_video_episode requires manju-artist and a named video route");
                 return -1;
             }
+            if (mixed) {
+                static const char *keys[] = {"text", "first_frame", "reference"};
+                for (size_t k = 0; k < 3; k++) {
+                    const char *value = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(mixed, keys[k]));
+                    if (!value || !*value || strlen(value) >= sizeof nd->manju_video_routes[k]) {
+                        cJSON_Delete(root);
+                        flow_err(err, "manju_video_routes requires text, first_frame and reference");
+                        return -1;
+                    }
+                    snprintf(nd->manju_video_routes[k], sizeof nd->manju_video_routes[k], "%s", value);
+                }
+            } else {
+                snprintf(nd->manju_video_route, sizeof nd->manju_video_route, "%s", name);
+            }
+            if (image) snprintf(nd->manju_image_route, sizeof nd->manju_image_route, "%s", image->valuestring);
             nd->manju_video_episode = (int)episode;
             if (!nd->manju_clip_seconds) nd->manju_clip_seconds = 4;
-            snprintf(nd->manju_video_route, sizeof nd->manju_video_route, "%s", name);
         }
         cJSON *voice = cJSON_GetObjectItemCaseSensitive(jn, "manju_voice_episode");
         if (voice) {
@@ -292,6 +313,17 @@ static int flow_parse(const char *dag_json, flow_dag *d, char **err) {
             }
             nd->manju_story_episode = (int)episode;
             snprintf(nd->manju_chapter, sizeof nd->manju_chapter, "%s", chapter);
+            const cJSON *video_plan = cJSON_GetObjectItemCaseSensitive(jn, "manju_story_video_mode");
+            if (video_plan) {
+                double mode = cJSON_GetNumberValue(video_plan);
+                if (!nd->manju_clip_seconds || (mode != MANJU_STORY_VIDEO_MIXED &&
+                    mode != MANJU_STORY_VIDEO_WITH_CHARACTER_VIEWS)) {
+                    cJSON_Delete(root);
+                    flow_err(err, "invalid mix of Manju director video options");
+                    return -1;
+                }
+                nd->manju_story_video_mode = (manju_story_video_mode)mode;
+            }
         }
         d->n++;
     }
@@ -739,7 +771,7 @@ static void flow_manju_story(flow_job *j) {
     int requests = 0;
     int64_t started = time_now_ms();
     j->rc = manju_story_episode(client, j->workspace, node->manju_chapter, node->manju_story_episode,
-                               node->manju_clip_seconds,
+                               node->manju_clip_seconds, node->manju_story_video_mode,
                                flow_abort_requested, j->parent, &requests, &j->out);
     long long input = 0, output = 0;
     llm_usage_totals(client, &input, &output);
@@ -905,9 +937,18 @@ static void flow_worker(void *arg) {
         goto finish;
     }
     if (j->nd->manju_video_episode) {
-        j->rc = manju_video_episode(j->ctx->router, j->nd->manju_video_route, j->workspace,
-                                     j->nd->manju_video_episode, j->nd->manju_clip_seconds,
-                                     flow_paint_abort, flow_paint_progress, j, &j->out);
+        if (j->nd->manju_video_routes[0][0]) {
+            const char *names[3] = {j->nd->manju_video_routes[0], j->nd->manju_video_routes[1],
+                                    j->nd->manju_video_routes[2]};
+            j->rc = manju_video_episode_mixed(j->ctx->router, names, j->nd->manju_image_route, j->workspace,
+                                             j->nd->manju_video_episode, j->nd->manju_clip_seconds,
+                                             flow_paint_abort, flow_paint_progress, j, &j->out);
+        } else {
+            j->rc = manju_video_episode_selected(j->ctx->router, j->nd->manju_video_route,
+                                                j->nd->manju_image_route, j->workspace,
+                                                j->nd->manju_video_episode, j->nd->manju_clip_seconds,
+                                                flow_paint_abort, flow_paint_progress, j, &j->out);
+        }
         goto finish;
     }
     if (j->nd->manju_character_episode) {

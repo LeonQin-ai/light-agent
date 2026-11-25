@@ -41,11 +41,29 @@ static int save_meta(const char *root, cJSON *o) {
     int rc = s ? fs_write_file(path, s, strlen(s)) : -1; free(s); return rc;
 }
 
+static const char *image_preview_mime(const cJSON *meta, const char *session) {
+    if (!meta || strcmp(field(meta,"session"),session && *session ? session : "default")) return NULL;
+    const char *mime=field(meta,"mime");
+    if (strcmp(mime,"image/png") && strcmp(mime,"image/jpeg") && strcmp(mime,"image/webp") && strcmp(mime,"image/gif")) return NULL;
+    return mime;
+}
+
+int attachment_has_image_preview(const char *root, const char *session, const char *id) {
+    cJSON *meta=load_meta(root,id);
+    int found=image_preview_mime(meta,session)!=NULL;
+    if (found) {
+        char path[1200]; file_path(path,root,id,"raw");
+        long long size=fs_file_size(path);
+        found=size>0 && size<=ATTACHMENT_MAX_BYTES;
+    }
+    cJSON_Delete(meta);
+    return found;
+}
+
 cJSON *attachment_image_preview(const char *root, const char *session, const char *id) {
     cJSON *meta=load_meta(root,id), *result=NULL;
-    if (!meta || strcmp(field(meta,"session"),session && *session ? session : "default")) goto done;
-    const char *mime=field(meta,"mime");
-    if (strcmp(mime,"image/png") && strcmp(mime,"image/jpeg") && strcmp(mime,"image/webp") && strcmp(mime,"image/gif")) goto done;
+    const char *mime=image_preview_mime(meta,session);
+    if (!mime) goto done;
     char path[1200]; file_path(path,root,id,"raw");
     long long size=fs_file_size(path);
     if (size<=0 || size>ATTACHMENT_MAX_BYTES) goto done;

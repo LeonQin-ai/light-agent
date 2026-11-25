@@ -14,7 +14,7 @@ Run tools, coordinate agents, and inspect what happened — from a C11 core with
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-lightgrey.svg)](#quick-start)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**[Download](https://github.com/LeonQin-ai/light-agent/releases/latest) · [Quick start](#quick-start) · [Developer guide](backend/README.md) · [中文](README.zh-CN.md)**
+**[Download](https://github.com/LeonQin-ai/light-agent/releases/latest) · [Quick start](#quick-start) · [Desktop demos](#desktop-demos) · [Developer guide](backend/README.md) · [中文](README.zh-CN.md)**
 
 </div>
 
@@ -31,6 +31,7 @@ The core is written in C11 and embeds its web console. Prebuilt packages do not 
 | **Understand a codebase** | Search and read source, run commands, and produce explanations grounded in tool results. |
 | **Create documents and visual reports** | Combine reasoning with installed document, Python, or shell tools; inspect the resulting files. |
 | **Coordinate specialist agents** | Chain review → implementation → testing in a Flow DAG, or let role-based agents discuss a topic. |
+| **Produce an animated comic** | Import fiction or a storyboard, generate shots and voice tracks with a Flow, and export an MP4. |
 | **Automate recurring work** | Schedule jobs and inspect their recorded outcomes in the console. |
 | **Embed an agent in your application** | Submit tasks over HTTP and read their status, tool steps, output, and metrics. |
 
@@ -119,6 +120,41 @@ Flow DAGs express task dependencies. Group discussions let registered roles resp
 </details>
 
 Screenshots use a local demonstration configuration and mock execution; they do not establish real-model task quality.
+
+## Animated comics with HappyHorse 1.1
+
+The desktop comic workshop uses one Flow for the storyboard, visuals, voice tracks, and final edit. In **按镜头选视频模型** (Choose video models per shot), assign one model to each kind of input.
+
+| Model | Input | Typical shot |
+|---|---|---|
+| `happyhorse-1.1-t2v` | Text prompt | Establishing shots, landscapes, and effects that need no character reference |
+| `happyhorse-1.1-i2v` | One first-frame image and a prompt | Preserve the opening composition or start from a supplied continuity frame |
+| `happyhorse-1.1-r2v` | One to nine reference images and a prompt | Reuse visual references for a recurring character, costume, or prop across shots |
+
+The selected image route can draw a first frame and front, side, and back character views. Reference images help preserve a character's visual identity. Review the rendered clips for continuity before reusing them. [Alibaba Cloud Token Plan video generation](https://help.aliyun.com/en/model-studio/token-plan-video-generation) · [First-frame API](https://help.aliyun.com/en/model-studio/happyhorse-image-to-video-api-reference) · [Reference-to-video API](https://help.aliyun.com/en/model-studio/happyhorse-reference-to-video-api-reference)
+
+1. Open **更多 → Models** (More → Models) and add the three **HappyHorse** Token Plan route presets. Add an image route such as `qwen-image-3.0-pro` to generate first frames and character references. Use the **Test** button on each route to check its setup.
+2. Open **多 Agent & Flow → 漫剧工房** (Multi-Agent & Flow → Comic Workshop). Import a `.txt` or `.md` chapter, import a storyboard `.json`, or select **加载三镜宣传样片** (Load three-shot promo). The built-in storyboard establishes a lighthouse with T2V and follows the same original lighthouse keeper, A-Cheng, in its I2V and R2V shots.
+3. Check the three video routes and image route, then choose three or four seconds per shot. Select **导入并组队制作** (Import and produce) and follow **查看制作进度** (View production progress). For a custom storyboard, each shot can declare `video_mode` as `text`, `first_frame`, or `reference`.
+4. When production completes, open `manju/epNN/videos/epNN-motion.mp4` in the workspace. The Flow saves finished clips for reuse when a run resumes. Audio and assembly require local Python and the comic pipeline dependencies.
+
+The **文生视频** (Text-to-video) option also supports single-route production with Alibaba Cloud Kling or Volcano Engine Seedance.
+
+### Desktop demos
+
+The Windows desktop app completed the first production run in 4 min 45 s using all three configured HappyHorse models. The built-in sample uses a prepared storyboard and skips the director model call. `qwen-image-3.0-pro` generated the R2V reference sheet. A continuity rerun used a first frame of A-Cheng and made one new video generation request. An interrupted download recovered using the existing provider task ID. The finished promo runs for 20.4 s at 720 × 1280.
+
+| Demo | Recording |
+|---|---|
+| *The Lighthouse Keeper*, three HappyHorse shots | [Watch the finished comic](docs/demo/happyhorse-promo.mp4) |
+| First Comic Workshop run, from import through completion | [Watch the uncut desktop recording](docs/demo/manju-desktop.mp4) |
+| Character continuity rerun | [Watch the uncut desktop recording](docs/demo/manju-continuity.mp4) |
+| Chat, execution, and desktop feature walkthrough | [Watch the edited tour](docs/demo/feature-tour.mp4) |
+| Workspace and conversation switching | [Watch the GIF](docs/demo/workspace.gif) |
+| Model routing and capability labels | [Watch the GIF](docs/demo/model-routes.gif) |
+| Appearance settings | [Watch the GIF](docs/demo/appearance.gif) |
+
+The feature tour includes a live DeepSeek chat with token counts and a per-route model test. It also walks through Agent & Flow, role management, scheduled tasks, MCP, Skills, plugins, model routes, policy, chat credential authorization, messaging, memory, snapshots, monitoring, clustering, metrics, and the dashboard. Administrative screens demonstrate navigation and configuration.
 
 ## Architecture
 

@@ -11,7 +11,7 @@ const data='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA
    if(url.pathname==='/v1/chat/history')obj={turns:[],runs:[]};
    if(url.pathname==='/v1/config/llm')obj={configured:true,api_key_set:true,provider:'openai',model:'fixture'};
    if(url.pathname==='/v1/uploads/preview'){
-    if(!/^verified-image(?:-[1-5])?$/.test(url.searchParams.get('id'))||url.searchParams.get('session')!=='picture-session')return r.fulfill({status:404,body:'{}'});
+    if(!/^(?:verified-image(?:-[1-5])?|issue289-[0-8])$/.test(url.searchParams.get('id'))||url.searchParams.get('session')!=='picture-session')return r.fulfill({status:404,body:'{}'});
     obj={data_url:data,name:'picture.png'};
    }
    return r.fulfill({status:200,contentType,body:JSON.stringify(obj)});
@@ -112,6 +112,33 @@ const data='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA
   await page.waitForFunction(()=>[...inlineReply.querySelectorAll('.chat-answer img')].filter(i=>i.naturalWidth>0).length===5);
   assert.deepEqual(await page.evaluate(()=>[...inlineReply.querySelectorAll('.chat-answer img')].map(i=>i.parentElement.parentElement.textContent)),Array.from({length:5},(_,i)=>`${i+1}. 热点 ${i+1} — 配图 img${i+1}.jpg（已核对）`),'plain filenames embed in detail paragraphs, not tables or inventory');
   assert.equal(await page.evaluate(()=>inlineReply.querySelectorAll('.chat-images').length),0);
+  const batchRequests=[];
+  const trackBatchPreview=req=>{
+   const id=new URL(req.url()).searchParams.get('id');
+   if(id?.startsWith('issue289-'))batchRequests.push(id);
+  };
+  page.on('request',trackBatchPreview);
+  await page.evaluate(()=>{
+   const groups=[1,2,2,3,1];
+   const images=[];
+   const text=groups.map((count,post)=>{
+    const refs=Array.from({length:count},(_,i)=>{
+     const path='post'+(post+1)+'/photo'+(i+1)+'.jpg';
+     images.push({id:'issue289-'+images.length,name:path.split('/').at(-1),session:'picture-session',path:'D:/WORK/'+path});
+     return '![配图 '+(i+1)+']('+path+')';
+    }).join(' ');
+    return '### 帖子 '+(post+1)+'\n'+refs;
+   }).join('\n')+'\n![未指定条目](photo1.jpg)\n![未验证路径](http://localhost:18300/weibo_hot/not-verified.jpg)';
+   CHAT_MSGS=chatHistoryEntries([{q:'展示九张图',a:text}],[{id:902,input:'展示九张图',output:text,status:'DONE',trace:[{stage:'completed',images}]}]);
+   chatRedraw();window.batchReply=CHAT_MSGS.at(-1).el;
+  });
+  await page.waitForFunction(()=>batchReply.querySelectorAll('.chat-answer img').length===9);
+  assert.deepEqual(batchRequests.sort(),Array.from({length:9},(_,i)=>'issue289-'+i));
+  page.off('request',trackBatchPreview);
+  assert.deepEqual(await page.evaluate(()=>Array.from(batchReply.querySelectorAll('.chat-answer h3'),heading=>heading.nextElementSibling.querySelectorAll('img').length)),[1,2,2,3,1]);
+  assert.ok(await page.evaluate(()=>batchReply.querySelector('.chat-answer').textContent.includes('![未指定条目](photo1.jpg)')),'ambiguous bare file name stays text');
+  assert.ok(await page.evaluate(()=>batchReply.querySelector('.chat-answer').textContent.includes('![未验证路径](http://localhost:18300/weibo_hot/not-verified.jpg)')),'unverified localhost URL stays text');
+  assert.equal(await page.evaluate(()=>batchReply.querySelectorAll('.run-image-previews').length),0,'all nine preview IDs are assigned exactly once');
   await page.setViewportSize({width:1280,height:850});
   await page.evaluate(()=>chatInitResize());
   await page.waitForFunction(()=>$('sidebar').getBoundingClientRect().left===0);

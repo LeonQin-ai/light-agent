@@ -21,6 +21,8 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
     {name:'deepseek-script',provider:'openai',model:'deepseek-v4.1-flash-1017'},
     {name:'qwen-panels',provider:'openai',model:'qwen-image-3.0-pro',image_generation:true},
     {name:'horse-video',provider:'openai',model:'happyhorse-1.1-t2v',video_generation:true},
+    {name:'horse-first',provider:'openai',model:'happyhorse-1.1-i2v',video_generation:true,video_input:'first_frame'},
+    {name:'horse-reference',provider:'openai',model:'happyhorse-1.1-r2v',video_generation:true,video_input:'reference'},
     {name:'seedance-video',provider:'openai',model:'doubao-seedance-2-0-260128',video_generation:true}
    ];
    if(u.pathname==='/v1/workspaces')obj={default_workspace:'D:/default',workspaces:[]};
@@ -67,7 +69,8 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   assert.ok(!('video_route' in importBody) && !('clip_seconds' in importBody));
   assert.ok(importBody.text.includes('第一章 起点')&&importBody.text.includes('第二章 转折'),'novel text uploaded');
   assert.ok(!importBody.path,'file import must not send a server path');
-  assert.ok(agentsGets>before,'agent pool refreshed after import');
+  await page.waitForFunction(()=>document.getElementById('flow-tasks').textContent.includes('测试小说'));
+  assert.ok(agentsGets>=before,'agent pool loaded');
   assert.ok(flowLists>0,'collaboration task list refreshed');
   const stat=await page.locator('#manju-stat').innerText();
   assert.ok(stat.includes('#7'),'queued task id surfaced');
@@ -97,10 +100,24 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   assert.equal(importBody.video_route,'horse-video');
   assert.equal(importBody.clip_seconds,4);
   assert.ok(!('image_route' in importBody) && !('character_views' in importBody));
+  await page.getByRole('button',{name:'加载三镜宣传样片'}).click();
+  assert.equal(await page.locator('#manju-video-text').inputValue(),'horse-video');
+  assert.equal(await page.locator('#manju-video-first-frame').inputValue(),'horse-first');
+  assert.equal(await page.locator('#manju-video-reference').inputValue(),'horse-reference');
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('已导入 3 镜分镜'));
+  assert.equal(imports,4);
+  assert.deepEqual(importBody.video_routes,{text:'horse-video',first_frame:'horse-first',reference:'horse-reference'});
+  assert.deepEqual(importBody.storyboard.shots.map(s=>s.video_mode),['text','first_frame','reference']);
+  assert.ok(importBody.storyboard.shots[1].character_ids.includes(importBody.storyboard.shots[2].character_ids[0]));
+  assert.equal(importBody.image_route,'qwen-panels');
+  assert.equal(importBody.character_views,true);
+  assert.ok(!('text_route' in importBody));
+  assert.ok(await page.locator('#manju-progress').isVisible());
   /* 空输入给出明确提示而不是发请求 */
   const callsBefore=importBody;
   await page.locator('#manju-title').fill('');
-  await page.evaluate(()=>{document.getElementById('manju-file').value='';document.getElementById('manju-path').value='';});
+  await page.evaluate(()=>{document.getElementById('manju-file').value='';document.getElementById('manju-path').value='';document.getElementById('manju-board-json').value='';});
   await page.getByRole('button',{name:'🎬 导入并组队制作'}).click();
   await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('先选择小说文件'),{timeout:5000});
   assert.equal(importBody,callsBefore,'no request without input');

@@ -2,10 +2,23 @@
 
 #include "llm/router.h"
 
+typedef enum llm_video_input {
+    LLM_VIDEO_TEXT,
+    LLM_VIDEO_FIRST_FRAME,
+    LLM_VIDEO_REFERENCE
+} llm_video_input;
+
+llm_video_input llm_video_input_kind(const route *rt);
+
 /* 0 accepted; -1 definite rejection, retry is safe; -2 uncertain whether the
  * service accepted the submission, so do not automatically submit again. */
 int llm_video_submit(const route *rt, const char *prompt, int seconds,
                      char task_id[128], char **error);
+/* Pass one local image for first-frame generation, or 1–9 local images for
+ * reference generation. Callers resolve and authorize the paths first. */
+int llm_video_submit_media(const route *rt, const char *prompt, int seconds,
+                           const char *const *media, size_t media_count,
+                           char task_id[128], char **error);
 /* 1 ready, 0 pending, -1 definitively failed/canceled, -2 transient query
  * failure, -3 stop this run but retain the task ID. Caller frees URL/error. */
 int llm_video_poll(const route *rt, const char *task_id, char **url, char **error);

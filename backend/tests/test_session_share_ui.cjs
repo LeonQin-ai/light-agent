@@ -9,6 +9,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   const page=await browser.newPage({viewport:{width:1400,height:900}}),errors=[];
   page.on('pageerror',e=>errors.push(e.message));
   const importBodies=[],rewindBodies=[];let exported=0;
+  const firstPrompt='第一问\n原始 **Markdown** 与 `命令`';
   const sessions=[{id:'s1',title:'分享会话',turns:2,created_ms:1000,last_active_ms:2000,workspace:'D:/default'}];
   const bundle={version:1,kind:'coa-session',exported_ms:1,title:'分享会话',created_ms:1000,
     turns:[{q:'第一问',a:'答1'},{q:'第二问',a:'答2'}]};
@@ -38,7 +39,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
    if(u.pathname==='/v1/chat/history'){
     const sid=u.searchParams.get('session');
     obj=sid==='s1'
-      ?{turns:[{q:'第一问',a:'答1',snaps:['snap1']},{q:'第二问',a:'答2',snaps:['snap2']}],runs:[]}
+      ?{turns:[{q:firstPrompt,a:'答1',snaps:['snap1']},{q:'第二问',a:'答2',snaps:['snap2']}],runs:[]}
       :{turns:[{q:'问题',a:'回答'}],runs:[]};
    }
    return route.fulfill({contentType:'application/json',body:JSON.stringify(obj)});
@@ -68,9 +69,24 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   assert.ok(download.suggestedFilename().startsWith('coa-session-'));
   assert.ok(download.suggestedFilename().endsWith('.json'));
   assert.equal(exported,1);
-  /* Rewind button appears on persisted user turns; dialog offers both modes. */
-  await page.waitForSelector('.chat-rewind',{timeout:5000});
-  await page.locator('.chat-rewind').first().click();
+  /* #291: Copy and rewind are separate controls on each saved turn. */
+  await page.evaluate(()=>{
+   window.copiedPrompt=null;
+   Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.copiedPrompt=text;}}});
+  });
+  const actions=page.locator('.chat-message.user > .chat-user-actions').first();
+  const copy=actions.getByRole('button',{name:'复制这条消息'});
+  const rewind=actions.getByRole('button',{name:'回滚到此'});
+  await rewind.waitFor({timeout:5000});
+  assert.equal(await copy.evaluate(el=>getComputedStyle(el).opacity),'1');
+  await copy.click();
+  assert.equal(await page.evaluate(()=>window.copiedPrompt),firstPrompt);
+  assert.equal(rewindBodies.length,0,'copy never issues a rewind');
+  assert.equal(await page.locator('#session-rewind').count(),0);
+  await page.evaluate(()=>chatRedraw());
+  assert.equal(await copy.count(),1,'redraw keeps one copy action per user turn');
+  /* Rewind still offers both modes. */
+  await rewind.click();
   const dlg=page.locator('#session-rewind');
   await dlg.waitFor({timeout:3000});
   assert.ok((await dlg.innerText()).includes('回滚将删除此后的 2 轮对话'));
@@ -88,6 +104,6 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   assert.ok((await dlg2.innerText()).includes('仅可回滚对话'));
   await dlg2.locator('[data-act=cancel]').click();
   assert.deepEqual(errors,[]);
-  console.log('PASS: import file flow, export download, rewind dialog chat/files modes, files disabled without snaps');
+  console.log('PASS: session import/export, copy beside rewind, rewind chat/files modes, files disabled without snapshots');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

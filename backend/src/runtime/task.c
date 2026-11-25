@@ -130,6 +130,28 @@ void task_trace_add(task *t, const char *json) {
         if (field)
             cJSON_AddItemToObject(event, names[i], cJSON_Duplicate(field, 1));
     }
+    /* Store the final image inventory once, independent of the capped trace. */
+    const char *stage=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(snapshot,"stage"));
+    if(stage && (!strcmp(stage,"completed") || !strcmp(stage,"failed") ||
+                 !strcmp(stage,"cancelled") || !strcmp(stage,"timed_out"))) {
+        field=cJSON_GetObjectItemCaseSensitive(snapshot,"images");
+        cJSON *images=cJSON_IsArray(field)?cJSON_AddArrayToObject(event,"images"):NULL;
+        cJSON *image;
+        if(images)cJSON_ArrayForEach(image,field) {
+            const char *id=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(image,"id"));
+            const char *session=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(image,"session"));
+            if(!id || !session)continue;
+            cJSON *safe=cJSON_CreateObject();
+            if(!safe)continue;
+            cJSON_AddStringToObject(safe,"id",id);
+            cJSON_AddStringToObject(safe,"session",session);
+            const char *name=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(image,"name"));
+            const char *path=cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(image,"path"));
+            if(name)cJSON_AddStringToObject(safe,"name",name);
+            if(path)cJSON_AddStringToObject(safe,"path",path);
+            if(!cJSON_AddItemToArray(images,safe))cJSON_Delete(safe);
+        }
+    }
     field = cJSON_GetObjectItemCaseSensitive(snapshot, "steps");
     if (field && cJSON_IsArray(field)) {
         cJSON *safe_steps = cJSON_CreateArray(), *step;
