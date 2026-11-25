@@ -24,11 +24,21 @@
 
 ## 桌面端演示
 
-### 1. 漫剧成片《拾光守灯人》
+### 1. 漫剧作品展示
 
-<img src="docs/demo/promo-preview.gif" alt="《拾光守灯人》三镜成片。海崖上的灯塔，守灯人阿澄与亮起的透镜。" width="440">
+两支作品均由 light-agent 漫剧流程生成，带有中文配音和字幕。
 
-三个镜头分别使用 HappyHorse 的文生视频、图生视频和参考生视频模型。阿澄在后两镜保留青蓝雨衣、橙色围巾和黄铜发夹。[带配音成片 · 20.4 秒](docs/demo/happyhorse-promo.mp4)
+#### 《拾光守灯人》
+
+守灯人阿澄点亮海崖灯塔。三个镜头分别使用文生视频、首帧生视频和参考生视频。[下载 MP4 · 20.4 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/happyhorse-promo.mp4)
+
+https://github.com/user-attachments/assets/5600a05c-49d3-4cf0-95be-8f0e179a9b14
+
+#### 《星光温室》
+
+园艺机器人芽芽种下一颗发光的种子。屋顶空镜由文生视频生成，播种和发芽两镜共用一套角色三视图。[下载 MP4 · 20.6 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/starlight-greenhouse.mp4)
+
+https://github.com/user-attachments/assets/8a635a60-4224-406e-9ab2-674dcd1a0ed4
 
 ### 2. 桌面对话与执行进度
 

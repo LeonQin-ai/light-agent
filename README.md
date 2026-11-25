@@ -24,11 +24,21 @@ The core is written in C11 and embeds its web console. Prebuilt packages do not 
 
 ## Desktop demos
 
-### 1. Animated comic — The Lighthouse Keeper
+### 1. Animated comic showcase
 
-<img src="docs/demo/promo-preview.gif" alt="The Lighthouse Keeper finished comic, from the cliffside lighthouse to A-Cheng lighting its lens" width="440">
+Both demos were produced with the light-agent comic workflow and include Chinese narration and subtitles.
 
-Three HappyHorse models produce the establishing shot, the first-frame motion shot, and the reference-guided finale. A-Cheng keeps her blue raincoat, orange scarf, and brass hair clip across the two character shots. [Finished comic with voiceover · 20.4 seconds](docs/demo/happyhorse-promo.mp4)
+#### The Lighthouse Keeper
+
+A-Cheng lights the lighthouse on a sea cliff. The three shots use text-to-video, first-frame animation, and reference-to-video. [Download MP4 · 20.4 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/happyhorse-promo.mp4)
+
+https://github.com/user-attachments/assets/5600a05c-49d3-4cf0-95be-8f0e179a9b14
+
+#### Starlight Greenhouse
+
+Yaya, a greenhouse robot, plants a glowing seed. The establishing shot uses text-to-video. The planting and sprouting shots share a single character turnaround sheet. [Download MP4 · 20.6 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/starlight-greenhouse.mp4)
+
+https://github.com/user-attachments/assets/8a635a60-4224-406e-9ab2-674dcd1a0ed4
 
 ### 2. Desktop chat and task progress
 
