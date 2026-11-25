@@ -148,7 +148,7 @@ static const char *SYS_NATIVE_TAIL=
  * to the static catalog). Tools denied by `policy` are hidden entirely
  * (Claude Code: deny rules both block calls AND remove from the tool pool). */
 static char *build_catalog_prompt(const tool_registry *tools, struct skill_registry *skills,
-                                  struct policy_engine *policy, int native) {
+                                  struct policy_engine *policy, int native, int allow_declaration) {
     strbuf b;
     int have_skill_tool = 0;
     int have_glob_tool = 0;
@@ -157,8 +157,11 @@ static char *build_catalog_prompt(const tool_registry *tools, struct skill_regis
         return NULL;
     strbuf_init(&b);
     strbuf_append(&b, native ? SYS_NATIVE_HEAD:SYS_PROMPT_HEAD);
-    strbuf_append(&b,"\nControl decisions: declare_task({acceptance:{requires_action:boolean,requires_observation:boolean,requires_images:boolean,artifacts:[path],full_reads:[path]}}) records requirements before operations. Artifact paths require a real nonempty write and later readback; full_reads require contiguous EOF. Requirements accumulate and cannot be omitted later. complete_task may append acceptance. When the user asks to deliver images, declare requires_images and reference the verified images in the final answer. Read image files together in a single tool-call batch.\n");
-    strbuf_append(&b,"declare_task is a separate control turn: it must be the only call in its response. Wait for its receipt before emitting file or other tool operations. For one report in an explicit format, declare one matching path and then do the work. Before a write, a new matching path may replace a previously guessed path. Preserve caller-specified paths.\n");
+    strbuf_append(&b,"\nArtifact paths require a real nonempty write and later readback; full_reads require contiguous EOF. Keep the existing acceptance requirements. When the user asks to deliver images, record requires_images and reference the verified images in the final answer. Read image files together in a single tool-call batch.\n");
+    if (allow_declaration)
+        strbuf_append(&b,"Optional declare_task({acceptance:{requires_action:boolean,requires_observation:boolean,requires_images:boolean,artifacts:[path],full_reads:[path]}}) records explicit acceptance requirements as the only call in one response. Once accepted, execute the required tools. One necessary correction is allowed before the contract locks; keep caller-specified and written paths. For one report, use one matching path.\n");
+    else
+        strbuf_append(&b,"Contract declaration is unavailable. Execute the required tools using the current acceptance requirements, or explain the specific blocker.\n");
     strbuf_append(&b,native ? "Native turns with tools continue execution; a complete tool-free answer enters delivery review. Use complete_task to declare explicit status or acceptance.\n" : "Legacy final answers require complete_task(status=complete or blocked,requires_tools=false,answer). Plain text is commentary.\n");
     if (native)
         strbuf_append(&b, "During extended work, include a brief public progress update alongside native tool calls when you find new evidence, change direction, or hit a blocker. State what you verified and what you will check next. Omit private reasoning, secrets, and repeated updates.\n");
@@ -750,7 +753,7 @@ static int planner_output_tokens(llm *l, int requested) {
     return (int)output;
 }
 
-static char *native_tool_catalog(const tool_registry *tools, struct policy_engine *policy);
+static char *native_tool_catalog(const tool_registry *tools, struct policy_engine *policy, int allow_declaration);
 
 int planner_uses_native_tools(const llm *l) {
     const char *protocol=getenv("COA_TOOL_PROTOCOL");
@@ -761,11 +764,11 @@ int planner_uses_native_tools(const llm *l) {
 
 size_t planner_input_budget_bytes_with_output(llm *l, const tool_registry *tools,
     struct skill_registry *skills, struct policy_engine *policy, int output_tokens) {
-    char *sys = build_catalog_prompt(tools, skills, policy,planner_uses_native_tools(l));
+    char *sys = build_catalog_prompt(tools, skills, policy,planner_uses_native_tools(l),1);
     size_t sys_bytes = strlen(sys ? sys : SYS_PROMPT);
     free(sys);
     if(planner_uses_native_tools(l)) {
-        char *native=native_tool_catalog(tools,policy);
+        char *native=native_tool_catalog(tools,policy,1);
         if(native)sys_bytes+=strlen(native)+1024; /* protocol instructions + native schemas */
         free(native);
     }
@@ -783,7 +786,7 @@ size_t planner_input_budget_bytes(llm *l, const tool_registry *tools,
 static cJSON *acceptance_schema(void) {
     return cJSON_Parse("{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"requires_action\":{\"type\":\"boolean\"},\"requires_observation\":{\"type\":\"boolean\"},\"requires_images\":{\"type\":\"boolean\"},\"artifacts\":{\"type\":\"array\",\"maxItems\":64,\"items\":{\"type\":\"string\"}},\"full_reads\":{\"type\":\"array\",\"maxItems\":64,\"items\":{\"type\":\"string\"}}}}");
 }
-static char *native_tool_catalog(const tool_registry *tools, struct policy_engine *policy) {
+static char *native_tool_catalog(const tool_registry *tools, struct policy_engine *policy, int allow_declaration) {
     if (!tools) return NULL;
     cJSON *list=cJSON_CreateArray();
     for (int i=0;i<tool_registry_count(tools);++i) {
@@ -831,14 +834,14 @@ static char *native_tool_catalog(const tool_registry *tools, struct policy_engin
         if(properties&&equalities)cJSON_AddItemToObject(properties,"file_equalities",equalities);else cJSON_Delete(equalities);
         cJSON_AddItemToArray(list,finish);
     }
-    cJSON *declare=cJSON_Parse("{\"type\":\"function\",\"function\":{\"name\":\"declare_task\",\"description\":\"Declare explicit task acceptance before executing operations. Requirements accumulate; later empty declarations cannot erase them.\",\"parameters\":{\"type\":\"object\",\"properties\":{},\"required\":[\"acceptance\"]}}}");
+    cJSON *declare=allow_declaration ? cJSON_Parse("{\"type\":\"function\",\"function\":{\"name\":\"declare_task\",\"description\":\"Optionally record explicit task acceptance before executing operations. Continue with the required operation after the receipt.\",\"parameters\":{\"type\":\"object\",\"properties\":{},\"required\":[\"acceptance\"]}}}") : NULL;
     if(declare){cJSON *props=cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(declare,"function"),"parameters"),"properties");cJSON_AddItemToObject(props,"acceptance",acceptance_schema());cJSON_AddItemToArray(list,declare);}
     char *result=cJSON_GetArraySize(list)?cJSON_PrintUnformatted(list):NULL;cJSON_Delete(list);return result;
 }
 
 static int plan_with(llm *llm, char *sys_prompt, const char *prompt, planned_action **actions, int *n_actions,
                      char **raw_out, char **err_out, const char *attachments, int *truncated_out,
-                     int output_tokens, const tool_registry *tools, struct policy_engine *policy, int *native_end_out, planner_model_diagnostic *diagnostic, int require_completion, char **completion_out, double temperature, const char *effort) {
+                     int output_tokens, const tool_registry *tools, struct policy_engine *policy, int *native_end_out, planner_model_diagnostic *diagnostic, int require_completion, char **completion_out, double temperature, const char *effort, int allow_declaration) {
     if(completion_out)*completion_out=NULL;
     llm_request req = {0};
     if(native_end_out)*native_end_out=0;
@@ -983,7 +986,7 @@ static int plan_with(llm *llm, char *sys_prompt, const char *prompt, planned_act
     if(visual && req.max_tokens>8192) req.max_tokens=8192;
     char *native_tools=NULL;
     if (planner_uses_native_tools(llm))
-        native_tools=native_tool_catalog(tools,policy);
+        native_tools=native_tool_catalog(tools,policy,allow_declaration);
     req.tools_json=native_tools;
     req.structured_decision=native_tools!=NULL || require_completion;
     char *native_system=NULL;
@@ -1376,37 +1379,38 @@ void planner_actions_free(planned_action *a, int n) {
 
 int planner_plan(llm *llm, const char *prompt, planned_action **actions, int *n_actions, char **raw_out,
                      char **err_out) {
-    return plan_with(llm, NULL, prompt, actions, n_actions, raw_out, err_out, NULL, NULL, 0, NULL, NULL, NULL, NULL, 0, NULL, -1, NULL);
+    return plan_with(llm, NULL, prompt, actions, n_actions, raw_out, err_out, NULL, NULL, 0, NULL, NULL, NULL, NULL, 0, NULL, -1, NULL,1);
 }
 
 int planner_plan_ex(llm *llm, const struct tool_registry *tools, struct skill_registry *skills,
                         struct policy_engine *policy, const char *prompt, planned_action **actions,
                         int *n_actions, char **raw_out, char **err_out) {
-    char *sys = build_catalog_prompt(tools, skills, policy,planner_uses_native_tools(llm));
-    return plan_with(llm, sys, prompt, actions, n_actions, raw_out, err_out, NULL, NULL, 0, tools, policy, NULL, NULL, 0, NULL, -1, NULL);
+    char *sys = build_catalog_prompt(tools, skills, policy,planner_uses_native_tools(llm),1);
+    return plan_with(llm, sys, prompt, actions, n_actions, raw_out, err_out, NULL, NULL, 0, tools, policy, NULL, NULL, 0, NULL, -1, NULL,1);
 }
 
 int planner_plan_attachments_ex(llm *llm, const struct tool_registry *tools, struct skill_registry *skills,
     struct policy_engine *policy, const char *prompt, planned_action **actions,
     int *n_actions, char **raw_out, char **err_out, const char *attachments, int *truncated_out) {
-    return plan_with(llm, build_catalog_prompt(tools,skills,policy,planner_uses_native_tools(llm)), prompt, actions,
-        n_actions, raw_out, err_out, attachments, truncated_out, 0, tools, policy, NULL, NULL, 0, NULL, -1, NULL);
+    return plan_with(llm, build_catalog_prompt(tools,skills,policy,planner_uses_native_tools(llm),1), prompt, actions,
+        n_actions, raw_out, err_out, attachments, truncated_out, 0, tools, policy, NULL, NULL, 0, NULL, -1, NULL,1);
 }
 
 int planner_plan_attachments_ex_with_output(llm *llm, const struct tool_registry *tools,
     struct skill_registry *skills, struct policy_engine *policy, const char *prompt,
     planned_action **actions, int *n_actions, char **raw_out, char **err_out,
     const char *attachments, int *truncated_out, int output_tokens) {
-    return plan_with(llm, build_catalog_prompt(tools,skills,policy,planner_uses_native_tools(llm)), prompt, actions,
-        n_actions, raw_out, err_out, attachments, truncated_out, output_tokens, tools, policy, NULL, NULL, 0, NULL, -1, NULL);
+    return plan_with(llm, build_catalog_prompt(tools,skills,policy,planner_uses_native_tools(llm),1), prompt, actions,
+        n_actions, raw_out, err_out, attachments, truncated_out, output_tokens, tools, policy, NULL, NULL, 0, NULL, -1, NULL,1);
 }
 
 int planner_plan_turn_diagnostic(llm *llm, const struct tool_registry *tools,
     struct skill_registry *skills, struct policy_engine *policy, const char *prompt,
     planned_action **actions, int *n_actions, char **raw_out, char **err_out,
-    const char *attachments, int *truncated_out, int output_tokens, int *native_end_out, planner_model_diagnostic *diagnostic, int require_completion, char **completion_out, double temperature, const char *effort) {
-    return plan_with(llm,build_catalog_prompt(tools,skills,policy,planner_uses_native_tools(llm)),prompt,actions,n_actions,
-        raw_out,err_out,attachments,truncated_out,output_tokens,tools,policy,native_end_out,diagnostic,require_completion,completion_out,temperature,effort);
+    const char *attachments, int *truncated_out, int output_tokens, int *native_end_out, planner_model_diagnostic *diagnostic, int require_completion, char **completion_out, double temperature, const char *effort,
+    int allow_declaration) {
+    return plan_with(llm,build_catalog_prompt(tools,skills,policy,planner_uses_native_tools(llm),allow_declaration),prompt,actions,n_actions,
+        raw_out,err_out,attachments,truncated_out,output_tokens,tools,policy,native_end_out,diagnostic,require_completion,completion_out,temperature,effort,allow_declaration);
 }
 
 int planner_plan_turn(llm *llm, const struct tool_registry *tools,
@@ -1414,5 +1418,5 @@ int planner_plan_turn(llm *llm, const struct tool_registry *tools,
     planned_action **actions, int *n_actions, char **raw_out, char **err_out,
     const char *attachments, int *truncated_out, int output_tokens, int *native_end_out) {
     return planner_plan_turn_diagnostic(llm,tools,skills,policy,prompt,actions,n_actions,
-        raw_out,err_out,attachments,truncated_out,output_tokens,native_end_out,NULL,0,NULL,-1,NULL);
+        raw_out,err_out,attachments,truncated_out,output_tokens,native_end_out,NULL,0,NULL,-1,NULL,1);
 }

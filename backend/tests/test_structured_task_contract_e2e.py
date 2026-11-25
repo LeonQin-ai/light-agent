@@ -41,9 +41,25 @@ def exercise(protocol,mode,prompt='Verify the requested result.',live_image_rout
         prompt = '整理一个 HTML 报告'
         expected = 'DONE'
         if mode == 'report_scope_recovery':
-            replies = [declare(artifacts=['docs/first-choice.html']), action('file_read', path='tiny'),
-                       declare(artifacts=[html], full_reads=['tiny']), declare(artifacts=['wrong.md']),
-                       declare(artifacts=['other.md']), html_write, html_read, complete]
+            replies = [declare(artifacts=[html], full_reads=['tiny']), action('file_read', path='tiny'),
+                       declare(artifacts=['wrong.md']), html_write, html_read, complete]
+        elif mode in ('report_scope_interleaved', 'report_scope_interleaved_stop'):
+            prompt = '分析一下沙箱的代码流程，并输出一个html分析报告'
+            replies = [declare(artifacts=['sandbox_analysis_report.html']), action('file_read', path='tiny'),
+                       declare(artifacts=[html], full_reads=['tiny']), action('file_read', path='long.dat', max_bytes=32),
+                       declare(artifacts=['sandbox-code-flow-report.html']), action('list_dir', path='.')]
+            if mode == 'report_scope_interleaved_stop':
+                replies += [declare(artifacts=['sandbox-analysis.html'])]
+                expected = 'FAILED'
+            else:
+                replies += [html_write, html_read, complete]
+        elif mode == 'report_scope_undeclared':
+            prompt = '请输出一份 HTML 格式的分析报告'
+            replies = [complete, html_write, html_read, complete]
+        elif mode == 'report_scope_no_output':
+            prompt = '分析一下沙箱的代码流程，并输出一个html分析报告'
+            replies = [complete]
+            expected = 'FAILED'
         elif mode == 'report_scope_fixed':
             acceptance = {'artifacts': [html]}
             replies = [declare(artifacts=['redirect.html']), html_write, html_read, complete]
@@ -186,13 +202,22 @@ def exercise(protocol,mode,prompt='Verify the requested result.',live_image_rout
                 return
             if mode.startswith('declaration_'):
                 declaration_requests.append(request)
-            if mode=='report_scope_recovery' and calls==5:
-                context = json.loads(request)['messages'][-1]['content']
+            if (mode=='report_scope_recovery' and calls==3) or (mode.startswith('report_scope_interleaved') and calls==5):
+                formatted = json.loads(request)
+                context = formatted['messages'][-1]['content']
                 contract = context.split('## Runtime acceptance contract\n', 1)[1].splitlines()[0]
                 required = json.loads(contract)
                 assert [Path(path).name for path in required['artifacts']] == ['report.html'], required
                 assert [Path(path).name for path in required['full_reads']] == ['tiny'], required
-                assert 'Declare one artifact with the requested file extension' in context
+                assert 'Contract declaration is unavailable' in formatted['messages'][0]['content']
+                if protocol=='native':
+                    assert 'declare_task' not in [tool['function']['name'] for tool in formatted['tools']]
+                if mode=='report_scope_recovery':
+                    assert 'Declare one artifact with the requested file extension' in context
+                else:
+                    assert '本次声明未合并，验收合同已锁定' in context
+            if mode=='report_scope_undeclared' and calls==1:
+                assert b'no verified write in this run' in request, request[-2000:]
             if mode=='script_late_contract' and calls==3:
                 assert b'Previous completion was rejected:' not in request
             if mode=='script_budget_readback' and calls==4:
@@ -321,10 +346,20 @@ def exercise(protocol,mode,prompt='Verify the requested result.',live_image_rout
                             assert not (work/'report.any').exists(),task
                     if mode=='full':assert task['tool_calls']==3,task
                     if mode.startswith('report_scope_'):
-                        assert (work/'report.html').read_text(encoding='utf-8') == '<html>Verified report</html>'
-                        assert not (work/'redirect.html').exists() and not (work/'wrong.md').exists()
-                        assert (work/'appendix.md').exists() == (mode=='report_scope_multiple')
-                        assert len(replies) <= calls <= len(replies)+1, (calls, task)
+                        if expected=='DONE':
+                            assert (work/'report.html').read_text(encoding='utf-8') == '<html>Verified report</html>'
+                            assert not (work/'redirect.html').exists() and not (work/'wrong.md').exists()
+                            assert (work/'appendix.md').exists() == (mode=='report_scope_multiple')
+                            assert len(replies) <= calls <= len(replies)+1, (calls, task)
+                        else:
+                            assert not list(work.glob('*.html')), task
+                            if mode=='report_scope_interleaved_stop':
+                                assert calls==len(replies), (calls, task)
+                                assert '累计尝试声明验收合同 4 次' in task['output'], task
+                                assert '当前合同要求 1 个产物' in task['output'], task
+                                assert 'report.html' in task['output'] and 'sandbox-analysis.html' not in task['output'], task
+                            else:
+                                assert 'no verified write in this run' in task['output'], task
                     if mode=='optional':assert task['tool_calls']==1,task
                     if mode.startswith('cache_'):
                         steps=task['steps']
@@ -353,8 +388,12 @@ def exercise(protocol,mode,prompt='Verify the requested result.',live_image_rout
 
 if __name__=='__main__':
     for protocol in ('native', 'legacy'):
-        for mode in ('report_scope_recovery', 'report_scope_fixed', 'report_scope_written', 'report_scope_multiple'):
+        for mode in ('report_scope_recovery', 'report_scope_fixed', 'report_scope_written', 'report_scope_multiple',
+                     'report_scope_interleaved', 'report_scope_interleaved_stop', 'report_scope_undeclared',
+                     'report_scope_no_output'):
             exercise(protocol, mode)
+        exercise(protocol, 'chat', '分析「输出一个html分析报告」为什么失败。')
+        exercise(protocol, 'chat', '不要输出一个 HTML 分析报告，只解释错误。')
     exercise('native','ui_artwork')
     exercise('native','image_history')
     exercise('native','script_late_contract')

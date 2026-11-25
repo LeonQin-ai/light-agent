@@ -18,11 +18,21 @@
 
 </div>
 
-![light-agent 聊天控制台](screenshots/ui.png)
-
 **light-agent 是一个本地优先、模型无关的智能体运行时。** 你可以把它作为桌面助手、命令行工具，或通过 HTTP 接入自己的应用。连接模型、赋予工具，再从记录中查看它调用了什么、修改了什么、最终交付了什么。
 
 核心采用 C11，应用内嵌 Web 控制台。预编译版本无需先搭建 Node.js 或 Python 应用环境；浏览器自动化、Python 技能等扩展则需要各自的运行环境。
+
+## 桌面端演示
+
+![Windows 桌面端实录：DeepSeek 对话、执行进度、Flow 和模型管理](docs/demo/desktop-preview.gif)
+
+动画来自 Windows 桌面端实录。全片展示 DeepSeek 真实对话、Token 统计、任务进度、Flow、定时任务、模型测试，以及 MCP、Skills、插件、策略、会话凭据、IM、记忆、快照、监控、集群和指标的配置入口。[完整功能演示 · 57 秒](docs/demo/feature-tour.mp4)
+
+### 工作区、模型与外观
+
+| 工作区与会话切换 | 模型路由与能力标签 | 主题与背景 |
+|:---:|:---:|:---:|
+| ![展开工作区并切换会话](docs/demo/workspace.gif) | ![查看文生视频、首帧生视频和参考生视频路由](docs/demo/model-routes.gif) | ![从深色切换为海洋主题](docs/demo/appearance.gif) |
 
 ## 你可以用它做什么？
 
@@ -138,21 +148,25 @@ CLI 部署可以显式指定执行目录和状态存储位置：
 
 「文生视频」模式还可以选择百炼可灵或火山方舟 Seedance，以单路由制作整集。
 
-### 桌面端演示
+### 《拾光守灯人》三镜样片
+
+<img src="docs/demo/promo-preview.gif" alt="《拾光守灯人》成片：海崖灯塔、女主角阿澄和亮起的灯塔透镜" width="320">
 
 Windows 桌面端首次制作调用了已配置的三个 HappyHorse 真实模型，用时 4 分 45 秒。内置样片直接使用预写分镜，跳过导演模型调用，R2V 参考图由 `qwen-image-3.0-pro` 生成。为了改善角色衔接，补跑时以阿澄的画面作为首帧，仅新增 1 次视频生成请求。视频下载中断后，沿用原任务 ID 恢复。最终成片长 20.4 秒，分辨率 720 × 1280。
 
-| 功能 | 演示 |
-|---|---|
-| 《拾光守灯人》三镜宣传样片 | [观看成片](docs/demo/happyhorse-promo.mp4) |
-| 桌面端漫剧工房首次制作，从导入到完成 | [观看未剪辑全程录像](docs/demo/manju-desktop.mp4) |
-| 改善主角衔接的补跑过程 | [观看未剪辑全程录像](docs/demo/manju-continuity.mp4) |
-| 对话、执行与桌面主要页面 | [观看剪辑版功能演示](docs/demo/feature-tour.mp4) |
-| 工作区与历史会话切换 | [观看 GIF](docs/demo/workspace.gif) |
-| 模型路由与能力标签 | [观看 GIF](docs/demo/model-routes.gif) |
-| 外观设置 | [观看 GIF](docs/demo/appearance.gif) |
+[带配音成片 · 20 秒](docs/demo/happyhorse-promo.mp4)
 
-功能演示包含 DeepSeek 真实对话、Token 统计和按条目测试模型，也展示多 Agent 与 Flow、角色池、定时任务、MCP、Skills、插件、模型路由、策略、会话凭据授权、IM、记忆、快照、监控、集群、指标和仪表盘。管理类页面演示导航与配置入口。
+### 从导入到剪辑合成
+
+![桌面端选择三种模型、提交三镜分镜并核对导出结果](docs/demo/manju-workshop-preview.gif)
+
+[首次制作全程录像 · 7 分 06 秒](docs/demo/manju-desktop.mp4)
+
+### 锁定主角首帧并恢复下载
+
+![沿用首帧补跑第二镜，视频下载中断后继续原任务并完成合成](docs/demo/manju-continuity-preview.gif)
+
+[主角衔接补跑全程录像 · 5 分 57 秒](docs/demo/manju-continuity.mp4)
 
 ## 架构与设计
 

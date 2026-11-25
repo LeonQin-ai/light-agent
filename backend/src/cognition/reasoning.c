@@ -45,6 +45,9 @@
 #include <stdatomic.h>
 #include "cJSON.h"
 
+#define ACCEPTANCE_DECLARATION_LIMIT 2
+#define ACCEPTANCE_DECLARATION_STOP 4
+
 /* One chat session: isolated conversation history, compaction summary and
  * session notes. Sessions are created on demand by reasoning_run_ex
  * (id NULL or "" = the default shared session, used by every legacy caller). */
@@ -324,8 +327,7 @@ struct reasoning {
     int external_history; /* current request already contains canonical transcript */
     int completion_only; /* reserved final review cannot execute more tools */
     int completion_candidate_seen; /* a complete_task decision already appeared this run (#271) */
-    int acceptance_declares;       /* contract-growing declarations this run (#270) */
-    int acceptance_frozen;         /* oscillation breaker: the contract is final */
+    int acceptance_declares;       /* all declaration attempts, including retries between tool rounds */
     int credential_strict;
     int gate_mode;                 /* 1 = simple mode: evidence gates and reviews are skipped */
     int gate_auto;                 /* choose completion review from runtime evidence */
@@ -594,6 +596,7 @@ static int blocking_failed_tools(reasoning *r) {
 
 static int needs_delivery_review(const reasoning *r) {
     if (r->gate_mode) return 0;
+    if (r->report_format) return 1;
     if (r->gate_auto && r->run_successful_tools > 0 && !r->run_mutated &&
         !r->file_equalities && r->acceptance && !r->acceptance_invalid &&
         cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(r->acceptance,"requires_observation")) &&
@@ -794,6 +797,38 @@ static const char *skip_report_spacing(const char *s) {
     return s;
 }
 
+static int report_subject(const char *noun) {
+    static const char *const subjects[] = {"报告", "分析报告", "分析文档", "流程报告", "审查报告",
+        "代码审查报告", "检视报告", "架构报告", "技术报告", "文档", "report", "document",
+        "analysis report", "technical report", "review report"};
+    for (size_t i = 0; i < sizeof subjects / sizeof *subjects; ++i) {
+        size_t n = strlen(subjects[i]);
+        if (!strncmp(noun, subjects[i], n) && !isalnum((unsigned char)noun[n])) return 1;
+    }
+    return 0;
+}
+
+static int report_production_request(const char *start, const char *quantity) {
+    static const char *const verbs[] = {"整理", "输出", "生成", "创建", "写", "制作", "提供", "给我", "做",
+        "write", "create", "generate", "produce", "deliver", "provide", "draft", "save", "need", "want"};
+    static const char *const negations[] = {"不要", "无需", "不用", "不必", "禁止", "别", "do not", "don't", "never"};
+    const char *end = quantity;
+    while (end > start && (end[-1] == ' ' || end[-1] == '\t')) --end;
+    for (size_t i = 0; i < sizeof verbs / sizeof *verbs; ++i) {
+        size_t n = strlen(verbs[i]);
+        if ((size_t)(end-start) < n || memcmp(end-n,verbs[i],n)) continue;
+        const char *verb = end-n;
+        if (verb > start && isalnum((unsigned char)verb[-1]) && *verb >= 'a' && *verb <= 'z') continue;
+        while (verb > start && (verb[-1] == ' ' || verb[-1] == '\t')) --verb;
+        for (size_t k = 0; k < sizeof negations / sizeof *negations; ++k) {
+            size_t len = strlen(negations[k]);
+            if ((size_t)(verb-start) >= len && !memcmp(verb-len,negations[k],len)) return 0;
+        }
+        return 1;
+    }
+    return 0;
+}
+
 /* An unspecified path is a planning choice only when the user explicitly
  * requests one report in a named format. Other deliverables keep their
  * structured rules, including requests for more than one file. */
@@ -802,26 +837,39 @@ static const char *single_report_format(const char *prompt) {
     static const struct { const char *word, *suffix; } formats[] = {
         {"html", ".html"}, {"pdf", ".pdf"}, {"markdown", ".md"}
     };
+    static const struct { const char *open, *close; } quotes[] = {
+        {"\"", "\""}, {"`", "`"}, {"「", "」"}, {"『", "』"}, {"“", "”"}
+    };
     char *lower = xstrdup(prompt);
     if (!lower) return NULL;
     for (char *p = lower; *p; ++p) *p = (char)tolower((unsigned char)*p);
     const char *format = NULL;
     if (strstr(lower, "另附") || strstr(lower, "外加") || strstr(lower, " and a ") ||
         strstr(lower, " and an ") || strstr(lower, " plus a ")) goto done;
+    const char *close_quote = NULL;
     for (const char *p = lower; *p; ++p) {
+        if (close_quote) {
+            size_t n = strlen(close_quote);
+            if (!strncmp(p,close_quote,n)) { p += n-1; close_quote = NULL; }
+            continue;
+        }
+        for (size_t q = 0; q < sizeof quotes / sizeof *quotes; ++q) {
+            size_t n = strlen(quotes[q].open);
+            if (!strncmp(p,quotes[q].open,n)) { p += n-1; close_quote = quotes[q].close; break; }
+        }
+        if (close_quote) continue;
         for (size_t i = 0; i < sizeof quantities / sizeof *quantities; ++i) {
             size_t n = strlen(quantities[i]);
             if ((i >= 3 && p != lower && isalnum((unsigned char)p[-1])) ||
-                strncmp(p, quantities[i], n)) continue;
+                strncmp(p, quantities[i], n) || !report_production_request(lower,p)) continue;
             const char *type = skip_report_spacing(p + n);
             for (size_t k = 0; k < sizeof formats / sizeof *formats; ++k) {
                 size_t length = strlen(formats[k].word);
                 if (strncmp(type, formats[k].word, length)) continue;
                 const char *noun = skip_report_spacing(type + length);
+                if (!strncmp(noun, "格式", strlen("格式"))) noun = skip_report_spacing(noun + strlen("格式"));
                 if (!strncmp(noun, "的", strlen("的"))) noun = skip_report_spacing(noun + strlen("的"));
-                if (!strncmp(noun, "报告", strlen("报告")) || !strncmp(noun, "文档", strlen("文档")) ||
-                    (!strncmp(noun, "report", 6) && !isalnum((unsigned char)noun[6])) ||
-                    (!strncmp(noun, "document", 8) && !isalnum((unsigned char)noun[8]))) {
+                if (report_subject(noun)) {
                     if (format) { format = NULL; goto done; }
                     format = formats[k].suffix;
                 }
@@ -884,8 +932,10 @@ static cJSON *acceptance_merge_result(reasoning *r,const cJSON *base,const cJSON
                             cJSON_Delete(next);
                             return NULL;
                         }
-                        if (r->report_path_fixed || (old_path && report_has_write_receipt(r, old_path))) {
-                            *problem = "The requested report path already has an explicit requirement or a write receipt. Keep the current path and finish its verification.";
+                        if (r->report_path_fixed || (old_path && (r->completion_candidate_seen ||
+                            r->acceptance_declares >= ACCEPTANCE_DECLARATION_LIMIT ||
+                            report_has_write_receipt(r, old_path)))) {
+                            *problem = "The report path is locked by the current contract or a write receipt. Keep it and finish its verification.";
                             cJSON_Delete(next);
                             return NULL;
                         }
@@ -955,6 +1005,22 @@ static void verify_completion_files(reasoning *r,const char *completion_json){
     }
     cJSON_ArrayForEach(entry,cJSON_GetObjectItemCaseSensitive(r->acceptance,"artifacts"))
         if(!r->file_checks_failed && !run_has_verified_artifact(r,entry->valuestring)){r->file_checks_failed=1;snprintf(r->file_check_error,sizeof(r->file_check_error),"Artifact acceptance requires the file produced and read back in this run: %.200s. Use file_write, or run the producing shell command with the path declared in its outputs array and then file_read the file back.",entry->valuestring);}
+    if (!r->file_checks_failed && r->report_format &&
+        !cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(r->acceptance,"artifacts"))) {
+        int have_report = 0;
+        for (int i = 0; i < r->file_receipts_n && !have_report; ++i)
+            if (report_extension_matches(r->file_receipts[i].path, r->report_format))
+                have_report = run_has_verified_artifact(r, r->file_receipts[i].path);
+        for (int i = 0; i < r->artifact_seen_n && !have_report; ++i)
+            if (report_extension_matches(r->artifact_seen[i].path, r->report_format))
+                have_report = run_has_verified_artifact(r, r->artifact_seen[i].path);
+        if (!have_report) {
+            r->file_checks_failed = 1;
+            snprintf(r->file_check_error,sizeof r->file_check_error,
+                     "The requested %s report has no verified write in this run. Write and verify report%s or the path requested by the user.",
+                     r->report_format,r->report_format);
+        }
+    }
     cJSON_ArrayForEach(entry,cJSON_GetObjectItemCaseSensitive(r->acceptance,"full_reads"))
         if(!r->file_checks_failed && (r->read_tracking_overflow || !full_read_verified(r,entry->valuestring))){r->file_checks_failed=1;snprintf(r->file_check_error,sizeof(r->file_check_error),"Full-read acceptance has not reached contiguous EOF: %.200s",entry->valuestring);}
     if(!r->file_checks_failed)r->file_check_rejections=0;
@@ -2869,7 +2935,9 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
                                  aug ? aug : input, &r->actions, &r->n_actions,
                                  &raw, &plan_err, images,
                                  &r->planner_response_truncated, output_override, &r->planner_native_end_turn, &diagnostic,
-                                 r->completion_review_required,&completion_json,r->planner_temperature,r->planner_effort);
+                                 r->completion_review_required,&completion_json,r->planner_temperature,r->planner_effort,
+                                 !r->gate_mode && !r->completion_only && !r->completion_candidate_seen &&
+                                 r->acceptance_declares < ACCEPTANCE_DECLARATION_LIMIT);
     free(images);
     if (rc == 0 && !r->planner_response_truncated) {
         cJSON *image;
@@ -2888,11 +2956,13 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
         } else if(r->gate_mode) {
             /* Simple mode: the user request alone defines the task. Model
              * contracts are ignored — no evidence gates run in this mode. */
-        } else if(r->acceptance_frozen) {
-            round_log_append(r,"[system] 验收合同已锁定（本任务中合同已反复变更）；本轮声明未合并。请按当前合同交付，或用 blocked 说明真实受阻项。");
+        } else if(r->acceptance_declares >= ACCEPTANCE_DECLARATION_LIMIT) {
+            ++r->acceptance_declares;
+            round_log_append(r,"[system] 本次声明未合并，验收合同已锁定。立即调用完成当前交付所需的工具，或用 complete_task(status=blocked) 说明具体受阻项。不要再次声明。");
         } else {
             const char *problem;
             cJSON *next = acceptance_merge_result(r,r->acceptance,acc,&problem);
+            ++r->acceptance_declares;
             if (!next) {
                 rc = -1;
                 free(plan_err);
@@ -2908,11 +2978,9 @@ static int h_reason(state_machine *sm, void *ud, const char *input, char **out) 
                     r->acceptance = next;
                     r->acceptance_invalid = 0;
                     r->acceptance_error = NULL;
-                    round_log_append(r,"[system] 验收合同已记录。");
-                    if (changed && ++r->acceptance_declares >= 3) {
-                        r->acceptance_frozen = 1;
-                        round_log_append(r,"[system] 验收合同在本任务中已多次变更，已锁定为当前版本；后续声明不再合并。请完成当前合同，或用 blocked 说明真实受阻项。");
-                    }
+                    round_log_append(r,r->acceptance_declares == 1 ?
+                        "[system] 验收合同已记录。请立即调用所需工具执行交付；只有确需纠正合同才再次声明。" :
+                        "[system] 验收合同已记录并锁定。请立即按当前合同执行交付；后续声明不再合并。");
                 }
             }
         }
@@ -5775,7 +5843,6 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
      * gate_mode is NOT reset here — it was just parsed from llm_config. */
     r->completion_candidate_seen = 0;
     r->acceptance_declares = 0;
-    r->acceptance_frozen = 0;
     r->probe_seen_n = 0;
     r->script_timeouts = 0;
     r->timeout_script_nudged = 0;
@@ -5842,7 +5909,6 @@ restart_planning:
              * governance restarts from a clean slate for the revised goal. */
             r->completion_candidate_seen = 0;
             r->acceptance_declares = 0;
-            r->acceptance_frozen = 0;
             r->probe_seen_n = 0;
             r->script_timeouts = 0;
             r->timeout_script_nudged = 0;
@@ -5885,7 +5951,8 @@ restart_planning:
             /* A declaration changes the contract, but produces no execution
              * evidence. Allow the planner to recover from a duplicate while
              * bounding declaration-only loops independently of tool stalls. */
-            if (++contract_rounds_without_progress >= 3 || r->round_idx >= r->max_rounds) {
+            if (++contract_rounds_without_progress >= 3 || r->round_idx >= r->max_rounds ||
+                r->acceptance_declares >= ACCEPTANCE_DECLARATION_STOP) {
                 contract_stopped = unfinished = 1;
                 st = ST_FAILED;
                 break;
@@ -6282,7 +6349,7 @@ restart_planning:
                     (r->abort_parent && r->abort_parent->cancel_flag);
     int timed_out = !cancelled && run_aborted(r);
     if(!cancelled&&!timed_out&&!contract_stopped&&!r->gate_mode&&
-       (r->file_equalities||r->acceptance||r->acceptance_invalid))verify_completion_files(r,NULL);
+       (r->file_equalities||r->acceptance||r->acceptance_invalid||r->report_format))verify_completion_files(r,NULL);
     if(stalled || synthesized || fail_aborted || r->tool_fail_aborted ||
        r->file_checks_failed || r->acceptance_invalid ||
        (!r->gate_mode && required_pending_reads(r)) ||
@@ -6311,8 +6378,12 @@ restart_planning:
         strbuf_append(&out, "任务未完成：尚未完成请求的阅读、操作或验证，当前结果仅为部分进展。");
         int explained=0;
         if (contract_stopped) {
-            strbuf_appendf(&out,"\n原因：模型在没有新增工具证据期间有 %d 轮只声明验收合同，尚未提交可验证的执行结果，已停止规划。",
-                           contract_rounds_without_progress);
+            if (r->acceptance_declares >= ACCEPTANCE_DECLARATION_STOP)
+                strbuf_appendf(&out,"\n原因：本轮累计尝试声明验收合同 %d 次。合同锁定后仍在重复声明，已停止规划。",
+                               r->acceptance_declares);
+            else
+                strbuf_appendf(&out,"\n原因：模型在没有新增工具证据期间有 %d 轮只声明验收合同，尚未提交可验证的执行结果，已停止规划。",
+                               contract_rounds_without_progress);
             explained = 1;
         }
         const cJSON *artifacts = cJSON_GetObjectItemCaseSensitive(r->acceptance,"artifacts");

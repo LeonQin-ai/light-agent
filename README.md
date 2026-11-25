@@ -18,11 +18,21 @@ Run tools, coordinate agents, and inspect what happened — from a C11 core with
 
 </div>
 
-![light-agent chat console](screenshots/ui.png)
-
 **light-agent is a local-first, model-agnostic agent runtime.** Use it as a desktop assistant, a CLI, or an HTTP service. Connect a model, give it tools, and follow tasks through model requests, commands, file changes, and final results.
 
 The core is written in C11 and embeds its web console. Prebuilt packages do not require a Node.js or Python application stack; extensions such as browser automation and Python skills bring their own runtimes.
+
+## Desktop demos
+
+![Windows desktop recording of live DeepSeek chat, task progress, Flow, and model management](docs/demo/desktop-preview.gif)
+
+The Windows desktop recording shows a live DeepSeek chat, token counts, task progress, Flow, scheduled tasks, and a model test. It also shows the configuration screens for MCP, Skills, plugins, policies, chat credentials, IM, memory, snapshots, monitoring, cluster nodes, and metrics. [Full feature tour · 57 seconds](docs/demo/feature-tour.mp4)
+
+### Workspaces, models, and appearance
+
+| Workspaces and conversations | Model routing and capabilities | Themes and backgrounds |
+|:---:|:---:|:---:|
+| ![Expand a workspace and switch conversations](docs/demo/workspace.gif) | ![Inspect the three HappyHorse route types](docs/demo/model-routes.gif) | ![Switch from the Dark theme to Ocean](docs/demo/appearance.gif) |
 
 ## What can you build with it?
 
@@ -140,21 +150,25 @@ The selected image route can draw a first frame and front, side, and back charac
 
 The **文生视频** (Text-to-video) option also supports single-route production with Alibaba Cloud Kling or Volcano Engine Seedance.
 
-### Desktop demos
+### The Lighthouse Keeper
+
+<img src="docs/demo/promo-preview.gif" alt="The Lighthouse Keeper, from the cliffside lighthouse to A-Cheng lighting its lens" width="320">
 
 The Windows desktop app completed the first production run in 4 min 45 s using all three configured HappyHorse models. The built-in sample uses a prepared storyboard and skips the director model call. `qwen-image-3.0-pro` generated the R2V reference sheet. A continuity rerun used a first frame of A-Cheng and made one new video generation request. An interrupted download recovered using the existing provider task ID. The finished promo runs for 20.4 s at 720 × 1280.
 
-| Demo | Recording |
-|---|---|
-| *The Lighthouse Keeper*, three HappyHorse shots | [Watch the finished comic](docs/demo/happyhorse-promo.mp4) |
-| First Comic Workshop run, from import through completion | [Watch the uncut desktop recording](docs/demo/manju-desktop.mp4) |
-| Character continuity rerun | [Watch the uncut desktop recording](docs/demo/manju-continuity.mp4) |
-| Chat, execution, and desktop feature walkthrough | [Watch the edited tour](docs/demo/feature-tour.mp4) |
-| Workspace and conversation switching | [Watch the GIF](docs/demo/workspace.gif) |
-| Model routing and capability labels | [Watch the GIF](docs/demo/model-routes.gif) |
-| Appearance settings | [Watch the GIF](docs/demo/appearance.gif) |
+[Finished comic with voiceover · 20 seconds](docs/demo/happyhorse-promo.mp4)
 
-The feature tour includes a live DeepSeek chat with token counts and a per-route model test. It also walks through Agent & Flow, role management, scheduled tasks, MCP, Skills, plugins, model routes, policy, chat credential authorization, messaging, memory, snapshots, monitoring, clustering, metrics, and the dashboard. Administrative screens demonstrate navigation and configuration.
+### From storyboard import to final edit
+
+![Select all three video models, submit the storyboard, and verify the exported comic](docs/demo/manju-workshop-preview.gif)
+
+[Uncut recording of the first run · 7 min 06 s](docs/demo/manju-desktop.mp4)
+
+### Match the character and resume the download
+
+![Rerun the second shot with a fixed first frame and resume the existing provider task after interruption](docs/demo/manju-continuity-preview.gif)
+
+[Uncut recording of the continuity rerun · 5 min 57 s](docs/demo/manju-continuity.mp4)
 
 ## Architecture
 
