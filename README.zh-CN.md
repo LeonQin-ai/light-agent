@@ -28,6 +28,14 @@
 
 以下作品由 light-agent 漫剧流程生成，带有中文配音和字幕。
 
+#### 《铜铃过山》· 少年屠龙
+
+怕雷的少年阿铃带着祖母留下的缺口铜铃上山。第一次交手败北后，他再次走进石峡，迎战威胁村庄的恶龙。
+
+剧本由 light-agent 中的 DeepSeek 创作。漫剧工房将 32 个分镜的 Qwen 画面、中文配音和字幕合成为一部短片。[下载 720p MP4 · 3:30](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/copper-bell-crossing.mp4) · [可导入的完整分镜](docs/demo/copper-bell-storyboard.json)
+
+https://github.com/user-attachments/assets/e730a145-ff95-4e96-83c2-07821d64d0ff
+
 #### 《拾光守灯人》
 
 守灯人阿澄点亮海崖灯塔。三个镜头分别使用文生视频、首帧生视频和参考生视频。[下载 MP4 · 20.4 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/happyhorse-promo.mp4)
@@ -39,40 +47,6 @@ https://github.com/user-attachments/assets/5600a05c-49d3-4cf0-95be-8f0e179a9b14
 园艺机器人芽芽种下一颗发光的种子。屋顶空镜由文生视频生成，播种和发芽两镜共用一套角色三视图。[下载 MP4 · 20.6 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/starlight-greenhouse.mp4)
 
 https://github.com/user-attachments/assets/8a635a60-4224-406e-9ab2-674dcd1a0ed4
-
-#### 《噜噜和噜妹：雨后的那盏灯》
-
-系青绿围巾的小水獭噜噜和披浅紫斗篷的垂耳兔噜妹捡到一盏灯，沿着木栈道走向温室。五集在 light-agent 中一次导入，正片由 HappyHorse 使用同一套角色参考图生成。[噜噜设定图](docs/demo/lulu-character.png) · [噜妹设定图](docs/demo/lumei-character.png)
-
-##### 第 1 集 · 果园里的灯
-
-噜噜捡起一盏小灯，噜妹指向山坡上的温室。 [下载 MP4 · 13.35 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep01.mp4)
-
-https://github.com/user-attachments/assets/86ef320c-26c4-44dc-b2af-901ae9b8dfcd
-
-##### 第 2 集 · 借一片叶子
-
-两人用一片大叶子挡雨，木栈道却被水沟截断。 [下载 MP4 · 13.45 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep02.mp4)
-
-https://github.com/user-attachments/assets/d2b97d5e-6751-4a17-a2f7-72ff911d14bb
-
-##### 第 3 集 · 把灯送过溪
-
-他们把绿叶当小船，将灯送到对岸。 [下载 MP4 · 13.00 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep03.mp4)
-
-https://github.com/user-attachments/assets/e732f67c-a8ed-40e6-91f7-bfd47bc04775
-
-##### 第 4 集 · 温室点灯
-
-小灯挂上温室门口，星形小窗透出第一束暖光。 [下载 MP4 · 13.70 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep04.mp4)
-
-https://github.com/user-attachments/assets/1eeaffee-fbb8-4c2b-a572-19fdfdb689e8
-
-##### 第 5 集 · 雨后的那盏灯
-
-雨停了，灯照亮两人回家的路。 [下载 MP4 · 13.90 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep05.mp4)
-
-https://github.com/user-attachments/assets/dd034a07-2cde-4999-85ed-2517776d7516
 
 ### 2. 桌面对话与执行进度
 

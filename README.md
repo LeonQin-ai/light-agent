@@ -28,6 +28,14 @@ The core is written in C11 and embeds its web console. Prebuilt packages do not 
 
 These demos were produced with the light-agent comic workflow and include Chinese narration and subtitles.
 
+#### The Bell Beyond the Mountain · Dragon-Slayer
+
+A boy who fears thunder carries his grandmother’s cracked brass bell into the mountains. After his first defeat, the sound of the bell guides him back to face the dragon threatening his village.
+
+DeepSeek wrote the story in light-agent, and Comic Workshop turned 32 storyboard shots into a single film with Qwen artwork, Chinese voices, and subtitles. [Download 720p MP4 · 3:30](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/copper-bell-crossing.mp4) · [Importable storyboard](docs/demo/copper-bell-storyboard.json)
+
+https://github.com/user-attachments/assets/e730a145-ff95-4e96-83c2-07821d64d0ff
+
 #### The Lighthouse Keeper
 
 A-Cheng lights the lighthouse on a sea cliff. The three shots use text-to-video, first-frame animation, and reference-to-video. [Download MP4 · 20.4 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/happyhorse-promo.mp4)
@@ -39,40 +47,6 @@ https://github.com/user-attachments/assets/5600a05c-49d3-4cf0-95be-8f0e179a9b14
 Yaya, a greenhouse robot, plants a glowing seed. The establishing shot uses text-to-video. The planting and sprouting shots share a single character turnaround sheet. [Download MP4 · 20.6 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/starlight-greenhouse.mp4)
 
 https://github.com/user-attachments/assets/8a635a60-4224-406e-9ab2-674dcd1a0ed4
-
-#### Lulu and Lumei: The Light After the Rain
-
-Lulu, a little otter in a teal scarf, and Lumei, a lop-eared bunny in a lilac cape, find a lantern that leads them to a greenhouse. One light-agent run produced all five episodes with HappyHorse using the same two reference images. [Lulu reference](docs/demo/lulu-character.png) · [Lumei reference](docs/demo/lumei-character.png)
-
-##### Episode 1 · The Lantern in the Orchard
-
-Lulu finds a little lantern. Lumei points to the greenhouse on the hill. [Download MP4 · 13.35 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep01.mp4)
-
-https://github.com/user-attachments/assets/86ef320c-26c4-44dc-b2af-901ae9b8dfcd
-
-##### Episode 2 · A Leaf for Two
-
-They share a leaf for shelter when a stream cuts across the path. [Download MP4 · 13.45 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep02.mp4)
-
-https://github.com/user-attachments/assets/d2b97d5e-6751-4a17-a2f7-72ff911d14bb
-
-##### Episode 3 · Across the Stream
-
-They float the lantern across on their leaf. [Download MP4 · 13.00 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep03.mp4)
-
-https://github.com/user-attachments/assets/e732f67c-a8ed-40e6-91f7-bfd47bc04775
-
-##### Episode 4 · A Light in the Greenhouse
-
-They hang the lantern by the greenhouse, and warm light shines through its star-shaped window. [Download MP4 · 13.70 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep04.mp4)
-
-https://github.com/user-attachments/assets/1eeaffee-fbb8-4c2b-a572-19fdfdb689e8
-
-##### Episode 5 · The Light After the Rain
-
-The rain stops, and the lantern lights their way home. [Download MP4 · 13.90 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep05.mp4)
-
-https://github.com/user-attachments/assets/dd034a07-2cde-4999-85ed-2517776d7516
 
 ### 2. Desktop chat and task progress
 
