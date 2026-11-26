@@ -32,9 +32,9 @@ These demos were produced with the light-agent comic workflow and include Chines
 
 A boy who fears thunder carries his grandmother’s cracked brass bell into the mountains. After his first defeat, the sound of the bell guides him back to face the dragon threatening his village.
 
-DeepSeek wrote the story in light-agent, and Comic Workshop turned 32 storyboard shots into a single film with Qwen artwork, Chinese voices, and subtitles. [Download 720p MP4 · 3:30](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/copper-bell-crossing.mp4) · [Importable storyboard](docs/demo/copper-bell-storyboard.json)
+DeepSeek wrote the story in light-agent. Comic Workshop used the Qwen storyboard as first frames for 43 four-second HappyHorse videos. The edit retimes ten shots with motion interpolation and carries the original Chinese voices and timed subtitles. [Download 720p MP4 · 3:32](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/copper-bell-crossing.mp4) · [Original storyboard](docs/demo/copper-bell-storyboard.json)
 
-https://github.com/user-attachments/assets/e730a145-ff95-4e96-83c2-07821d64d0ff
+https://github.com/user-attachments/assets/1529e5c8-7910-416b-a8f5-fa1e8aa3bb48
 
 #### The Lighthouse Keeper
 

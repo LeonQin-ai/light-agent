@@ -32,9 +32,9 @@
 
 怕雷的少年阿铃带着祖母留下的缺口铜铃上山。第一次交手败北后，他再次走进石峡，迎战威胁村庄的恶龙。
 
-剧本由 light-agent 中的 DeepSeek 创作。漫剧工房将 32 个分镜的 Qwen 画面、中文配音和字幕合成为一部短片。[下载 720p MP4 · 3:30](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/copper-bell-crossing.mp4) · [可导入的完整分镜](docs/demo/copper-bell-storyboard.json)
+剧本由 light-agent 中的 DeepSeek 创作。漫剧工房以 Qwen 分镜图为首帧，用 HappyHorse 生成 43 段 4 秒视频，其中 10 处通过慢镜和补帧衔接。成片保留原来的中文配音和按时间轴对齐的字幕。 [下载 720p MP4 · 3:32](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/copper-bell-crossing.mp4) · [原始故事分镜](docs/demo/copper-bell-storyboard.json)
 
-https://github.com/user-attachments/assets/e730a145-ff95-4e96-83c2-07821d64d0ff
+https://github.com/user-attachments/assets/1529e5c8-7910-416b-a8f5-fa1e8aa3bb48
 
 #### 《拾光守灯人》
 
