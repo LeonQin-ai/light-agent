@@ -121,7 +121,8 @@ class Provider(http.server.BaseHTTPRequestHandler):
             with self.server.lock:
                 poll_count = self.server.polls[task_id] + 1
                 self.server.polls[task_id] = poll_count
-            if poll_count == 1:
+                pending = poll_count == 1 and self.server.defer_completion
+            if pending:
                 self.reply({"status": "running"} if ark else {"output": {"task_status": "RUNNING"}})
             else:
                 url = f"http://127.0.0.1:{self.server.server_port}/result/{task_id}"
@@ -153,13 +154,15 @@ def terminal(base, flow, endpoint="/v1/flows"):
 
 def wait_task(base, task_id):
     deadline = time.monotonic() + 60
+    last_task = None
     while time.monotonic() < deadline:
         status, task = request(base, f"/v1/tasks/{task_id}")
         assert status == 200, (status, task)
         if task["status"] not in ("RUNNING", "QUEUED"):
             return task
+        last_task = {"status": task["status"], "nodes": task.get("flow_nodes", [])}
         time.sleep(0.1)
-    raise RuntimeError("Video flow did not finish")
+    raise RuntimeError(f"Video flow {task_id} did not finish: {last_task}")
 
 
 def check_flow(base, provider, work):
@@ -289,6 +292,9 @@ def check_episode_batch(base, provider, work):
 
     with provider.lock:
         before = len(provider.reference_inputs)
+        # Earlier cases verify polling pending jobs. Finish on the first poll
+        # here so five dependent episodes do not accumulate real poll delays.
+        provider.defer_completion = False
     # request decodes the entire HTTP response as one JSON document.
     status, started = request(base, endpoint, payload)
     assert status == 200 and "error" not in started, (status, started)
@@ -334,6 +340,7 @@ def main():
         provider.reference_inputs = []
         provider.durations = collections.Counter()
         provider.polls = collections.Counter()
+        provider.defer_completion = True
         provider.fail_download = False
         provider.cut_download = False
         threading.Thread(target=provider.serve_forever, daemon=True).start()

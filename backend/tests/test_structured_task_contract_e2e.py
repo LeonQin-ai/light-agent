@@ -270,7 +270,8 @@ def exercise(protocol,mode,prompt='Verify the requested result.',live_image_rout
                     # The rollover fixture performs 288+ single-file writes; under
                     # AddressSanitizer on a shared runner that can exceed two
                     # minutes even though the task itself makes steady progress.
-                    deadline=time.monotonic()+(240 if mode.startswith('rollover') or live_image_route else 25)
+                    rollover = mode.startswith('rollover')
+                    deadline=time.monotonic()+(240 if rollover or live_image_route else 25)
                     for _ in range(150):
                         try:api('/v1/scheduler');break
                         except OSError:assert proc.poll() is None;time.sleep(.05)
@@ -286,10 +287,21 @@ def exercise(protocol,mode,prompt='Verify the requested result.',live_image_rout
                         body['acceptance']={'requires_observation':True}
                     if acceptance is not None:body['acceptance']=acceptance
                     tid=api('/v1/chat',body)['id']
-                    while True:
-                        task=api(f'/v1/tasks/{tid}')
-                        if task['status'] not in ('RUNNING','QUEUED'):break
-                        assert time.monotonic()<deadline,task;time.sleep(.02)
+                    task = None
+                    while time.monotonic() < deadline:
+                        try:
+                            task = api(f'/v1/tasks/{tid}')
+                        except TimeoutError:
+                            # The ASAN rollover worker can briefly delay a progress
+                            # snapshot while publishing a batch of tool results.
+                            if not rollover or proc.poll() is not None:
+                                raise
+                        else:
+                            if task['status'] not in ('RUNNING', 'QUEUED'):
+                                break
+                        time.sleep(.2 if rollover else .02)
+                    else:
+                        raise AssertionError((protocol, mode, 'task deadline exceeded', task))
                     assert task['status']==expected,(protocol,mode,task)
                     assert calls<=(20 if mode.startswith('rollover') else 16 if mode=='baseline_capacity' else 12 if mode in ('batch50','cycle_complete','cycle_missing') else 10),(mode,calls,task)
                     if expected=='DONE':

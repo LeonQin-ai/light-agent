@@ -9649,6 +9649,14 @@ static void test_manju_import(void) {
     cJSON_Delete(j);
 
     section("manju import five storyboards with shared character references");
+    /* Cancellation is asynchronous. Keep this batch independent of the prior
+     * import, whose second episode may still be shutting down. */
+    const char *batch_workspace = "state-test/manju-import/five-episode-workspace";
+    CHECK(fs_mkdirs(batch_workspace) == 0);
+    char registration[128];
+    snprintf(registration, sizeof(registration), "{\"path\":\"%s\"}", batch_workspace);
+    j = api_request_json(18233, "POST", "/v1/workspaces", registration, 200);
+    cJSON_Delete(j);
     j = api_request_json(18233, "POST", "/v1/routes",
         "{\"name\":\"batch-video\",\"provider\":\"openai\",\"model\":\"happyhorse-1.1-r2v\","
         "\"base_url\":\"http://127.0.0.1:1\",\"api_key\":\"fixture\"}", 200);
@@ -9658,14 +9666,19 @@ static void test_manju_import(void) {
         "\"shots\":[{\"kind\":\"narration\",\"text\":\"打开航海日记。\",\"character_ids\":[\"lulu\"]}]";
     strbuf payload;
     strbuf_init(&payload);
-    strbuf_append(&payload, "{\"title\":\"航海日记\",\"all_episodes\":true,\"video_route\":\"batch-video\","
+    strbuf_appendf(&payload, "{\"workspace\":\"%s\",\"title\":\"航海日记\","
+        "\"all_episodes\":true,\"video_route\":\"batch-video\","
         "\"character_references\":[{\"name\":\"噜噜\",\"data_url\":\"data:image/png;base64,"
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQCT4CAAHCATTzUQtLAAAAAElFTkSuQmCC\"}],"
-        "\"storyboards\":[");
+        "\"storyboards\":[", batch_workspace);
     for (int i = 1; i <= 5; i++)
         strbuf_appendf(&payload, "%s{\"title\":\"第%d集\",%s}", i == 1 ? "" : ",", i, board_fields);
     strbuf_append(&payload, "]}");
-    CHECK(payload.buf && raw_http_request(18233, "POST", "/v1/manju/import", payload.buf, &r) == 0 && r.status == 200);
+    memset(&r, 0, sizeof(r));
+    int imported = payload.buf && raw_http_request(18233, "POST", "/v1/manju/import", payload.buf, &r) == 0;
+    if (imported && r.status != 200)
+        printf("  Batch import: HTTP %d: %.200s\n", r.status, r.body);
+    CHECK(imported && r.status == 200);
     strbuf_free(&payload);
     j = cJSON_ParseWithOpts(r.body, NULL, 1);
     CHECK(j && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j, "all_episodes")));
