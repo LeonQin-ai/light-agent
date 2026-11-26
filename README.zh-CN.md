@@ -42,37 +42,37 @@ https://github.com/user-attachments/assets/8a635a60-4224-406e-9ab2-674dcd1a0ed4
 
 #### 《噜噜和噜妹：雨后的那盏灯》
 
-一次导入五集分镜，五集共用两张角色参考图。正片镜头使用 HappyHorse 参考生视频，故事沿着同一盏小灯展开。
+系青绿围巾的小水獭噜噜和披浅紫斗篷的垂耳兔噜妹捡到一盏灯，沿着木栈道走向温室。五集在 light-agent 中一次导入，正片由 HappyHorse 使用同一套角色参考图生成。[噜噜设定图](docs/demo/lulu-character.png) · [噜妹设定图](docs/demo/lumei-character.png)
 
 ##### 第 1 集 · 果园里的灯
 
-噜噜捡起一盏没亮的小灯，噜妹指向山坡上的温室。 [下载 MP4 · 13.35 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep01.mp4)
+噜噜捡起一盏小灯，噜妹指向山坡上的温室。 [下载 MP4 · 13.35 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep01.mp4)
 
-https://github.com/user-attachments/assets/07d3ebe1-3320-4f2e-9b2d-f1feb562c700
+https://github.com/user-attachments/assets/86ef320c-26c4-44dc-b2af-901ae9b8dfcd
 
 ##### 第 2 集 · 借一片叶子
 
 两人用一片大叶子挡雨，木栈道却被水沟截断。 [下载 MP4 · 13.45 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep02.mp4)
 
-https://github.com/user-attachments/assets/0fd884dd-9d68-49ae-8155-3d12d4c68e1c
+https://github.com/user-attachments/assets/d2b97d5e-6751-4a17-a2f7-72ff911d14bb
 
 ##### 第 3 集 · 把灯送过溪
 
 他们把绿叶当小船，将灯送到对岸。 [下载 MP4 · 13.00 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep03.mp4)
 
-https://github.com/user-attachments/assets/9f25fceb-84d2-48f5-87ab-3b23794f0874
+https://github.com/user-attachments/assets/e732f67c-a8ed-40e6-91f7-bfd47bc04775
 
 ##### 第 4 集 · 温室点灯
 
 小灯挂上温室门口，星形小窗透出第一束暖光。 [下载 MP4 · 13.70 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep04.mp4)
 
-https://github.com/user-attachments/assets/00e86d32-d390-47f3-9f15-ca5e009b68e3
+https://github.com/user-attachments/assets/1eeaffee-fbb8-4c2b-a572-19fdfdb689e8
 
 ##### 第 5 集 · 雨后的那盏灯
 
 雨停了，灯照亮两人回家的路。 [下载 MP4 · 13.90 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep05.mp4)
 
-https://github.com/user-attachments/assets/3cc78b78-0631-458d-9467-0c74d7e41448
+https://github.com/user-attachments/assets/dd034a07-2cde-4999-85ed-2517776d7516
 
 ### 2. 桌面对话与执行进度
 
