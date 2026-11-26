@@ -14,7 +14,7 @@ int manju_paint_episode(router *routes, const char *route_name,
                         void *context, char **result);
 
 int manju_character_views(router *routes, const char *route_name, const char *workspace,
-                          int episode, int (*abort_check)(void *),
+                          int episode, const char *reference_set, int (*abort_check)(void *),
                           manju_paint_progress progress, void *context, char **result);
 
 /* Keep the same role descriptions in still-image and motion prompts. */

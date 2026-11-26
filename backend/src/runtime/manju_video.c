@@ -3,6 +3,7 @@
 #endif
 #include "runtime/manju_video.h"
 #include "runtime/manju_paint.h"
+#include "runtime/manju_references.h"
 #include "infra/util.h"
 #include "llm/video.h"
 #include "llm/image.h"
@@ -322,7 +323,23 @@ done:
     return out;
 }
 
-static int clip_media(clip *entry, int kind, const cJSON *shot, const cJSON *assets,
+static const cJSON *cast_member(const cJSON *board, const char *id) {
+    const cJSON *cast = cJSON_GetObjectItemCaseSensitive(board, "characters"), *character;
+    cJSON_ArrayForEach(character, cast) {
+        const char *key = field(character, "id");
+        if (id && key && !strcmp(id, key)) return character;
+    }
+    return NULL;
+}
+
+static int shot_has_uploaded_references(const cJSON *board, const cJSON *shot, const cJSON *references) {
+    const cJSON *id;
+    cJSON_ArrayForEach(id, cJSON_GetObjectItemCaseSensitive(shot, "character_ids"))
+        if (manju_references_cover(references, cast_member(board, cJSON_GetStringValue(id)))) return 1;
+    return 0;
+}
+
+static int clip_media(clip *entry, int kind, const cJSON *shot, const cJSON *assets, const cJSON *references,
                       const char *root, const char *episode_dir, const cJSON *board,
                       const char *visual) {
     if (kind == LLM_VIDEO_TEXT) return 0;
@@ -343,6 +360,7 @@ static int clip_media(clip *entry, int kind, const cJSON *shot, const cJSON *ass
         }
         return 0;
     }
+    const char *names[9] = {0};
     const cJSON *explicit_refs = cJSON_GetObjectItemCaseSensitive(shot, "reference_images");
     if (explicit_refs) {
         if (!cJSON_IsArray(explicit_refs) || cJSON_GetArraySize(explicit_refs) > 9) return -1;
@@ -358,6 +376,27 @@ static int clip_media(clip *entry, int kind, const cJSON *shot, const cJSON *ass
         const cJSON *id;
         cJSON_ArrayForEach(id, cJSON_GetObjectItemCaseSensitive(shot, "character_ids")) {
             const char *wanted = cJSON_GetStringValue(id);
+            const cJSON *character = cast_member(board, wanted);
+            const char *name = field(character, "name");
+            int uploaded = 0;
+            const cJSON *reference;
+            cJSON_ArrayForEach(reference, references) {
+                if (!manju_reference_matches(reference, character)) continue;
+                uploaded = 1;
+                char *path = media_path(root, root, field(reference, "path"));
+                if (!path) return -1;
+                int seen = 0;
+                for (size_t n = 0; n < entry->media_count; n++)
+                    if (names[n] == name && !strcmp(entry->media[n], path)) seen = 1;
+                if (seen || entry->media_count >= 9) {
+                    free(path);
+                    if (seen) continue;
+                    return -1;
+                }
+                names[entry->media_count] = name;
+                entry->media[entry->media_count++] = path;
+            }
+            if (uploaded) continue;
             const cJSON *asset;
             cJSON_ArrayForEach(asset, cJSON_GetObjectItemCaseSensitive(assets, "characters")) {
                 const char *key = field(asset, "id");
@@ -365,6 +404,7 @@ static int clip_media(clip *entry, int kind, const cJSON *shot, const cJSON *ass
                 if (entry->media_count >= 9) return -1;
                 char *path = media_path(root, characters, field(asset, "file"));
                 if (!path) return -1;
+                names[entry->media_count] = name ? name : field(asset, "name");
                 entry->media[entry->media_count++] = path;
                 break;
             }
@@ -374,9 +414,16 @@ static int clip_media(clip *entry, int kind, const cJSON *shot, const cJSON *ass
     strbuf linked;
     strbuf_init(&linked);
     strbuf_append(&linked, entry->prompt);
-    for (size_t i = 0; i < entry->media_count; i++)
-        strbuf_appendf(&linked, "\n[Image %zu] 是依次出现的角色或场景参考，保持其造型、颜色和典型细节。"
-                               "若参考为三视图，这是同一角色的三个角度，画面中只出现一个该角色。", i + 1);
+    for (size_t i = 0; i < entry->media_count; i++) {
+        if (!references) strbuf_appendf(&linked,
+            "\n[Image %zu] 是依次出现的角色或场景参考，保持其造型、颜色和典型细节。"
+            "若参考为三视图，这是同一角色的三个角度，画面中只出现一个该角色。", i + 1);
+        else if (names[i]) strbuf_appendf(&linked, "\n[Image %zu] 对应角色「%s」。", i + 1, names[i]);
+        else strbuf_appendf(&linked, "\n[Image %zu] 是依次出现的角色或场景参考。", i + 1);
+    }
+    if (references) strbuf_append(&linked, "\n按各参考图保持造型、颜色和典型细节。三视图是同一角色的三个角度。"
+                           "每个角色只出现一次，不交换不同角色的造型。");
+    if (linked.len > 7500) { strbuf_free(&linked); return -1; }
     char *prompt = strbuf_detach(&linked);
     if (!prompt) return -1;
     free(entry->prompt);
@@ -386,11 +433,12 @@ static int clip_media(clip *entry, int kind, const cJSON *shot, const cJSON *ass
 
 static int video_episode(router *routes, const char *route_name, const char *const names[3],
                          const char *image_route, const char *workspace, int episode,
-                         int seconds, int (*abort_check)(void *), manju_video_progress progress,
+                         int seconds, const char *reference_set, int use_generated_references,
+                         int (*abort_check)(void *), manju_video_progress progress,
                          void *context, char **result) {
     char relative[64], directory[VIDEO_PATH_CAP], path[VIDEO_PATH_CAP];
     char *root = NULL, *canonical_directory = NULL, *text = NULL, *manifest = NULL;
-    cJSON *board = NULL, *doc = NULL, *assets = NULL;
+    cJSON *board = NULL, *doc = NULL, *assets = NULL, *references = NULL;
     clip_run run = {.seconds = seconds, .routes = routes, .image_route = image_route,
                     .abort_check = abort_check, .progress = progress, .context = context};
     const char *error = "无法准备视频分镜";
@@ -428,8 +476,15 @@ static int video_episode(router *routes, const char *route_name, const char *con
         error = "shots.json 缺少有效分镜";
         goto done;
     }
+    if (reference_set && *reference_set) {
+        references = manju_references_load(root, reference_set);
+        if (!references || !manju_references_resolve(references, board)) {
+            error = "无法读取人物参考图，或参考图名称对应多名角色";
+            goto done;
+        }
+    }
     path_join(path, sizeof path, episode_dir, "characters/characters.json");
-    if (inside(root, path)) {
+    if ((!references || use_generated_references) && inside(root, path)) {
         size_t asset_bytes = 0;
         int extra = 0;
         char *json = fs_read_file_slice(path, 0, 512 * 1024, &asset_bytes, &extra);
@@ -463,9 +518,12 @@ static int video_episode(router *routes, const char *route_name, const char *con
             else if (cJSON_GetObjectItemCaseSensitive(shot, "reference_images") ||
                      (assets && cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(shot, "character_ids"))))
                 mode = LLM_VIDEO_REFERENCE;
+            if (mode >= 0 && !field(shot, "first_frame") &&
+                !cJSON_GetObjectItemCaseSensitive(shot, "reference_images") &&
+                shot_has_uploaded_references(board, shot, references)) mode = LLM_VIDEO_REFERENCE;
         }
         if (mode < 0 || !run.models[mode].model ||
-            clip_media(&run.clips[i], mode, shot, assets, root, episode_dir, board, visual) != 0) {
+            clip_media(&run.clips[i], mode, shot, assets, references, root, episode_dir, board, visual) != 0) {
             strbuf_appendf(&report, "镜头 %d 的视频模式无效、首帧生成失败或缺少对应角色的参考素材。", i);
             goto done;
         }
@@ -554,29 +612,33 @@ done:
     cJSON_Delete(doc);
     cJSON_Delete(board);
     cJSON_Delete(assets);
+    cJSON_Delete(references);
     for (int i = 0; i < 3; i++) route_clear(&run.models[i]);
     return rc;
 }
 
 int manju_video_episode_mixed(router *routes, const char *const names[3],
                               const char *image_route, const char *workspace, int episode,
-                              int seconds, int (*abort_check)(void *),
+                              int seconds, const char *reference_set, int use_generated_references,
+                              int (*abort_check)(void *),
                               manju_video_progress progress, void *context, char **result) {
     return video_episode(routes, NULL, names, image_route, workspace,
-                         episode, seconds, abort_check, progress, context, result);
+                         episode, seconds, reference_set, use_generated_references,
+                         abort_check, progress, context, result);
 }
 
 int manju_video_episode_selected(router *routes, const char *route_name, const char *image_route,
                                  const char *workspace, int episode, int seconds,
+                                 const char *reference_set, int use_generated_references,
                                  int (*abort_check)(void *), manju_video_progress progress,
                                  void *context, char **result) {
     return video_episode(routes, route_name, NULL, image_route, workspace, episode, seconds,
-                         abort_check, progress, context, result);
+                         reference_set, use_generated_references, abort_check, progress, context, result);
 }
 
 int manju_video_episode(router *routes, const char *route_name, const char *workspace,
                         int episode, int seconds, int (*abort_check)(void *),
                         manju_video_progress progress, void *context, char **result) {
     return video_episode(routes, route_name, NULL, NULL, workspace, episode, seconds,
-                         abort_check, progress, context, result);
+                         NULL, 0, abort_check, progress, context, result);
 }

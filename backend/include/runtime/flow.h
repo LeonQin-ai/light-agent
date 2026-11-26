@@ -19,6 +19,8 @@ extern "C" {
 
 #include "light-agent.h"
 
+#define FLOW_MAX_NODES 64
+
 /* Validate a DAG JSON document. On failure returns -1 and (if err != NULL)
  * sets *err to a malloc'd human-readable message. Returns 0 on success. */
 int flow_validate(const char *dag_json, char **err);

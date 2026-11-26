@@ -9616,7 +9616,7 @@ static void test_manju_import(void) {
     cJSON_Delete(j);
     const char *novel = "{\"title\":\"测试小说\",\"episode\":2,"
         "\"text\":\"前言\\n第一章 起点\\n他推开门。\\n\\\"走吧。\\\"她说。\\n"
-        "第二章 转折\\n雨落下来。\\n系统提示：任务开始。\"}";
+        "## 第2集 转折\\n雨落下来。\\n系统提示：任务开始。\"}";
     j = api_request_json(18233, "POST", "/v1/manju/import", novel, 200);
     CHECK(j);
     CHECK(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(j, "chapters")) == 2);
@@ -9625,10 +9625,10 @@ static void test_manju_import(void) {
     CHECK(tid >= 0);
     cJSON_Delete(j);
     char *ch1 = fs_read_file("state-test/manju-import/novel/测试小说/chapter01.md");
-    CHECK(ch1 && strstr(ch1, "第一章 起点") && !strstr(ch1, "第二章"));
+    CHECK(ch1 && strstr(ch1, "第一章 起点") && !strstr(ch1, "第2集"));
     free(ch1);
     char *ch2 = fs_read_file("state-test/manju-import/novel/测试小说/chapter02.md");
-    CHECK(ch2 && strstr(ch2, "第二章 转折"));
+    CHECK(ch2 && strstr(ch2, "## 第2集 转折"));
     free(ch2);
     char *pipe = fs_read_file("state-test/manju-import/tools/manju/manju_pipeline.py");
     CHECK(pipe && strstr(pipe, "argparse"));
@@ -9647,6 +9647,73 @@ static void test_manju_import(void) {
     snprintf(cancel, sizeof(cancel), "/v1/tasks/%lld", (long long)tid);
     j = api_request_json(18233, "DELETE", cancel, NULL, 200);
     cJSON_Delete(j);
+
+    section("manju import five storyboards with shared character references");
+    j = api_request_json(18233, "POST", "/v1/routes",
+        "{\"name\":\"batch-video\",\"provider\":\"openai\",\"model\":\"happyhorse-1.1-r2v\","
+        "\"base_url\":\"http://127.0.0.1:1\",\"api_key\":\"fixture\"}", 200);
+    cJSON_Delete(j);
+    const char *board_fields = "\"badge\":\"冒险\",\"voice_cast\":[],"
+        "\"characters\":[{\"id\":\"lulu\",\"name\":\"噜噜\"}],"
+        "\"shots\":[{\"kind\":\"narration\",\"text\":\"打开航海日记。\",\"character_ids\":[\"lulu\"]}]";
+    strbuf payload;
+    strbuf_init(&payload);
+    strbuf_append(&payload, "{\"title\":\"航海日记\",\"all_episodes\":true,\"video_route\":\"batch-video\","
+        "\"character_references\":[{\"name\":\"噜噜\",\"data_url\":\"data:image/png;base64,"
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGOQCT4CAAHCATTzUQtLAAAAAElFTkSuQmCC\"}],"
+        "\"storyboards\":[");
+    for (int i = 1; i <= 5; i++)
+        strbuf_appendf(&payload, "%s{\"title\":\"第%d集\",%s}", i == 1 ? "" : ",", i, board_fields);
+    strbuf_append(&payload, "]}");
+    CHECK(payload.buf && raw_http_request(18233, "POST", "/v1/manju/import", payload.buf, &r) == 0 && r.status == 200);
+    strbuf_free(&payload);
+    j = cJSON_ParseWithOpts(r.body, NULL, 1);
+    CHECK(j && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j, "all_episodes")));
+    cJSON *episodes = cJSON_GetObjectItemCaseSensitive(j, "episodes");
+    CHECK(cJSON_GetArraySize(episodes) == 5);
+    for (int i = 1; i <= 5; i++) {
+        cJSON *ep = cJSON_GetArrayItem(episodes, i - 1);
+        const char *video = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(ep, "video"));
+        char expected[96];
+        snprintf(expected, sizeof(expected), "manju/ep%02d/videos/ep%02d-motion.mp4", i, i);
+        CHECK(cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(ep, "episode")) == i);
+        CHECK(video && !strcmp(video, expected));
+    }
+    tid = (int64_t)cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(j, "id"));
+    cJSON_Delete(j);
+    j = api_request_json(18233, "GET", "/v1/flows/list", NULL, 200);
+    const cJSON *record = NULL, *item;
+    cJSON_ArrayForEach(item, cJSON_GetObjectItemCaseSensitive(j, "records")) {
+        const cJSON *task_id = cJSON_GetObjectItemCaseSensitive(item, "task_id");
+        if (cJSON_IsNumber(task_id) && cJSON_GetNumberValue(task_id) == tid) {
+            record = item;
+            break;
+        }
+    }
+    CHECK(record);
+    const char *dag_json = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(record, "dag"));
+    cJSON *dag = dag_json ? cJSON_Parse(dag_json) : NULL;
+    const cJSON *nodes = cJSON_GetObjectItemCaseSensitive(dag, "nodes");
+    CHECK(cJSON_GetArraySize(nodes) == 15);
+    const char *ref_set = NULL;
+    int shared_ref_count = 0;
+    const cJSON *node;
+    cJSON_ArrayForEach(node, nodes) {
+        const char *key = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(node, "manju_reference_set"));
+        if (!key) continue;
+        if (!ref_set) ref_set = key;
+        CHECK(strlen(key) == 16 && !strcmp(key, ref_set));
+        shared_ref_count++;
+    }
+    CHECK(shared_ref_count == 5);
+    cJSON_Delete(dag);
+    cJSON_Delete(j);
+    if (tid >= 0) {
+        snprintf(cancel, sizeof(cancel), "/v1/tasks/%lld", (long long)tid);
+        j = api_request_json(18233, "DELETE", cancel, NULL, 200);
+        cJSON_Delete(j);
+    }
+
     http_server_stop(ctx.http);
     thread_join(api_thread);
     runtime_shutdown(&ctx);
@@ -10643,6 +10710,11 @@ static void test_crash_journal(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--manju-import")) {
+        test_manju_import();
+        printf("%d passed, %d failed\n", g_pass, g_fail);
+        return g_fail ? 1 : 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "--audit-p0")) {
         http_response response = {0};
         http_resp_appendf(&response, "%05000d:end", 1);

@@ -11,7 +11,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
  try{
   const page=await browser.newPage({viewport:{width:1400,height:900}}),errors=[];
   page.on('pageerror',e=>errors.push(e.message));
-  let importBody=null,imports=0,agentsGets=0,flowLists=0;
+  let importBody=null,imports=0,agentsGets=0,flowLists=0,rejectImport=false,batchEpisodes=[];
   const agents=[{name:'coder',role:'开发'}];
   await page.route('http://ui.test/**',async route=>{
    const r=route.request(),u=new URL(r.url());let obj=[];
@@ -31,11 +31,29 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
     else{agentsGets++;obj={agents,facts:{}};}
    }
    if(u.pathname==='/v1/blackboard')obj={};
-   if(u.pathname==='/v1/flows/list'){flowLists++;obj={records:importBody?[{id:7,name:'漫剧《测试小说》第1集',status:'RUNNING'}]:[]};}
+   if(u.pathname==='/v1/flows/list'){
+    flowLists++;
+    const batch=batchEpisodes.length ? {id:8,task_id:8,name:'漫剧批量制作',status:'RUNNING',
+     dag:JSON.stringify({nodes:batchEpisodes.map(ep=>({manju_compose_episode:ep.episode}))})} : null;
+    obj={records:batch?[batch]:importBody?[{id:7,name:'漫剧《测试小说》第1集',status:'RUNNING'}]:[]};
+   }
+   if(u.pathname==='/v1/tasks/8')obj={id:8,status:'RUNNING',flow_nodes:batchEpisodes.flatMap((ep,i)=>{
+    const prefix=`ep${String(ep.episode).padStart(2,'0')}`;
+    return [{id:`${prefix}-step3`,status:i===0?'ok':'running'}, {id:ep.compose_node,status:i===0?'ok':'queued'}];
+   })};
    if(u.pathname==='/v1/manju/import'&&r.method()==='POST'){
     imports++;
     importBody=r.postDataJSON();
+    if(rejectImport)return route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({error:'请重新核对角色对应关系'})});
     obj={id:7,status:'queued',title:importBody.title,novel_dir:'novel/测试小说',chapters:2,episode:importBody.episode,pipeline:'tools/manju/manju_pipeline.py',agents:['manju-director','manju-artist','manju-voice','manju-editor']};
+    if(importBody.all_episodes){
+     const last=importBody.episode_end ?? importBody.storyboards?.length ?? importBody.chapter_files?.length ?? 3;
+     batchEpisodes=Array.from({length:last-importBody.episode+1},(_,i)=>{
+      const episode=importBody.episode+i;
+      return {episode,compose_node:`ep${String(episode).padStart(2,'0')}-step4`};
+     });
+     Object.assign(obj,{id:8,task_id:8,all_episodes:true,episodes:batchEpisodes});
+    }
    }
    if(u.pathname==='/v1/chat/sessions'){
     if(r.method()==='POST')obj={id:'new1',workspace:'D:/default'};
@@ -55,6 +73,8 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
     document.getElementById('manju-image-route').value==='qwen-panels');
   /* 一键导入：选文件 → 填标题 → 点击制作 */
   await page.locator('#manju-file').setInputFiles(novel);
+  await page.waitForFunction(()=>document.getElementById('manju-import-scope').value==='all');
+  await page.getByLabel('制作范围').selectOption('single');
   await page.locator('#manju-title').fill('测试小说');
   await page.locator('#manju-episode').fill('1');
   const before=agentsGets;
@@ -121,7 +141,119 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   await page.getByRole('button',{name:'🎬 导入并组队制作'}).click();
   await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('先选择小说文件'),{timeout:5000});
   assert.equal(importBody,callsBefore,'no request without input');
+
+  /* 人物图按角色分别添加，预览在本机，提交时才读入请求。 */
+  await page.getByText('导入参考人物图',{exact:false}).click();
+  const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO8ByKkAAAAASUVORK5CYII=';
+  const picker=page.getByLabel('人物图片');
+  const character=page.getByLabel('角色名');
+  const addReference=page.getByRole('button',{name:'添加图片'});
+  const pngFile=name=>({name,mimeType:'image/png',buffer:Buffer.from(png,'base64')});
+  await page.locator('#manju-file').setInputFiles(novel);
+  await page.waitForFunction(()=>document.getElementById('manju-import-scope').value==='all');
+  await page.getByLabel('制作范围').selectOption('single');
+  await page.locator('#manju-title').fill('参考角色测试');
+  await page.locator('#manju-media-mode').selectOption('image');
+  await picker.setInputFiles(pngFile('噜噜.png'));
+  await addReference.click();
+  await page.waitForFunction(()=>document.getElementById('manju-reference-status').textContent.includes('填写角色名'));
+  await character.fill('噜噜');
+  await addReference.click();
+  await page.getByRole('img',{name:'噜噜 的参考图'}).waitFor();
+  assert.match(await page.getByRole('img',{name:'噜噜 的参考图'}).getAttribute('src'),/^blob:/);
+  await character.fill('噜妹');
+  await picker.setInputFiles({name:'伪造.png',mimeType:'image/png',buffer:Buffer.from('not an image')});
+  await addReference.click();
+  await page.waitForFunction(()=>document.getElementById('manju-reference-status').textContent.includes('有效的 PNG'));
+  await picker.setInputFiles([pngFile('噜妹-正面.png'),pngFile('噜妹-侧面.png')]);
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('请先点击「添加图片」'));
+  assert.equal(imports,4,'unassigned photos must not be silently dropped');
+  await addReference.click();
+  const referenceList=page.getByRole('list',{name:'已添加的参考人物图'});
+  await referenceList.getByRole('button',{name:'移除 噜妹 的参考图 噜妹-侧面.png'}).click();
+  assert.equal(await referenceList.getByRole('img').count(),2);
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('画面方式请选择'));
+  assert.equal(imports,4,'static generation must not silently ignore reference images');
+  assert.equal(await page.locator('#manju-media-mode').inputValue(),'image');
+
+  await page.locator('#manju-media-mode').selectOption('mixed');
+  await page.locator('#manju-image-route').selectOption('');
+  await page.locator('#manju-character-views').uncheck();
+  rejectImport=true;
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('请重新核对角色对应关系'));
+  assert.equal(await referenceList.getByRole('img').count(),2,'references survive the failed request');
+  rejectImport=false;
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('已切 2 章'));
+  assert.equal(imports,6);
+  assert.deepEqual(importBody.character_references,[
+   {name:'噜噜',filename:'噜噜.png',data_url:`data:image/png;base64,${png}`},
+   {name:'噜妹',filename:'噜妹-正面.png',data_url:`data:image/png;base64,${png}`}
+  ]);
+  assert.deepEqual(importBody.video_routes,{text:'horse-video',first_frame:'horse-first',reference:'horse-reference'});
+  assert.ok(!('image_route' in importBody) && !('character_views' in importBody));
+
+  const novelFiles=page.getByLabel('小说或分镜剧本');
+  const scope=page.getByLabel('制作范围');
+  const txtFile=(name,text)=>({name,mimeType:'text/plain',buffer:Buffer.from(text)});
+  await novelFiles.setInputFiles([txtFile('10-后记.md','雨落了。'),txtFile('2-开端.txt','噜噜打开门。')]);
+  assert.equal(await scope.inputValue(),'all','separate files default to all chapters');
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('2 集已排队'));
+  assert.equal(imports,7);
+  assert.deepEqual(importBody.chapter_files,[{name:'2-开端.txt',text:'噜噜打开门。'},{name:'10-后记.md',text:'雨落了。'}]);
+  assert.equal(importBody.episode,1);
+  assert.equal(importBody.all_episodes,true);
+  assert.ok(!('episode_end' in importBody) && !('text' in importBody));
+  assert.deepEqual(importBody.character_references.map(ref=>ref.name),['噜噜','噜妹']);
+  const progress=page.locator('[data-flow-task-id="8"] .flow-record-progress');
+  await page.getByRole('button',{name:'查看制作进度'}).click();
+  await page.waitForFunction(()=>document.querySelector('[data-flow-task-id="8"] .flow-record-progress')?.textContent.includes('多集进度 1/2 集已完成'));
+  assert.match(await progress.innerText(),/第 2 集 · 制作中（配音）/);
+
+  await scope.selectOption('single');
+  await novelFiles.setInputFiles(txtFile('全集.md','# 第1集 开头\n你好。\n# 第2集 下雨\n回家。\n# 第3集 见面\n开门。'));
+  await page.waitForFunction(()=>document.getElementById('manju-import-scope').value==='all');
+  await scope.selectOption('range');
+  await page.getByLabel('起始章节').fill('2');
+  await page.getByLabel('结束章节').fill('1');
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('结束章节需为'));
+  assert.equal(imports,7,'invalid batch range must not submit');
+  await page.getByLabel('结束章节').fill('3');
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('第 2–3 集'));
+  assert.equal(imports,8);
+  assert.ok(importBody.text.includes('# 第2集 下雨'));
+  assert.equal(importBody.episode,2);
+  assert.equal(importBody.episode_end,3);
+
+  const storyboard=(title,text)=>({title,badge:'测试',shots:[{kind:'narration',text,speaker:'narrator',scene:'屋顶'}]});
+  const first=storyboard('初见','你好。'), second=storyboard('归途','再见。');
+  const jsonFile=(name,content)=>({name,mimeType:'application/json',buffer:Buffer.from(JSON.stringify(content))});
+  await scope.selectOption('single');
+  await novelFiles.setInputFiles(jsonFile('两集剧本.json',[first,second]));
+  await page.waitForFunction(()=>document.getElementById('manju-import-scope').value==='all');
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('第 1–2 集'));
+  assert.equal(imports,9);
+  assert.deepEqual(importBody.storyboards,[first,second]);
+  assert.ok(!('storyboard' in importBody) && !('text_route' in importBody));
+
+  await novelFiles.setInputFiles([jsonFile('02-归途.json',second),jsonFile('01-初见.json',first)]);
+  await scope.selectOption('range');
+  await page.getByLabel('起始章节').fill('1');
+  await page.getByLabel('结束章节').fill('1');
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('1 集已排队'));
+  assert.equal(imports,10);
+  assert.deepEqual(importBody.storyboards,[first,second]);
+  assert.equal(importBody.episode_end,1);
+
   assert.deepEqual(errors,[]);
-  console.log('PASS: manju presets, static and video imports, character settings, team + flow refresh');
+  console.log('PASS: manju presets, imports, per-character photos, all/range novel and storyboard batches, live episode progress');
  }finally{await browser.close();fs.rmSync(tmp,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

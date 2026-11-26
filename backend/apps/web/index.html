@@ -471,6 +471,15 @@
   .item b a{color:var(--fg); text-decoration:none}
   .item b a:hover{color:var(--accent)}
   .row{display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap}
+  .manju-references{margin-top:10px; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius-sm)}
+  .manju-references summary{cursor:pointer}
+  .manju-references .hint{margin:6px 0 0}
+  .manju-reference-list{display:flex; flex-wrap:wrap; gap:8px; list-style:none; padding:0; margin:8px 0 0}
+  .manju-reference-list:empty{margin:0}
+  .manju-reference-item{display:flex; align-items:center; gap:8px; padding:5px; border:1px solid var(--border); border-radius:var(--radius-sm); max-width:100%}
+  .manju-reference-item img{width:48px; height:48px; object-fit:cover; border-radius:4px}
+  .manju-reference-item .manju-reference-info{min-width:0; overflow-wrap:anywhere}
+  .manju-reference-item small{display:block; color:var(--muted)}
 
   pre{
     background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-sm);
@@ -1546,13 +1555,42 @@ panels.agents = `
   </div>
   <div class="card">
     <h2>📖 漫剧工房 · 一键导入</h2>
-    <div class="hint">导入小说后，先生成分镜，再并行制作画面和配音，最后合成整集。进度在「协作任务」中跟踪。</div>
+    <div class="hint">导入多集剧本或小说。多个文件按文件名排序，单个文本可用「第…集」或「第…章」分隔。</div>
     <div class="row" style="margin-top:8px">
       <input id="manju-title" type="text" placeholder="小说标题（如 讨债人）" style="flex:1;min-width:160px">
-      <label class="hint" for="manju-episode" style="align-self:center">集号</label>
-      <input id="manju-episode" type="number" min="1" max="500" value="1" style="width:70px">
-      <input id="manju-file" type="file" accept=".txt,.md,.json" multiple style="flex:1;min-width:200px">
+      <label for="manju-file">小说或分镜剧本</label>
+      <input id="manju-file" type="file" accept=".txt,.md,.json" multiple onchange="selectManjuImportScope()" style="flex:1;min-width:200px">
     </div>
+    <div class="row" style="margin-top:8px">
+      <label for="manju-import-scope">制作范围</label>
+      <select id="manju-import-scope" onchange="updateManjuEpisodeFields()">
+        <option value="single">单集</option>
+        <option value="all">全部章节</option>
+        <option value="range">指定范围</option>
+      </select>
+      <span id="manju-episode-from">
+        <label id="manju-episode-label" for="manju-episode">集号</label>
+        <input id="manju-episode" type="number" min="1" max="500" value="1" style="width:70px">
+      </span>
+      <span id="manju-episode-to" hidden>
+        <label for="manju-episode-end">结束章节</label>
+        <input id="manju-episode-end" type="number" min="1" max="500" style="width:70px">
+      </span>
+      <span id="manju-scope-status" class="muted" role="status"></span>
+    </div>
+    <details class="manju-references">
+      <summary>导入参考人物图 <span id="manju-reference-count" class="muted">（可选）</span></summary>
+      <p class="hint">按小说里的角色名添加 PNG、JPEG 或 WebP 图片，再选择「按镜头选视频模型」。角色镜头会使用该角色的参考图。</p>
+      <div class="row">
+        <label for="manju-reference-name">角色名</label>
+        <input id="manju-reference-name" type="text" maxlength="160" placeholder="与小说中的角色名一致" style="flex:1;min-width:135px">
+        <label for="manju-reference-files">人物图片</label>
+        <input id="manju-reference-files" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" multiple style="flex:1;min-width:165px">
+        <button id="manju-reference-add" class="sec" type="button" onclick="addManjuCharacterReferences()">添加图片</button>
+      </div>
+      <div id="manju-reference-status" class="hint" role="status"></div>
+      <ul id="manju-reference-list" class="manju-reference-list" aria-label="已添加的参考人物图"></ul>
+    </details>
     <div class="row" style="margin-top:8px">
       <label for="manju-text-route">分镜模型</label>
       <select id="manju-text-route"><option value="">使用当前对话模型</option></select>
@@ -1564,7 +1602,7 @@ panels.agents = `
       </select>
     </div>
     <div style="margin-top:8px">
-      <div id="manju-character-option" hidden><label><input id="manju-character-views" type="checkbox" onchange="updateManjuMediaFields()"> 生成角色正面、侧面、背面设定图</label></div>
+      <div id="manju-character-option" hidden><label><input id="manju-character-views" type="checkbox" onchange="updateManjuMediaFields()"> 为缺少参考图的角色生成正面、侧面、背面设定图</label></div>
       <div id="manju-image-fields">
         <label id="manju-image-label" for="manju-image-route">画面模型</label>
         <select id="manju-image-route"><option value="">使用已配置的文生图模型</option></select>
@@ -1594,7 +1632,7 @@ panels.agents = `
       <input id="manju-path" type="text" placeholder="服务器小说文件或章节目录（可选）" style="flex:1;min-width:240px">
       <button class="sec" type="button" onclick="loadManjuPromo()">加载三镜宣传样片</button>
       <button id="manju-submit" onclick="manjuImport()">🎬 导入并组队制作</button>
-      <button id="manju-progress" type="button" class="sec" onclick="$('flow-tasks').scrollIntoView({block:'start'})" hidden>查看制作进度</button>
+      <button id="manju-progress" type="button" class="sec" onclick="showManjuProgress(this)" hidden>查看制作进度</button>
       <span id="manju-stat" class="muted" role="status"></span>
     </div>
     <details id="manju-board" hidden>
@@ -2774,6 +2812,8 @@ function loadManjuPromo(){
   };
   $('manju-title').value = board.title;
   $('manju-episode').value = '1';
+  $('manju-import-scope').value = 'single';
+  updateManjuEpisodeFields();
   $('manju-path').value = '';
   $('manju-file').value = '';
   $('manju-media-mode').value = 'mixed';
@@ -2783,6 +2823,149 @@ function loadManjuPromo(){
   if($('manju-character-option').dataset.available === '1') $('manju-character-views').checked = true;
   updateManjuMediaFields();
   $('manju-stat').textContent = '已加载三镜。检查模型后，点击「导入并组队制作」开始。';
+}
+
+const MANJU_CHARACTER_REFERENCES = [];
+const MANJU_REFERENCE_MIB = 1024 * 1024;
+
+async function manjuReferenceMime(file){
+  const bytes = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  if([137, 80, 78, 71, 13, 10, 26, 10].every((value, i) => bytes[i] === value)) return 'image/png';
+  if(bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return 'image/jpeg';
+  if(String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' &&
+     String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP') return 'image/webp';
+  return '';
+}
+
+function renderManjuCharacterReferences(){
+  $('manju-reference-count').textContent = MANJU_CHARACTER_REFERENCES.length
+    ? `（已添加 ${MANJU_CHARACTER_REFERENCES.length} 张）` : '（可选）';
+  $('manju-reference-list').innerHTML = MANJU_CHARACTER_REFERENCES.map(({name, filename, preview}, index) => `
+    <li class="manju-reference-item">
+      <img src="${esc(preview)}" alt="${esc(`${name} 的参考图`)}">
+      <div class="manju-reference-info"><strong>${esc(name)}</strong><small>${esc(filename)}</small></div>
+      <button type="button" class="sec sm" aria-label="${esc(`移除 ${name} 的参考图 ${filename}`)}"
+              onclick="removeManjuCharacterReference(${index})">移除</button>
+    </li>`).join('');
+}
+
+function removeManjuCharacterReference(index){
+  const [image] = MANJU_CHARACTER_REFERENCES.splice(index, 1);
+  if(image) URL.revokeObjectURL(image.preview);
+  renderManjuCharacterReferences();
+  $('manju-reference-status').textContent = '';
+}
+
+async function addManjuCharacterReferences(){
+  const status = $('manju-reference-status');
+  const add = $('manju-reference-add');
+  if(add.disabled || $('manju-submit').disabled) return;
+  const name = $('manju-reference-name').value.trim();
+  const picker = $('manju-reference-files');
+  const files = Array.from(picker.files);
+  if(!name || new TextEncoder().encode(name).length > 160){
+    status.textContent = '请填写角色名，长度不超过 160 个 UTF-8 字节。';
+    $('manju-reference-name').focus();
+    return;
+  }
+  if(!files.length){
+    status.textContent = '请选择要添加的人物图片。';
+    return;
+  }
+  if(MANJU_CHARACTER_REFERENCES.length + files.length > 9){
+    status.textContent = '最多可添加 9 张参考图。';
+    return;
+  }
+  if(files.some(file => file.size > 4 * MANJU_REFERENCE_MIB)){
+    status.textContent = '每张参考图不能超过 4 MiB。';
+    return;
+  }
+  const total = files.reduce((sum, file) => sum + file.size, 0) +
+    MANJU_CHARACTER_REFERENCES.reduce((sum, image) => sum + image.blob.size, 0);
+  if(total > 12 * MANJU_REFERENCE_MIB){
+    status.textContent = '参考图总大小不能超过 12 MiB。';
+    return;
+  }
+  add.disabled = picker.disabled = true;
+  try{
+    const mimeTypes = await Promise.all(files.map(manjuReferenceMime));
+    if(mimeTypes.includes('')){
+      status.textContent = '请选择有效的 PNG、JPEG 或 WebP 人物图片。';
+      return;
+    }
+    files.forEach((file, i) => {
+      const blob = file.slice(0, file.size, mimeTypes[i]);
+      MANJU_CHARACTER_REFERENCES.push({name, filename:file.name, blob, preview:URL.createObjectURL(blob)});
+    });
+    picker.value = '';
+    renderManjuCharacterReferences();
+    status.textContent = `已为「${name}」添加 ${files.length} 张参考图。`;
+  } catch(e){
+    status.textContent = `读取人物图片失败：${e.message}`;
+  } finally{
+    add.disabled = picker.disabled = false;
+  }
+}
+
+function manjuReferenceDataUrl(blob){
+  return new Promise((resolve,reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('无法读取人物图片'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function updateManjuEpisodeFields(){
+  const scope = $('manju-import-scope').value;
+  $('manju-episode-from').hidden = scope === 'all';
+  $('manju-episode-to').hidden = scope !== 'range';
+  $('manju-episode-label').textContent = scope === 'range' ? '起始章节' : '集号';
+  $('manju-scope-status').textContent = '';
+}
+
+async function selectManjuImportScope(){
+  const files = $('manju-file').files;
+  const scope = $('manju-import-scope');
+  if(!files.length || scope.value !== 'single') return;
+  const sameType = [...files].every(file => /\.json$/i.test(file.name) === /\.json$/i.test(files[0].name));
+  try{
+    let batch = files.length > 1 && sameType;
+    if(files.length === 1){
+      const file = files[0];
+      if(/\.json$/i.test(file.name)){
+        batch = (await file.slice(0, 4096).text()).trimStart().startsWith('[');
+      } else {
+        const text = await file.text();
+        const headings = /^(?:\uFEFF)?(?:#{1,6}[ \t]+)?第[0-9零〇一二两三四五六七八九十百]+[集章]/gm;
+        batch = headings.test(text) && headings.test(text);
+      }
+    }
+    if(batch && $('manju-file').files === files && scope.value === 'single'){
+      scope.value = 'all';
+      updateManjuEpisodeFields();
+      $('manju-scope-status').textContent = '已选择全部章节，可切换到指定范围。';
+    }
+  } catch {
+    // An unreadable file is reported if the user submits it.
+  }
+}
+
+function parseManjuStoryboards(text, filename){
+  let parsed;
+  try{ parsed = JSON.parse(text.replace(/^\uFEFF/, '')); }
+  catch{ throw new Error(`${filename} 无法解析，请检查分镜 JSON 格式。`); }
+  const boards = Array.isArray(parsed) ? parsed : [parsed];
+  if(!boards.length || boards.some(board => !Array.isArray(board?.shots) || !board.shots.length)){
+    throw new Error(`${filename} 中每集分镜均需要包含非空的 shots 数组。`);
+  }
+  return boards;
+}
+
+function showManjuProgress(button){
+  const list = $('flow-tasks');
+  const row = list?.querySelector(`[data-flow-task-id="${button.dataset.taskId}"]`);
+  (row || list)?.scrollIntoView({block:'start'});
 }
 
 /* 一键导入：小说或分镜 → 画面和配音 → 合成 */
@@ -2805,19 +2988,43 @@ async function manjuImport(){
   const submit = $('manju-submit');
   if(submit.disabled) return;
   const title = $('manju-title').value.trim();
-  const episode = Number($('manju-episode').value || '1');
+  const scope = $('manju-import-scope').value;
+  const batch = scope !== 'single';
+  const episode = scope === 'all' ? 1 : Number($('manju-episode').value || '1');
   if(!Number.isInteger(episode) || episode < 1 || episode > 500){
     st.textContent = '集号需为 1 到 500 的整数。';
     return;
   }
+  const end = Number($('manju-episode-end').value);
+  if(scope === 'range' && (!Number.isInteger(end) || end < episode || end > 500)){
+    st.textContent = '结束章节需为不小于起始章节的整数，最大为 500。';
+    return;
+  }
   const path = $('manju-path').value.trim();
-  const files = $('manju-file').files;
+  const files = Array.from($('manju-file').files).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', {numeric:true}));
+  const jsonFiles = files.filter(file => /\.json$/i.test(file.name));
   const body = {episode};
+  if(batch) body.all_episodes = true;
+  if(scope === 'range') body.episode_end = end;
+  if(!path && jsonFiles.length && jsonFiles.length !== files.length){
+    st.textContent = '请分别导入小说文本和分镜 JSON。';
+    return;
+  }
   const textRoute = $('manju-text-route')?.value;
   const imageRoute = $('manju-image-route')?.value;
   const mode = $('manju-media-mode').value;
   const videoMode = mode !== 'image';
   const mixed = mode === 'mixed';
+  const references = MANJU_CHARACTER_REFERENCES.slice();
+  if($('manju-reference-files').files.length){
+    st.textContent = '请先点击「添加图片」，将所选图片关联到角色。';
+    return;
+  }
+  if(references.length && !mixed){
+    st.textContent = '使用人物参考图时，画面方式请选择「按镜头选视频模型」。';
+    $('manju-media-mode').focus();
+    return;
+  }
   const characterViews = !$('manju-character-option').hidden && $('manju-character-views').checked;
   if(textRoute) body.text_route = textRoute;
   if(characterViews) body.character_views = true;
@@ -2843,39 +3050,58 @@ async function manjuImport(){
   const draft = board.hidden ? '' : $('manju-board-json').value.trim();
   submit.disabled = true;
   try{
-    const jsonFile = files && files.length === 1 && /\.json$/i.test(files[0].name);
     if(path){
       body.path = path;
-    } else if(jsonFile || draft && !files?.length){
-      const text = jsonFile ? await files[0].text() : draft;
-      let storyboard;
-      try{ storyboard = JSON.parse(text.replace(/^\uFEFF/, '')); }
-      catch{ st.textContent = '分镜 JSON 无法解析，请检查文件格式。'; return; }
-      if(!storyboard || !Array.isArray(storyboard.shots) || !storyboard.shots.length){
-        st.textContent = '分镜 JSON 需要包含非空的 shots 数组。';
-        return;
+    } else if(jsonFiles.length || draft && !files.length){
+      st.textContent = '读取分镜剧本…';
+      const storyboards = jsonFiles.length ? [] : parseManjuStoryboards(draft, '预览分镜');
+      for(const file of jsonFiles) storyboards.push(...parseManjuStoryboards(await file.text(), file.name));
+      if(batch || storyboards.length > 1){
+        body.all_episodes = true;
+        if(!batch) body.episode_end = episode;
+        body.storyboards = storyboards;
+      } else {
+        body.storyboard = storyboards[0];
       }
-      body.storyboard = storyboard;
       delete body.text_route;
-    } else if(files && files.length){
+    } else if(files.length){
       st.textContent = '读取小说文件…';
-      const parts = [];
-      for(const f of files) parts.push(await f.text());
-      body.text = parts.join('\n\n');
+      if(files.length === 1){
+        body.text = await files[0].text();
+      } else {
+        body.all_episodes = true;
+        if(!batch) body.episode_end = episode;
+        body.chapter_files = [];
+        for(const file of files) body.chapter_files.push({name:file.name,text:await file.text()});
+      }
     } else {
       st.textContent = '先选择小说文件（.txt/.md）、分镜 JSON 或填写服务器路径';
       return;
     }
+    if(references.length){
+      st.textContent = '读取人物参考图…';
+      body.character_references = await Promise.all(references.map(async ({name, filename, blob}) =>
+        ({name, filename, data_url:await manjuReferenceDataUrl(blob)})));
+    }
     st.textContent = '导入中…';
-    const r = await call('POST', '/v1/manju/import', body);
+    const r = await call('POST', '/v1/manju/import', body, references.length || body.all_episodes ? 60000 : 20000);
     if(r.status >= 300 || !r.obj || r.obj.id == null){
       st.textContent = '导入失败: ' + ((r.obj && r.obj.error) || r.text || ('HTTP ' + r.status));
       return;
     }
     const o = r.obj;
     const imported = body.storyboard ? ('已导入 ' + body.storyboard.shots.length + ' 镜分镜') : ('已切 ' + o.chapters + ' 章');
-    st.textContent = '✔ ' + imported + '，第' + o.episode + '集任务 #' + o.id + ' 已排队';
-    $('manju-progress').hidden = false;
+    const episodes = Array.isArray(o.episodes) ? o.episodes : [];
+    if(episodes.length){
+      const first = episodes[0].episode;
+      const range = first === episodes.at(-1).episode ? first : `${first}–${episodes.at(-1).episode}`;
+      st.textContent = `✔ ${episodes.length} 集已排队（第 ${range} 集），任务 #${o.id}`;
+    } else {
+      st.textContent = '✔ ' + imported + '，第' + o.episode + '集任务 #' + o.id + ' 已排队';
+    }
+    const progressButton = $('manju-progress');
+    if(Number.isInteger(o.id)) progressButton.dataset.taskId = String(o.id);
+    progressButton.hidden = false;
     toast('🎬 漫剧制作已排队');
     await loadFlowTasks();
     void loadAgents();
@@ -5956,8 +6182,38 @@ async function loadFlow(){
 /* ===== 协作任务列表（state/flows.json 持久化）===== */
 function flowStatusBadge(s){
   const c = {'RUNNING':'#b58900','DONE':'#2da44e','FAILED':'#cf222e','CANCELLED':'#6e7781','TIMEOUT':'#cf222e','INTERRUPTED':'#b58900'}[s] || '#6e7781';
-  const label={RUNNING:'执行中',DONE:'已完成',FAILED:'失败',CANCELLED:'已取消',TIMEOUT:'超时',INTERRUPTED:'已中断'}[s] || s || '?';
+  const label={QUEUED:'排队中',RUNNING:'执行中',DONE:'已完成',FAILED:'失败',CANCELLED:'已取消',TIMEOUT:'超时',INTERRUPTED:'已中断'}[s] || s || '?';
   return '<span class="flow-task-status" role="status" style="color:#fff;background:' + c + ';border-radius:8px;padding:1px 8px;font-size:11px">' + esc(label) + '</span>';
+}
+
+function isManjuBatchRecord(record){
+  if(typeof record.dag !== 'string' || !record.dag.includes('manju_compose_episode')) return false;
+  try{ return JSON.parse(record.dag).nodes?.filter(node => node.manju_compose_episode > 0).length > 1; }
+  catch{ return false; }
+}
+
+function manjuBatchProgress(nodes){
+  const episodes = new Map();
+  for(const node of nodes){
+    const match = /^ep(\d+)-(step[1-4]|character)$/.exec(node.id || '');
+    if(!match) continue;
+    const episode = Number(match[1]);
+    if(!episodes.has(episode)) episodes.set(episode, {});
+    episodes.get(episode)[match[2]] = node.status;
+  }
+  if(episodes.size < 2) return '';
+  const stages = {step1:'分镜',character:'角色设定',step2:'画面',step3:'配音',step4:'剪辑'};
+  const terminals = {error:'制作失败',timeout:'已超时',cancelled:'已取消',blocked:'依赖未完成'};
+  const sorted = [...episodes.entries()].sort((a, b) => a[0] - b[0]);
+  const complete = sorted.filter(([, states]) => states.step4 === 'ok').length;
+  const lines = sorted.map(([episode, states]) => {
+    const active = Object.keys(stages).filter(stage => states[stage] === 'running');
+    const terminal = Object.keys(terminals).find(state => Object.values(states).includes(state));
+    const label = states.step4 === 'ok' ? '已完成' : terminal ? terminals[terminal] :
+      active.length ? `制作中（${active.map(stage => stages[stage]).join('、')}）` : '等待执行';
+    return `第 ${episode} 集 · ${label}`;
+  });
+  return `多集进度 ${complete}/${episodes.size} 集已完成\n${lines.join('\n')}`;
 }
 
 const FLOW_TASK_TRACKED = new Set();
@@ -5967,15 +6223,16 @@ async function loadFlowTasks(){
   if(r.status !== 200){ el.innerHTML = '<span class="muted" style="font-size:12px">加载失败: ' + esc(r.text || ('HTTP ' + r.status)) + '</span>'; return; }
   const recs = (r.obj && r.obj.records) ? r.obj.records : [];
   if(!recs.length){ el.innerHTML = '<span class="muted" style="font-size:12px">暂无协作任务记录</span>'; return; }
+  const mostRecentBatch = recs.find(isManjuBatchRecord);
   const rows = recs.map(x => {
     const id = x.id, s = x.status || '?';
-    const live = (s === 'RUNNING');
+    const live = s === 'RUNNING' || s === 'QUEUED';
     const editable = !live;
     const resume = (!live && s !== 'DONE') ? '<button class="sec sm" onclick="flowTaskResume(' + id + ')">继续</button>' : '';
     const cancel = live ? '<button class="sec sm" onclick="flowTaskCancel(' + id + ')">取消</button>' : '';
     const edit = editable ? '<button class="sec sm" onclick="flowTaskEdit(' + id + ')">修改</button>' : '';
     const key = id + ':' + x.task_id;
-    if(live) FLOW_TASK_TRACKED.add(key);
+    if(live || x === mostRecentBatch) FLOW_TASK_TRACKED.add(key);
     const tid = x.task_id != null && x.task_id >= 0 && FLOW_TASK_TRACKED.has(key) ? x.task_id : null;
     return '<div id="flow-task-' + id + '" data-flow-record-id="' + id + '"' + (tid != null ? ' data-flow-task-id="' + tid + '"' : '') + ' data-flow-status="' + esc(s) + '" style="border:1px solid var(--bd,#ddd);border-radius:8px;padding:8px 10px;margin:6px 0">' +
       '<div class="flow-task-heading"><span class="flow-record-status">' + flowStatusBadge(s) + '</span>' +
@@ -6022,6 +6279,7 @@ async function refreshFlowTaskProgress(){
         ? '<button class="sec sm" onclick="flowTaskCancel(' + id + ')">取消</button>'
         : (t.status !== 'DONE' ? '<button class="sec sm" onclick="flowTaskResume(' + id + ')">继续</button>' : '') + '<button class="sec sm" onclick="flowTaskEdit(' + id + ')">修改</button>';
       const nodes = Array.isArray(t.flow_nodes) ? t.flow_nodes : [];
+      const batch = manjuBatchProgress(nodes);
       const counters = nodes.map(n => {
         const label = (n.id || '?') + (n.agent ? ' (' + n.agent + ')' : '');
         if(n.clips_total != null) return label + ' · 视频 ' + (n.clips_ready ?? 0) + '/' + n.clips_total +
@@ -6032,7 +6290,7 @@ async function refreshFlowTaskProgress(){
           ' · token ' + (n.tokens_in != null && n.tokens_out != null ? n.tokens_in + n.tokens_out : '未知');
       }).join('\n');
       const recent = nodes.flatMap(n => (n.steps || []).slice(-2).flatMap(s => ['[' + (n.id || '?') + '] ' + stepLines(s).join('\n')])).slice(-6).join('\n');
-      const text = '执行任务 #' + tid + '\n' + flowTaskStatus(t) + (counters ? '\n' + counters : '') + (recent ? '\n最近动作：\n' + recent : '');
+      const text = '执行任务 #' + tid + '\n' + (batch ? batch + '\n' : '') + flowTaskStatus(t) + (counters ? '\n' + counters : '') + (recent ? '\n最近动作：\n' + recent : '');
       // Keep existing result disclosure and scroll position during unchanged polls.
       const html = '<div>' + esc(text) + '</div>' + (!live && t.output ? '<details><summary>执行结果</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(t.output) + '</pre></details>' : '');
       if(progress.dataset.rendered !== html){ progress.innerHTML = html; progress.dataset.rendered = html; }

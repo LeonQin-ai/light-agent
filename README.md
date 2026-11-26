@@ -26,7 +26,7 @@ The core is written in C11 and embeds its web console. Prebuilt packages do not 
 
 ### 1. Animated comic showcase
 
-Both demos were produced with the light-agent comic workflow and include Chinese narration and subtitles.
+These demos were produced with the light-agent comic workflow and include Chinese narration and subtitles.
 
 #### The Lighthouse Keeper
 
@@ -39,6 +39,40 @@ https://github.com/user-attachments/assets/5600a05c-49d3-4cf0-95be-8f0e179a9b14
 Yaya, a greenhouse robot, plants a glowing seed. The establishing shot uses text-to-video. The planting and sprouting shots share a single character turnaround sheet. [Download MP4 · 20.6 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/starlight-greenhouse.mp4)
 
 https://github.com/user-attachments/assets/8a635a60-4224-406e-9ab2-674dcd1a0ed4
+
+#### Lulu and Lumei: The Light After the Rain
+
+Five storyboards were imported in one run and shared the same two character references. HappyHorse reference-to-video generated the story shots, following one lantern from its discovery to the greenhouse.
+
+##### Episode 1 · The Lantern in the Orchard
+
+Lulu finds an unlit lantern. Lumei points to the greenhouse on the hill. [Download MP4 · 13.35 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep01.mp4)
+
+https://github.com/user-attachments/assets/07d3ebe1-3320-4f2e-9b2d-f1feb562c700
+
+##### Episode 2 · A Leaf for Two
+
+They share a leaf for shelter when a stream cuts across the path. [Download MP4 · 13.45 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep02.mp4)
+
+https://github.com/user-attachments/assets/0fd884dd-9d68-49ae-8155-3d12d4c68e1c
+
+##### Episode 3 · Across the Stream
+
+They float the lantern across on their leaf. [Download MP4 · 13.00 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep03.mp4)
+
+https://github.com/user-attachments/assets/9f25fceb-84d2-48f5-87ab-3b23794f0874
+
+##### Episode 4 · A Light in the Greenhouse
+
+They hang the lantern by the greenhouse, and warm light shines through its star-shaped window. [Download MP4 · 13.70 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep04.mp4)
+
+https://github.com/user-attachments/assets/00e86d32-d390-47f3-9f15-ca5e009b68e3
+
+##### Episode 5 · The Light After the Rain
+
+The rain stops, and the lantern lights their way home. [Download MP4 · 13.90 seconds](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep05.mp4)
+
+https://github.com/user-attachments/assets/3cc78b78-0631-458d-9467-0c74d7e41448
 
 ### 2. Desktop chat and task progress
 
@@ -183,8 +217,9 @@ The selected image route can draw a first frame and front, side, and back charac
 
 1. Open **更多 → Models** (More → Models) and add the three **HappyHorse** Token Plan route presets. Add an image route such as `qwen-image-3.0-pro` to generate first frames and character references. Use the **Test** button on each route to check its setup.
 2. Open **多 Agent & Flow → 漫剧工房** (Multi-Agent & Flow → Comic Workshop). Import a `.txt` or `.md` chapter, import a storyboard `.json`, or select **加载三镜宣传样片** (Load three-shot promo). The built-in storyboard establishes a lighthouse with T2V and follows the same original lighthouse keeper, A-Cheng, in its I2V and R2V shots.
-3. Check the three video routes and image route, then choose three or four seconds per shot. Select **导入并组队制作** (Import and produce) and follow **查看制作进度** (View production progress). For a custom storyboard, each shot can declare `video_mode` as `text`, `first_frame`, or `reference`.
-4. When production completes, open `manju/epNN/videos/epNN-motion.mp4` in the workspace. The Flow saves finished clips for reuse when a run resumes. Audio and assembly require local Python and the comic pipeline dependencies.
+3. To reuse existing character art, open **导入参考人物图** (Import character references), enter the character's name as it appears in the script, and add PNG, JPEG, or WebP images. In **按镜头选视频模型** (Choose video models per shot), reference-to-video shots use the matching images for each named character in the shot.
+4. To produce several episodes in one run, select multiple chapter files, a single `.txt` or `.md` with `第…集` or `第…章` headings, multiple storyboard `.json` files, or a single JSON array of storyboards. Set **制作范围** (Production scope) to **全部章节** (All chapters) or **指定范围** (Episode range), then select **导入并组队制作** (Import and produce). The batch shares character references across episodes, while automatic storyboarding carries forward the previous episode's ending.
+5. Use **查看制作进度** (View production progress) to follow each episode, then open `manju/epNN/videos/epNN-motion.mp4` in the workspace. Completed clips are reused when a run resumes. Audio and assembly require local Python and the comic pipeline dependencies. Custom storyboards support `text`, `first_frame`, and `reference` in `video_mode`. Each clip can run for three or four seconds.
 
 The **文生视频** (Text-to-video) option also supports single-route production with Alibaba Cloud Kling or Volcano Engine Seedance.
 

@@ -2,6 +2,7 @@
 #define _XOPEN_SOURCE 700
 #endif
 #include "runtime/manju_story.h"
+#include "runtime/manju_references.h"
 #include "infra/logging.h"
 #include "infra/util.h"
 #include "os/os_fs.h"
@@ -173,12 +174,75 @@ static int budget_for(const llm *client, size_t bytes) {
     return budget > 16384 ? 16384 : (int)budget;
 }
 
+static char *prior_summary(const char *root, int episode) {
+    char relative[64], path[STORY_PATH_CAP];
+    snprintf(relative, sizeof relative, "manju/ep%02d/shots.json", episode);
+    path_join(path, sizeof path, root, relative);
+    char *actual = existing_path(path);
+    size_t size = 0;
+    int more = 0;
+    char *json = under_root(root, actual) ? fs_read_file_slice(actual, 0, STORY_BOARD_MAX, &size, &more) : NULL;
+    free(actual);
+    const char *problem = NULL;
+    cJSON *board = json && !more ? parse_story(json, size, &problem) : NULL;
+    free(json);
+    if (!board) return NULL;
+    strbuf summary;
+    strbuf_init(&summary);
+    const cJSON *cast = cJSON_GetObjectItemCaseSensitive(board, "characters");
+    const cJSON *shots = cJSON_GetObjectItemCaseSensitive(board, "shots");
+    const cJSON *character;
+    strbuf_appendf(&summary, "\n上一集分镜用于承接剧情，延续角色名称和固定外观。片名：%s。\n", field(board, "title"));
+    cJSON_ArrayForEach(character, cast)
+        strbuf_appendf(&summary, "角色 %s（%s）：%s\n", field(character, "name"), field(character, "id"),
+                       field(character, "visual"));
+    int count = cJSON_GetArraySize(shots);
+    for (int i = count > 2 ? count - 2 : 0; i < count; i++) {
+        const cJSON *shot = cJSON_GetArrayItem(shots, i);
+        strbuf_appendf(&summary, "上一集结尾镜头：%s｜%s\n", field(shot, "scene"), field(shot, "text"));
+    }
+    cJSON_Delete(board);
+    return strbuf_detach(&summary);
+}
+
+static int append_reference_cast(strbuf *prompt, const cJSON *references) {
+    cJSON *names = cJSON_CreateArray();
+    if (!names) return -1;
+    const cJSON *reference;
+    cJSON_ArrayForEach(reference, references) {
+        const char *name = field(reference, "name");
+        const cJSON *entry;
+        int present = 0;
+        cJSON_ArrayForEach(entry, names) if (!strcmp(name, cJSON_GetStringValue(entry))) present = 1;
+        if (!present) {
+            cJSON *value = cJSON_CreateString(name);
+            if (!value || !cJSON_AddItemToArray(names, value)) {
+                cJSON_Delete(value);
+                cJSON_Delete(names);
+                return -1;
+            }
+        }
+    }
+    char *quoted = cJSON_PrintUnformatted(names);
+    cJSON_Delete(names);
+    if (!quoted) return -1;
+    size_t length = prompt->len;
+    strbuf_appendf(prompt, "\n上传参考图对应这些角色名称（JSON 数据）：%s。"
+                           "在本集出现的参考角色应在 characters 保留一项，name 必须逐字一致。"
+                           "每镜用 character_ids 标明画面里的全部角色；两个参考角色同框时写两者的 ID。"
+                           "有参考角色的镜头使用 reference，不要自己生成文件路径或改变已有造型。\n", quoted);
+    free(quoted);
+    return prompt->len > length ? 0 : -1;
+}
+
 int manju_story_episode(llm *client, const char *workspace, const char *chapter_path, int episode,
                         int clip_seconds, manju_story_video_mode video_mode,
+                        const char *reference_set, int can_generate_first_frame, int prior_episode,
                         int (*abort_check)(void *), void *context, int *requests, char **result) {
     char path[STORY_PATH_CAP], dir[STORY_PATH_CAP], key[17], relative[64];
     char *root = NULL, *chapter_file = NULL, *chapter = NULL, *saved = NULL, *serialized = NULL;
-    cJSON *board = NULL;
+    cJSON *board = NULL, *references = NULL;
+    char *continuity = NULL;
     strbuf user, signature;
     strbuf_init(&user);
     strbuf_init(&signature);
@@ -191,6 +255,14 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
     root = existing_path(workspace && *workspace ? workspace : ".");
     if (!root || strlen(root) + strlen(chapter_path) + 80 >= sizeof path) {
         error = "无效的分镜工作区或章节路径";
+        goto done;
+    }
+    if (reference_set && *reference_set && !(references = manju_references_load(root, reference_set))) {
+        error = "无法读取已导入的人物参考图，请重新选择图片后再导入";
+        goto done;
+    }
+    if (prior_episode && (prior_episode >= episode || !(continuity = prior_summary(root, prior_episode)))) {
+        error = "无法读取上一集分镜，无法承接角色和剧情";
         goto done;
     }
     path_resolve(path, sizeof path, root, chapter_path);
@@ -222,7 +294,10 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
         strbuf_appendf(&signature, "motion:%d\n", clip_seconds);
         if (video_mode != MANJU_STORY_VIDEO_SINGLE)
             strbuf_appendf(&signature, "mixed-routes-v1:%d\n", video_mode);
+        if (references)
+            strbuf_appendf(&signature, "character-reference-v1:%s:%d\n", reference_set, can_generate_first_frame);
     }
+    if (continuity) strbuf_append(&signature, continuity);
     strbuf_appendf(&signature, "%d\n%s\n%s\n%s\n%s\n",
                    episode, client->provider ? client->provider : "", client->model,
                    client->base_url ? client->base_url : "", story_prompt);
@@ -249,12 +324,9 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
     }
     cJSON_Delete(board);
     board = NULL;
-    int budget = budget_for(client, n);
-    if (!budget) {
-        error = "章节无法完整放入所选模型上下文";
-        goto done;
-    }
     strbuf_appendf(&user, "集号：%d\n", episode);
+    if (continuity) strbuf_append(&user, continuity);
+    if (references && append_reference_cast(&user, references) != 0) goto done;
     if (clip_seconds) {
         strbuf_appendf(&user,
             "本集为短视频漫剧，每个镜头用同一个连续动作填满 %d 秒。"
@@ -262,10 +334,11 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
             "使上一镜结尾自然衔接下一镜开头；对白太长时分成连续镜头。\n",
             clip_seconds);
         if (video_mode != MANJU_STORY_VIDEO_SINGLE) {
-            strbuf_append(&user, "可用 video_mode 指明生成方式：无角色空镜或大范围特效用 text，"
-                                 "需要精确首帧构图用 first_frame（会生成对应分镜图）。");
-            if (video_mode == MANJU_STORY_VIDEO_WITH_CHARACTER_VIEWS)
-                strbuf_append(&user, "含已声明角色且需要保持角色外观时用 reference（由角色中心提供参考图）。");
+            strbuf_append(&user, "可用 video_mode 指明生成方式：无角色空镜或大范围特效用 text。");
+            if (!references || can_generate_first_frame)
+                strbuf_append(&user, "需要精确首帧构图用 first_frame（会生成对应分镜图）。");
+            if (video_mode == MANJU_STORY_VIDEO_WITH_CHARACTER_VIEWS || references)
+                strbuf_append(&user, "只有上传参考图或能生成三视图的角色镜头使用 reference。");
             strbuf_append(&user, "不要填写本地路径。\n");
         }
     }
@@ -273,6 +346,11 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
     size_t prefix = user.len;
     strbuf_append_n(&user, chapter, n);
     if (!prefix || user.len != prefix + n) goto done;
+    int budget = budget_for(client, user.len);
+    if (!budget) {
+        error = "章节和角色衔接信息无法完整放入所选模型上下文";
+        goto done;
+    }
     const char retry[] =
         " 上一次结果未通过校验：%s。严格遵循字段格式和角色 ID，"
         "压缩画面提示，控制镜头数在 30–36（短章节可更少），完整闭合 JSON，不要输出代码块。";
@@ -292,6 +370,11 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
         const char *problem = response.truncated ? "响应达到输出上限" : "没有可用的分镜内容";
         if (status == 0 && !response.truncated && response.content && !response.tool_call_count)
             board = parse_story(response.content, strlen(response.content), &problem);
+        if (board && references && !manju_references_resolve(references, board)) {
+            cJSON_Delete(board);
+            board = NULL;
+            problem = "人物参考图的角色名称不得对应多名角色";
+        }
         int retryable = response.truncated || status == 0;
         free(response.content);
         free(response.error);
@@ -317,6 +400,13 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
      * voice names or pitch settings emitted outside the storyboard schema. */
     cJSON_DeleteItemFromObjectCaseSensitive(board, "voice_cast");
     cJSON_DeleteItemFromObjectCaseSensitive(board, "_manju_story_input");
+    if (references) {
+        cJSON *shot;
+        cJSON_ArrayForEach(shot, cJSON_GetObjectItemCaseSensitive(board, "shots")) {
+            cJSON_DeleteItemFromObjectCaseSensitive(shot, "first_frame");
+            cJSON_DeleteItemFromObjectCaseSensitive(shot, "reference_images");
+        }
+    }
     if (cJSON_AddStringToObject(board, "_manju_story_input", key))
         serialized = cJSON_PrintUnformatted(board);
     if (!serialized || publish_story(path, serialized) != 0) {
@@ -336,6 +426,8 @@ done:
         *result = xstrdup(error);
     }
     cJSON_Delete(board);
+    cJSON_Delete(references);
+    free(continuity);
     free(serialized);
     free(saved);
     free(chapter);

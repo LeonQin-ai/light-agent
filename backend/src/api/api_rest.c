@@ -9,6 +9,7 @@
 #include "cognition/planner.h"
 #include "runtime/flow.h"
 #include "runtime/manju_story.h"
+#include "runtime/manju_references.h"
 #include "runtime/cron.h"
 #include "runtime/tasklog.h"
 #include "runtime/flow_store.h"
@@ -1353,8 +1354,12 @@ static const char *manju_role_editor =
     "合成脚本校验帧数、音轨和首尾帧。成功后立即交付成片路径、时长和帧数。"
     "失败时报告脚本错误，停止执行。";
 
-/* A chapter marker is a short line beginning 第…章 (UTF-8). */
+/* Identify chapter and episode headings in a UTF-8 script. */
 static int manju_chapter_marker(const char *line, size_t len) {
+    if (len >= 3 && !memcmp(line, "\xEF\xBB\xBF", 3)) {
+        line += 3;
+        len -= 3;
+    }
     size_t hashes = 0;
     while (hashes < len && hashes < 6 && line[hashes] == '#') hashes++;
     if (hashes && hashes < len && (line[hashes] == ' ' || line[hashes] == '\t')) {
@@ -1362,13 +1367,24 @@ static int manju_chapter_marker(const char *line, size_t len) {
         line += hashes;
         len -= hashes;
     }
-    if (len < 9 || len > 120) return 0;
+    if (len < 7 || len > 120) return 0;
     if ((unsigned char)line[0] != 0xE7 || (unsigned char)line[1] != 0xAC ||
         (unsigned char)line[2] != 0xAC) return 0; /* 第 */
-    for (size_t i = 3; i + 3 <= len && i < 60; i++)
-        if ((unsigned char)line[i] == 0xE7 && (unsigned char)line[i + 1] == 0xAB &&
-            (unsigned char)line[i + 2] == 0xA0) return 1; /* 章 */
-    return 0;
+    const char *const numerals[] = {"零", "〇", "一", "二", "两", "三", "四", "五", "六", "七", "八", "九", "十", "百"};
+    size_t end = 3;
+    while (end < len) {
+        if (line[end] >= '0' && line[end] <= '9') {
+            end++;
+            continue;
+        }
+        if (end + 3 > len) break;
+        size_t i = 0;
+        while (i < sizeof(numerals) / sizeof(numerals[0]) && memcmp(line + end, numerals[i], 3)) i++;
+        if (i == sizeof(numerals) / sizeof(numerals[0])) break;
+        end += 3;
+    }
+    return end > 3 && end + 3 <= len &&
+        (!memcmp(line + end, "章", 3) || !memcmp(line + end, "集", 3));
 }
 
 /* Split novel text at chapter markers; with none, the whole text is one
@@ -1462,6 +1478,246 @@ static int manju_valid_imported_board(const cJSON *board) {
     return 1;
 }
 
+static char **manju_uploaded_chapters(const cJSON *files, int *count) {
+    int n = cJSON_GetArraySize(files);
+    if (!cJSON_IsArray(files) || n < 1 || n > 500) return NULL;
+    char **chapters = calloc((size_t)n, sizeof(*chapters));
+    if (!chapters) return NULL;
+    for (int i = 0; i < n; i++) {
+        const cJSON *file = cJSON_GetArrayItem(files, i);
+        const char *text = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(file, "text"));
+        if (!text || !text[strspn(text, " \t\r\n")] || !(chapters[i] = xstrdup(text))) {
+            manju_free_chapters(chapters, n);
+            return NULL;
+        }
+    }
+    *count = n;
+    return chapters;
+}
+
+static char **manju_read_chapters(const char *path, int *count) {
+    if (!fs_is_dir(path)) {
+        char *text = fs_read_file(path);
+        char **chapters = manju_split_chapters(text, count);
+        free(text);
+        return chapters;
+    }
+    dir_list list = {0};
+    char **names = NULL, **chapters = NULL;
+    if (fs_list_dir(path, &list) != 0 || !list.count) goto done;
+    names = calloc(list.count, sizeof(*names));
+    if (!names) goto done;
+    size_t n = 0;
+    for (size_t i = 0; i < list.count; i++) {
+        const char *name = list.items[i].name;
+        const char *ext = strrchr(name, '.');
+        if (!list.items[i].is_dir && ext && (!strcmp(ext, ".md") || !strcmp(ext, ".txt")))
+            names[n++] = list.items[i].name;
+    }
+    if (!n || n > 500) goto done;
+    qsort(names, n, sizeof(*names), manju_name_cmp);
+    chapters = calloc(n, sizeof(*chapters));
+    if (!chapters) goto done;
+    for (size_t i = 0; i < n; i++) {
+        char full[2048];
+        path_join(full, sizeof(full), path, names[i]);
+        chapters[i] = fs_read_file(full);
+        if (!chapters[i] || !*chapters[i]) {
+            manju_free_chapters(chapters, (int)n);
+            chapters = NULL;
+            goto done;
+        }
+    }
+    *count = (int)n;
+done:
+    free(names);
+    fs_list_free(&list);
+    return chapters;
+}
+
+static const cJSON *manju_source_board(const cJSON *board, const cJSON *boards, int episode) {
+    return boards ? cJSON_GetArrayItem(boards, episode - 1) : board;
+}
+
+/* Check every supplied episode before writing any of its storyboards. */
+static int manju_check_boards(const cJSON *board, const cJSON *boards, const cJSON *references,
+                              int first, int last) {
+    for (int episode = first; episode <= last; episode++) {
+        const cJSON *current = manju_source_board(board, boards, episode);
+        if (!manju_valid_imported_board(current) || !manju_references_resolve(references, current)) return 0;
+    }
+    const cJSON *reference;
+    cJSON_ArrayForEach(reference, references) {
+        int matched = 0;
+        for (int episode = first; !matched && episode <= last; episode++) {
+            const cJSON *cast = cJSON_GetObjectItemCaseSensitive(manju_source_board(board, boards, episode), "characters");
+            const cJSON *character;
+            cJSON_ArrayForEach(character, cast) {
+                if (manju_reference_matches(reference, character)) { matched = 1; break; }
+            }
+        }
+        if (!matched) return 0;
+    }
+    return 1;
+}
+
+static int manju_publish_file(const char *path, const char *data, size_t bytes) {
+    static atomic_uint sequence;
+    char temp[2128];
+    int length = snprintf(temp, sizeof(temp), "%s.import-%lld-%u.tmp", path,
+                          (long long)time_now_us(), atomic_fetch_add(&sequence, 1));
+    if (length < 0 || length >= (int)sizeof(temp)) return -1;
+    if (!fs_write_file(temp, data, bytes) && fs_file_size(temp) == (long long)bytes && !fs_replace_file(temp, path))
+        return 0;
+    fs_remove(temp);
+    return -1;
+}
+
+static int manju_stage_board(const char *directory, const cJSON *board, int episode, int publish) {
+    char relative[64], episode_dir[2048], path[2048];
+    snprintf(relative, sizeof(relative), "manju/ep%02d", episode);
+    path_join(episode_dir, sizeof(episode_dir), directory, relative);
+    path_join(path, sizeof(path), episode_dir, "shots.json");
+    char *serialized = cJSON_PrintUnformatted(board);
+    if (!serialized) return 500;
+    size_t bytes = strlen(serialized);
+    int status = !bytes || bytes > 512 * 1024 ? 400 : 0;
+    if (!status && fs_exists(path)) {
+        size_t stored_bytes = 0;
+        int more = 0;
+        char *stored = fs_read_file_slice(path, 0, 512 * 1024, &stored_bytes, &more);
+        if (!stored || more || bytes != stored_bytes || memcmp(stored, serialized, bytes)) status = 409;
+        free(stored);
+    } else if (!status && publish && (fs_mkdirs(episode_dir) || manju_publish_file(path, serialized, bytes))) status = 500;
+    free(serialized);
+    return status;
+}
+
+static const char *const manju_agents[] = {"manju-director", "manju-artist", "manju-voice", "manju-editor"};
+enum { MANJU_EPISODE_LIMIT = 500 };
+
+static void manju_collect_episodes(const cJSON *dag, unsigned char episodes[MANJU_EPISODE_LIMIT + 1]) {
+    const cJSON *node;
+    cJSON_ArrayForEach(node, cJSON_GetObjectItemCaseSensitive(dag, "nodes")) {
+        double number = cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(node, "manju_compose_episode"));
+        if (number >= 1 && number <= MANJU_EPISODE_LIMIT && (int)number == number)
+            episodes[(int)number] = 1;
+    }
+}
+
+/* Imports and resumes use the serialized REST dispatch. Reject overlapping
+ * output directories without blocking concurrent work in a different range. */
+static int manju_busy(runtime_ctx *ctx, const char *workspace, const unsigned char selected[MANJU_EPISODE_LIMIT + 1]) {
+    char *json = flow_store_json(ctx->flowstore);
+    cJSON *flows = json ? cJSON_Parse(json) : NULL;
+    free(json);
+    int overlap = 0;
+    const cJSON *flow;
+    cJSON_ArrayForEach(flow, flows) {
+        const char *status = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(flow, "status"));
+        const char *saved_workspace = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(flow, "workspace"));
+        const char *text = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(flow, "dag"));
+        if (!status || (strcmp(status, "RUNNING") && strcmp(status, "QUEUED")) ||
+            !saved_workspace || strcmp(saved_workspace, workspace) || !text) continue;
+        cJSON *dag = cJSON_Parse(text);
+        unsigned char active[MANJU_EPISODE_LIMIT + 1] = {0};
+        manju_collect_episodes(dag, active);
+        cJSON_Delete(dag);
+        for (int i = 1; i <= MANJU_EPISODE_LIMIT; i++) {
+            if (active[i] && selected[i]) { overlap = 1; break; }
+        }
+        if (overlap) break;
+    }
+    cJSON_Delete(flows);
+    return overlap;
+}
+
+typedef struct {
+    const char *novel_dir, *text_route, *image_route, *video_route, *reference_set;
+    const cJSON *mixed;
+    int video_mode, seconds, character_views, batch, supplied;
+} manju_import_plan;
+
+static void manju_node_id(char id[24], int episode, const char *stage, int batch) {
+    if (batch) snprintf(id, 24, "ep%02d-%s", episode, stage);
+    else snprintf(id, 24, "%s", stage);
+}
+
+static int manju_edge(cJSON *edges, const char *from, const char *to) {
+    cJSON *edge = cJSON_CreateObject();
+    if (!edge || !cJSON_AddStringToObject(edge, "from", from) ||
+        !cJSON_AddStringToObject(edge, "to", to) || !cJSON_AddItemToArray(edges, edge)) {
+        cJSON_Delete(edge);
+        return -1;
+    }
+    return 0;
+}
+
+static int manju_append_episode(cJSON *nodes, cJSON *edges, cJSON *episodes,
+                                const manju_import_plan *plan, int episode, int prior_episode) {
+    static const char *const stages[] = {"step1", "step2", "step3", "step4", "character"};
+    static const char *const tasks[] = {"读取小说章节并生成完整分镜。", "为本集制作并验证画面。",
+        "为本集逐句配音并核对音频。", "合成并校验本集 MP4。", "生成缺少参考图的角色三视图。"};
+    char ids[5][24];
+    for (int i = 0; i < 5; i++) manju_node_id(ids[i], episode, stages[i], plan->batch);
+    for (int i = plan->supplied ? 1 : 0; i < (plan->character_views ? 5 : 4); i++) {
+        cJSON *node = cJSON_CreateObject();
+        if (!node || !cJSON_AddItemToArray(nodes, node)) { cJSON_Delete(node); return -1; }
+        cJSON_AddStringToObject(node, "id", ids[i]);
+        cJSON_AddStringToObject(node, "agent", manju_agents[i == 4 ? 1 : i]);
+        cJSON_AddStringToObject(node, "task", tasks[i]);
+        if (i == 0) {
+            char chapter[320];
+            snprintf(chapter, sizeof(chapter), "%s/chapter%02d.md", plan->novel_dir, episode);
+            cJSON_AddNumberToObject(node, "manju_story_episode", episode);
+            cJSON_AddStringToObject(node, "manju_chapter", chapter);
+            if (prior_episode) cJSON_AddNumberToObject(node, "manju_prior_episode", prior_episode);
+            if (plan->text_route) cJSON_AddStringToObject(node, "manju_text_route", plan->text_route);
+            if (plan->video_mode) cJSON_AddNumberToObject(node, "manju_clip_seconds", plan->seconds);
+            if (plan->mixed) cJSON_AddNumberToObject(node, "manju_story_video_mode",
+                plan->character_views ? MANJU_STORY_VIDEO_WITH_CHARACTER_VIEWS : MANJU_STORY_VIDEO_MIXED);
+        } else if (i == 1 && plan->video_mode) {
+            cJSON_AddNumberToObject(node, "manju_video_episode", episode);
+            if (plan->mixed) cJSON_AddItemToObject(node, "manju_video_routes", cJSON_Duplicate(plan->mixed, 1));
+            else cJSON_AddStringToObject(node, "manju_video_route", plan->video_route);
+            cJSON_AddNumberToObject(node, "manju_clip_seconds", plan->seconds);
+            if (*plan->reference_set && plan->character_views)
+                cJSON_AddBoolToObject(node, "manju_use_generated_references", 1);
+        } else if (i == 1) cJSON_AddNumberToObject(node, "manju_paint_episode", episode);
+        else if (i == 2) cJSON_AddNumberToObject(node, "manju_voice_episode", episode);
+        else if (i == 3) {
+            cJSON_AddNumberToObject(node, "manju_compose_episode", episode);
+            if (plan->video_mode) cJSON_AddBoolToObject(node, "manju_compose_clips", 1);
+        } else cJSON_AddNumberToObject(node, "manju_character_episode", episode);
+        if ((i == 1 || i == 4) && plan->image_route)
+            cJSON_AddStringToObject(node, "manju_image_route", plan->image_route);
+        if ((i == 0 || (i == 1 && plan->video_mode) || i == 4) && *plan->reference_set)
+            cJSON_AddStringToObject(node, "manju_reference_set", plan->reference_set);
+    }
+    if ((!plan->supplied && manju_edge(edges, ids[0], ids[2])) ||
+        (!plan->supplied && manju_edge(edges, ids[0], ids[plan->character_views ? 4 : 1])) ||
+        (plan->character_views && manju_edge(edges, ids[4], ids[1])) ||
+        manju_edge(edges, ids[1], ids[3]) || manju_edge(edges, ids[2], ids[3])) return -1;
+    if (prior_episode) {
+        /* Novel storyboards follow the prior story. Prewritten episodes already
+         * carry their authored continuity; stagger their visual batches. */
+        char previous[24];
+        manju_node_id(previous, prior_episode, stages[plan->supplied ? 1 : 0], plan->batch);
+        if (manju_edge(edges, previous, ids[plan->supplied ? (plan->character_views ? 4 : 1) : 0])) return -1;
+    }
+    char video[80];
+    snprintf(video, sizeof(video), "manju/ep%02d/videos/ep%02d%s.mp4", episode, episode,
+             plan->video_mode ? "-motion" : "");
+    cJSON *summary = cJSON_CreateObject();
+    if (!summary || !cJSON_AddNumberToObject(summary, "episode", episode) ||
+        !cJSON_AddStringToObject(summary, "video", video) ||
+        !cJSON_AddStringToObject(summary, "compose_node", ids[3]) || !cJSON_AddItemToArray(episodes, summary)) {
+        cJSON_Delete(summary);
+        return -1;
+    }
+    return 0;
+}
+
 static int h_manju_import(const http_request *req, http_response *resp, void *ud) {
     runtime_ctx *ctx = (runtime_ctx *)ud;
     if (!authz_ok(ctx, req, resp)) return 0;
@@ -1477,11 +1733,25 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     const char *text = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "text"));
     const char *path = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "path"));
     const char *title = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "title"));
-    cJSON *board = cJSON_GetObjectItemCaseSensitive(root, "storyboard");
-    if (board && (!cJSON_IsObject(board) || !manju_valid_imported_board(board) || text || path)) {
+    const cJSON *board = cJSON_GetObjectItemCaseSensitive(root, "storyboard");
+    const cJSON *boards = cJSON_GetObjectItemCaseSensitive(root, "storyboards");
+    const cJSON *files = cJSON_GetObjectItemCaseSensitive(root, "chapter_files");
+    const cJSON *batch_field = cJSON_GetObjectItemCaseSensitive(root, "all_episodes");
+    int batch = cJSON_IsTrue(batch_field);
+    int supplied = board || boards;
+    int board_count = cJSON_GetArraySize(boards);
+    if ((batch_field && !cJSON_IsBool(batch_field)) || (board && batch) ||
+        (boards && (!batch || !cJSON_IsArray(boards) || board_count < 1 || board_count > 500)) ||
+        (supplied && (text || path || files || (board && boards))) || (files && (text || path))) {
         cJSON_Delete(root);
         resp->status = 400;
-        http_resp_json(resp, "{\"error\":\"请单独导入有效分镜 JSON，包含 title、badge 与 shots\"}");
+        http_resp_json(resp, "{\"error\":\"请选择一种小说或分镜来源，多集分镜请传入 storyboards 和 all_episodes\"}");
+        return 0;
+    }
+    if (board && (!cJSON_IsObject(board) || !manju_valid_imported_board(board))) {
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"请导入有效分镜 JSON，包含 title、badge 与 shots\"}");
         return 0;
     }
     if (board && (!title || !*title))
@@ -1516,6 +1786,20 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     }
     int input_kind = llm_video_input_kind(&selected_video);
     route_clear(&selected_video);
+    const cJSON *reference_input = cJSON_GetObjectItemCaseSensitive(root, "character_references");
+    int reference_count = cJSON_GetArraySize(reference_input);
+    if (reference_input && (!cJSON_IsArray(reference_input) || reference_count > 9)) {
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"人物参考图最多可导入 9 张\"}");
+        return 0;
+    }
+    if (reference_count && !mixed && (!supplied || input_kind != LLM_VIDEO_REFERENCE)) {
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"导入人物参考图时请选择按分镜自动选择视频模型（含参考生视频路由）\"}");
+        return 0;
+    }
     cJSON *jviews = cJSON_GetObjectItemCaseSensitive(root, "character_views");
     int character_views = cJSON_IsTrue(jviews);
     if (jviews && !cJSON_IsBool(jviews)) {
@@ -1530,7 +1814,7 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     route selected_image = {0};
     if ((jimage_route && ((video_mode && !character_views && !mixed && input_kind != LLM_VIDEO_FIRST_FRAME) ||
                           !image_route || !*image_route)) ||
-        ((jimage_route || character_views) &&
+        ((jimage_route || (character_views && !reference_count)) &&
          (router_select_image(ctx->router, image_route, &selected_image) != 0 ||
           !selected_image.name || strlen(selected_image.name) >= sizeof chosen_image_route))) {
         route_clear(&selected_image);
@@ -1567,10 +1851,18 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         return 0;
     }
     int episode = (int)episode_value;
-    if (!board && (!text || !*text) && (!path || !*path)) {
+    const cJSON *end_field = cJSON_GetObjectItemCaseSensitive(root, "episode_end");
+    double end_value = end_field ? cJSON_GetNumberValue(end_field) : 0;
+    if (end_field && (!batch || !(end_value >= episode && end_value <= 500) || (int)end_value != end_value)) {
         cJSON_Delete(root);
         resp->status = 400;
-        http_resp_json(resp, "{\"error\":\"need 'text' (novel content) or 'path' (server file/dir)\"}");
+        http_resp_json(resp, "{\"error\":\"多集结束集号必须是大于或等于起始集号的整数\"}");
+        return 0;
+    }
+    if (!supplied && !files && (!text || !*text) && (!path || !*path)) {
+        cJSON_Delete(root);
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"请导入小说文本、章节文件或分镜\"}");
         return 0;
     }
     char *directory = workspace_pick(ctx, root, NULL);
@@ -1581,290 +1873,194 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         return 0;
     }
 
-    /* Gather chapters: inline text is split at 第X章 markers; a server path
-     * is either one file (split the same way) or a directory of .md/.txt
-     * chapter files (sorted, one chapter per file). */
+    int nch = boards ? board_count : 0;
     char **chapters = NULL;
-    int nch = 0;
-    char *owned_text = NULL;
-    if (board) {
-        /* An imported storyboard is the director's artifact. */
-    } else if (text && *text) {
-        chapters = manju_split_chapters(text, &nch);
-    } else {
-        long long sz = fs_file_size(path);
-        if (sz >= 0) {
-            owned_text = fs_read_file(path);
-            if (owned_text) chapters = manju_split_chapters(owned_text, &nch);
-        } else {
-            dir_list dl;
-            memset(&dl, 0, sizeof(dl));
-            if (fs_list_dir(path, &dl) == 0 && dl.count) {
-                char **names = calloc(dl.count, sizeof(*names));
-                int nn = 0;
-                for (size_t i = 0; i < dl.count; i++) {
-                    const char *nm = dl.items[i].name;
-                    size_t l = strlen(nm);
-                    if (!dl.items[i].is_dir && l > 3 &&
-                        (strcmp(nm + l - 3, ".md") == 0 || strcmp(nm + l - 4, ".txt") == 0))
-                        names[nn++] = xstrdup(nm);
-                }
-                qsort(names, (size_t)nn, sizeof(*names), manju_name_cmp);
-                if (nn > 500) nn = 500;
-                chapters = calloc((size_t)nn, sizeof(*chapters));
-                for (int i = 0; i < nn && chapters; i++) {
-                    char full[2048];
-                    path_join(full, sizeof(full), path, names[i]);
-                    chapters[i] = fs_read_file(full);
-                    if (!chapters[i]) { nn = i; break; }
-                }
-                nch = chapters ? nn : 0;
-                for (int i = 0; i < nn; i++) free(names[i]);
-                free(names);
+    char *dag_json = NULL;
+    cJSON *out = NULL;
+    int failure = 400;
+    const char *problem = NULL;
+    if (!supplied) {
+        if (files) chapters = manju_uploaded_chapters(files, &nch);
+        else if (text && *text) chapters = manju_split_chapters(text, &nch);
+        else chapters = manju_read_chapters(path, &nch);
+        if (!chapters || nch <= 0) {
+            problem = "没有可读取的小说章节，请检查每个章节文件";
+            goto done;
+        }
+    }
+    int last = batch ? (end_field ? (int)end_value : nch) : episode;
+    if ((batch && (last < episode || last > nch)) || (!batch && nch > 1 && episode > nch)) {
+        problem = "制作范围超出已导入的章节";
+        goto done;
+    }
+    char range_error[128];
+    int max_episodes = FLOW_MAX_NODES / (4 + character_views - supplied);
+    if (batch && last - episode + 1 > max_episodes) {
+        snprintf(range_error, sizeof(range_error), "当前设置每批最多制作 %d 集，请缩小制作范围", max_episodes);
+        problem = range_error;
+        goto done;
+    }
+    if (supplied && !manju_check_boards(board, boards, reference_input, episode, last)) {
+        problem = "请检查各集分镜的 title、badge 和 shots，并确保每张人物参考图能唯一匹配角色";
+        goto done;
+    }
+    if (boards && (!title || !*title))
+        title = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(manju_source_board(NULL, boards, episode), "title"));
+    const char *ntitle = title && *title ? title : "导入小说";
+
+    unsigned char selected[MANJU_EPISODE_LIMIT + 1] = {0};
+    memset(selected + episode, 1, (size_t)(last - episode + 1));
+    if (manju_busy(ctx, directory, selected)) {
+        failure = 409;
+        problem = "制作范围内有集数正在同一工作区运行，请等待当前任务或选择其他集号";
+        goto done;
+    }
+    if (supplied) {
+        for (int i = episode; i <= last; i++) {
+            int status = manju_stage_board(directory, manju_source_board(board, boards, i), i, 0);
+            if (status) {
+                failure = status;
+                problem = status == 409 ? "制作范围内已有不同分镜，请选择其他集号或工作区" :
+                                           "无法验证分镜文件，单集分镜大小不得超过 512 KiB";
+                goto done;
             }
-            fs_list_free(&dl);
         }
     }
-    free(owned_text);
-    if (!board && (!chapters || nch <= 0)) {
-        manju_free_chapters(chapters, nch);
-        free(directory);
-        cJSON_Delete(root);
-        resp->status = 400;
-        http_resp_json(resp, "{\"error\":\"no readable novel chapters in 'text' or 'path'\"}");
-        return 0;
-    }
-    if (nch > 1 && episode > nch) {
-        manju_free_chapters(chapters, nch);
-        free(directory);
-        cJSON_Delete(root);
-        resp->status = 400;
-        http_resp_json(resp, "{\"error\":\"episode exceeds the number of imported chapters\"}");
-        return 0;
+    char reference_set[MANJU_REFERENCE_KEY_CAP] = {0};
+    if (reference_count) {
+        const char *reference_problem = NULL;
+        int status = manju_references_import(directory, reference_input, reference_set, &reference_problem);
+        if (status) {
+            failure = status;
+            problem = reference_problem ? reference_problem : "无法导入人物参考图";
+            goto done;
+        }
     }
 
-    char slug[96];
-    manju_slug(title && *title ? title : "导入小说", slug, sizeof(slug));
-    char novel_dir[256], novel_abs[2048];
-    snprintf(novel_dir, sizeof(novel_dir), "novel/%s", slug);
+    char slug[96], novel_dir[256], novel_abs[2048];
+    manju_slug(ntitle, slug, sizeof(slug));
+    if (batch && !supplied) {
+        /* Give each version of a series its own chapter sources. A later import
+         * cannot change the script that an existing flow is queued to read. */
+        char identity[MANJU_EPISODE_LIMIT * 16 + 1];
+        for (int i = 0; i < nch; i++)
+            hash_hex(identity + 16 * i, hash64(chapters[i], strlen(chapters[i])));
+        char key[17];
+        hash_hex(key, hash64(identity, (size_t)nch * 16));
+        snprintf(novel_dir, sizeof(novel_dir), "novel/%s/%s", slug, key);
+    } else {
+        snprintf(novel_dir, sizeof(novel_dir), "novel/%s", slug);
+    }
     path_join(novel_abs, sizeof(novel_abs), directory, novel_dir);
-    if (!board && fs_mkdirs(novel_abs) != 0) {
-        manju_free_chapters(chapters, nch);
-        free(directory);
-        cJSON_Delete(root);
-        resp->status = 500;
-        http_resp_json(resp, "{\"error\":\"cannot create novel directory in workspace\"}");
-        return 0;
-    }
-    for (int i = 0; i < nch; i++) {
-        char rel[320], abs[2048];
-        snprintf(rel, sizeof(rel), "%s/chapter%02d.md", novel_dir, nch == 1 ? episode : i + 1);
-        path_join(abs, sizeof(abs), directory, rel);
-        if (fs_write_file(abs, chapters[i], strlen(chapters[i])) != 0) {
-            manju_free_chapters(chapters, nch);
-            free(directory);
-            cJSON_Delete(root);
-            resp->status = 500;
-            http_resp_json(resp, "{\"error\":\"cannot write chapter files\"}");
-            return 0;
+    failure = 500;
+    if (supplied) {
+        for (int i = episode; i <= last; i++) {
+            int status = manju_stage_board(directory, manju_source_board(board, boards, i), i, 1);
+            if (status) {
+                failure = status;
+                problem = "无法保存该集分镜，请检查制作范围和工作区";
+                goto done;
+            }
+        }
+    } else {
+        if (fs_mkdirs(novel_abs) != 0) {
+            problem = "无法在工作区创建小说目录";
+            goto done;
+        }
+        for (int i = 0; i < nch; i++) {
+            char rel[320], abs[2048];
+            snprintf(rel, sizeof(rel), "%s/chapter%02d.md", novel_dir, nch == 1 ? episode : i + 1);
+            path_join(abs, sizeof(abs), directory, rel);
+            if (manju_publish_file(abs, chapters[i], strlen(chapters[i])) != 0) {
+                problem = "无法保存小说章节文件";
+                goto done;
+            }
         }
     }
-    manju_free_chapters(chapters, nch);
 
-    /* Materialise the embedded pipeline so the team can run it from the
-     * workspace with a plain `python tools/manju/manju_pipeline.py …`. */
+    const char *pipeline = "tools/manju/manju_pipeline.py";
     char pipe_dir[2048], pipe_abs[2048];
     path_join(pipe_dir, sizeof(pipe_dir), directory, "tools/manju");
-    path_join(pipe_abs, sizeof(pipe_abs), directory, "tools/manju/manju_pipeline.py");
-    if (fs_mkdirs(pipe_dir) != 0 ||
-        fs_write_file(pipe_abs, manju_pipeline_py, strlen(manju_pipeline_py)) != 0) {
-        free(directory);
-        cJSON_Delete(root);
-        resp->status = 500;
-        http_resp_json(resp, "{\"error\":\"cannot materialise manju pipeline\"}");
-        return 0;
+    path_join(pipe_abs, sizeof(pipe_abs), directory, pipeline);
+    if (fs_mkdirs(pipe_dir) != 0 || manju_publish_file(pipe_abs, manju_pipeline_py, strlen(manju_pipeline_py)) != 0) {
+        problem = "无法保存漫剧制作脚本";
+        goto done;
+    }
+    if (manju_ensure_agent(ctx, manju_agents[0], manju_role_director) != 0 ||
+        manju_ensure_agent(ctx, manju_agents[1], manju_role_artist) != 0 ||
+        manju_ensure_agent(ctx, manju_agents[2], manju_role_voice) != 0 ||
+        manju_ensure_agent(ctx, manju_agents[3], manju_role_editor) != 0) {
+        problem = "无法注册漫剧制作团队";
+        goto done;
     }
 
-    if (manju_ensure_agent(ctx, "manju-director", manju_role_director) != 0 ||
-        manju_ensure_agent(ctx, "manju-artist", manju_role_artist) != 0 ||
-        manju_ensure_agent(ctx, "manju-voice", manju_role_voice) != 0 ||
-        manju_ensure_agent(ctx, "manju-editor", manju_role_editor) != 0) {
-        free(directory);
-        cJSON_Delete(root);
-        resp->status = 500;
-        http_resp_json(resp, "{\"error\":\"cannot register manju team agents\"}");
-        return 0;
-    }
-
-    /* Fixed DAG with deterministic relative paths: storyboard first, art and
-     * voice in parallel behind it, compose last. */
-    char chapter_rel[320], epdir[64], shots[128], frames[128], audio[128], video[160], manifest[160];
-    snprintf(chapter_rel, sizeof(chapter_rel), "%s/chapter%02d.md", novel_dir, episode);
-    snprintf(epdir, sizeof(epdir), "manju/ep%02d", episode);
-    snprintf(shots, sizeof(shots), "%s/shots.json", epdir);
-    snprintf(frames, sizeof(frames), "%s/frames", epdir);
-    snprintf(audio, sizeof(audio), "%s/audio", epdir);
-    snprintf(video, sizeof(video), "%s/videos/ep%02d.mp4", epdir, episode);
-    snprintf(manifest, sizeof(manifest), "%s/manifest.json", epdir);
-    const char *ntitle = title && *title ? title : "导入小说";
-    char task1[12288], task2[12288], task3[12288], task4[24576];
-    char chapter_abs[2048], shots_abs[2048], frames_abs[2048], audio_abs[2048], video_abs[2048], manifest_abs[2048];
-    path_join(chapter_abs,sizeof(chapter_abs),directory,chapter_rel);
-    path_join(shots_abs,sizeof(shots_abs),directory,shots);
-    path_join(frames_abs,sizeof(frames_abs),directory,frames);
-    path_join(audio_abs,sizeof(audio_abs),directory,audio);
-    path_join(video_abs,sizeof(video_abs),directory,video);
-    path_join(manifest_abs,sizeof(manifest_abs),directory,manifest);
-    if (board) {
-        char episode_abs[2048];
-        path_join(episode_abs, sizeof episode_abs, directory, epdir);
-        char *serialized = cJSON_PrintUnformatted(board);
-        size_t n = serialized ? strlen(serialized) : 0;
-        size_t prior_len = 0;
-        int more = 0;
-        int existing = fs_exists(shots_abs);
-        char *prior = existing ? fs_read_file_slice(shots_abs, 0, 512 * 1024, &prior_len, &more) : NULL;
-        int ok = n && n <= 512 * 1024 && (existing ?
-            prior && !more && n == prior_len && !memcmp(prior, serialized, n) :
-            fs_mkdirs(episode_abs) == 0 && fs_write_file(shots_abs, serialized, n) == 0);
-        free(prior);
-        free(serialized);
-        if (!ok) {
-            cJSON_Delete(root);
-            free(directory);
-            resp->status = existing ? 409 : 400;
-            http_resp_json(resp, "{\"error\":\"无法写入分镜，已有不同分镜时请选择其他集号或工作区\"}");
-            return 0;
-        }
-    }
-    snprintf(task1, sizeof(task1),
-             "把小说《%s》第%d章改编成漫剧第%d集镜头脚本。章节文件：%s。"
-             "完整读入 \"%s\" 后按戏剧节奏编排。"
-             "使用 file_write 将一份有效 JSON 写到 \"%s\"，顶层含 title、badge、title_image_prompt、end_image_prompt、characters 和 shots。"
-             "每条镜头需有 kind、text、speaker、character_ids、scene、image_prompt。"
-             "在角色表中统一外观与服装，每镜及封面、片尾提示提供独立的 9:16 画面描述，角色 id 在角色表中定义。"
-             "最终回复标出 %s 路径与镜头数。",
-             ntitle, episode, episode, chapter_rel, chapter_abs, shots_abs, shots_abs);
-    snprintf(task2, sizeof(task2),
-             "依据镜头脚本 %s，通过已配置的文生图路由生成漫剧第%d集画面。"
-             "核对每幅图，保存至 %s 并发布画面清单。",
-             shots_abs, episode, frames_abs);
-    snprintf(task3, sizeof(task3),
-             "为镜头脚本 %s 逐句合成漫剧第%d集配音："
-             "python \"%s\" tts --shots \"%s\" --out \"%s\" --ep %d。"
-             "核对 audio.json 每句 wav 存在且时长合理。最终回复用反引号标出 %s 目录路径。",
-             shots_abs, episode, pipe_abs, shots_abs, audio_abs, episode, audio_abs);
-    snprintf(task4, sizeof(task4),
-             "把画面与配音合成漫剧第%d集成片："
-             "python \"%s\" compose --shots \"%s\" --panels \"%s\" --audio \"%s\" --out \"%s\" --ep %d --manifest \"%s\"。"
-             "校验成功即交付 %s 路径与时长、帧数。失败时报告错误并停止。",
-             episode, pipe_abs, shots_abs, frames_abs, audio_abs, video_abs, episode, manifest_abs, video_abs);
-
+    const manju_import_plan plan = {
+        .novel_dir = novel_dir, .text_route = text_route, .image_route = image_route,
+        .video_route = video_route, .reference_set = reference_set, .mixed = mixed,
+        .video_mode = video_mode, .seconds = (int)seconds, .character_views = character_views,
+        .batch = batch, .supplied = supplied
+    };
     cJSON *dag = cJSON_CreateObject();
-    cJSON *nodes = cJSON_CreateArray(), *edges = cJSON_CreateArray();
-    cJSON_AddItemToObject(dag, "nodes", nodes);
-    cJSON_AddItemToObject(dag, "edges", edges);
-    const char *ids[4] = {"step1", "step2", "step3", "step4"};
-    const char *agents[4] = {"manju-director", "manju-artist", "manju-voice", "manju-editor"};
-    const char *tasks[4] = {task1,
-        video_mode ? "按剧情顺序为每个分镜生成并验证 3–4 秒竖版视频，生成短视频清单。" : task2,
-        task3, video_mode ? "按分镜顺序合并短视频，对齐配音与字幕，校验后交付整集 MP4。" : task4};
-    for (int i = board ? 1 : 0; i < 4; i++) {
-        cJSON *nd = cJSON_CreateObject();
-        cJSON_AddStringToObject(nd, "id", ids[i]);
-        cJSON_AddStringToObject(nd, "agent", agents[i]);
-        cJSON_AddStringToObject(nd, "task", tasks[i]);
-        if (i == 0) {
-            cJSON_AddNumberToObject(nd, "manju_story_episode", episode);
-            cJSON_AddStringToObject(nd, "manju_chapter", chapter_rel);
-            if (text_route) cJSON_AddStringToObject(nd, "manju_text_route", text_route);
-            if (video_mode) cJSON_AddNumberToObject(nd, "manju_clip_seconds", seconds);
-            if (mixed) cJSON_AddNumberToObject(nd, "manju_story_video_mode",
-                character_views ? MANJU_STORY_VIDEO_WITH_CHARACTER_VIEWS : MANJU_STORY_VIDEO_MIXED);
-        }
-        if (i == 1) {
-            if (video_mode) {
-                cJSON_AddNumberToObject(nd, "manju_video_episode", episode);
-                if (mixed) cJSON_AddItemToObject(nd, "manju_video_routes", cJSON_Duplicate(mixed, 1));
-                else cJSON_AddStringToObject(nd, "manju_video_route", video_route);
-                if (image_route) cJSON_AddStringToObject(nd, "manju_image_route", image_route);
-                cJSON_AddNumberToObject(nd, "manju_clip_seconds", seconds);
-            } else {
-                cJSON_AddNumberToObject(nd, "manju_paint_episode", episode);
-                if (image_route && *image_route) cJSON_AddStringToObject(nd, "manju_image_route", image_route);
-            }
-        }
-        if (i == 3) {
-            cJSON_AddNumberToObject(nd, "manju_compose_episode", episode);
-            if (video_mode) cJSON_AddBoolToObject(nd, "manju_compose_clips", 1);
-        }
-        if (i == 2) cJSON_AddNumberToObject(nd, "manju_voice_episode", episode);
-        cJSON_AddItemToArray(nodes, nd);
-    }
-    if (character_views) {
-        cJSON *nd = cJSON_CreateObject();
-        cJSON_AddStringToObject(nd, "id", "character");
-        cJSON_AddStringToObject(nd, "agent", "manju-artist");
-        cJSON_AddStringToObject(nd, "task", "使用本集配置的文生图路由产出角色正面、侧面和背面全身设定。");
-        cJSON_AddNumberToObject(nd, "manju_character_episode", episode);
-        cJSON_AddStringToObject(nd, "manju_image_route", image_route);
-        cJSON_AddItemToArray(nodes, nd);
-    }
-    const char *assets_after = character_views ? "character" : "step1";
-    const char *from[] = {assets_after, "step1", "step2", "step3", "step1"};
-    const char *to[] = {"step2", "step3", "step4", "step4", "character"};
-    for (int i = 0; i < (character_views ? 5 : 4); i++) {
-        if (board && !strcmp(from[i], "step1")) continue;
-        cJSON *e = cJSON_CreateObject();
-        cJSON_AddStringToObject(e, "from", from[i]);
-        cJSON_AddStringToObject(e, "to", to[i]);
-        cJSON_AddItemToArray(edges, e);
-    }
-    char *dag_json = cJSON_PrintUnformatted(dag);
+    cJSON *nodes = cJSON_AddArrayToObject(dag, "nodes"), *edges = cJSON_AddArrayToObject(dag, "edges");
+    out = cJSON_CreateObject();
+    cJSON *episodes = cJSON_AddArrayToObject(out, "episodes");
+    int built = nodes && edges && episodes;
+    for (int i = episode; built && i <= last; i++)
+        built = manju_append_episode(nodes, edges, episodes, &plan, i, i > episode ? i - 1 : 0) == 0;
+    if (built) dag_json = cJSON_PrintUnformatted(dag);
     cJSON_Delete(dag);
     char *verr = NULL;
     if (!dag_json || flow_validate(dag_json, &verr) != 0) {
-        http_resp_appendf(resp, "{\"error\":\"invalid manju flow: %s\"}", verr ? verr : "serialize failed");
-        resp->status = 500;
+        if (verr) log_warn("invalid Manju import Flow: %s", verr);
         free(verr);
-        free(dag_json);
-        free(directory);
-        cJSON_Delete(root);
-        return 0;
+        problem = "无法生成可执行的漫剧制作流程";
+        goto done;
     }
     free(verr);
 
     char name_buf[192], input_buf[512];
-    snprintf(name_buf, sizeof(name_buf), "漫剧《%s》第%d集", ntitle, episode);
-    if (board) snprintf(input_buf, sizeof(input_buf), "一键导入分镜《%s》，制作漫剧第%d集", ntitle, episode);
-    else snprintf(input_buf, sizeof(input_buf), "一键导入小说《%s》（%d 章），多 agent 组队制作漫剧第%d集", ntitle, nch, episode);
+    if (batch) {
+        snprintf(name_buf, sizeof(name_buf), "漫剧《%s》第%d–%d集", ntitle, episode, last);
+        snprintf(input_buf, sizeof(input_buf), "一键导入《%s》，多 agent 组队制作第%d–%d集，共%d集", ntitle,
+                 episode, last, last - episode + 1);
+    } else {
+        snprintf(name_buf, sizeof(name_buf), "漫剧《%s》第%d集", ntitle, episode);
+        if (board) snprintf(input_buf, sizeof(input_buf), "一键导入分镜《%s》，制作漫剧第%d集", ntitle, episode);
+        else snprintf(input_buf, sizeof(input_buf), "一键导入小说《%s》（%d 章），多 agent 组队制作漫剧第%d集", ntitle, nch, episode);
+    }
     /* userdata marker 2 routes the task runner to flow_run */
     int64_t id = scheduler_submit_access(ctx->scheduler, 0, dag_json, (void *)2, 0, "flow", 0, NULL, directory, 0, 0);
     if (id < 0) {
-        free(dag_json);
-        free(directory);
-        cJSON_Delete(root);
         scheduler_submit_error(resp, id);
-        return 0;
+        goto done;
     }
     workspace_bind(ctx, NULL, directory, id);
     flow_record_run(ctx, id, name_buf, input_buf, dag_json, directory, 0);
 
-    cJSON *out = cJSON_CreateObject();
     cJSON_AddNumberToObject(out, "id", (double)id);
+    cJSON_AddNumberToObject(out, "task_id", (double)id);
     cJSON_AddStringToObject(out, "status", "queued");
     cJSON_AddStringToObject(out, "title", ntitle);
     cJSON_AddStringToObject(out, "novel_dir", novel_dir);
     cJSON_AddNumberToObject(out, "chapters", nch);
     cJSON_AddNumberToObject(out, "episode", episode);
-    cJSON_AddStringToObject(out, "pipeline", "tools/manju/manju_pipeline.py");
-    cJSON *ag = cJSON_AddArrayToObject(out, "agents");
-    for (int i = 0; i < 4; i++) cJSON_AddItemToArray(ag, cJSON_CreateString(agents[i]));
+    cJSON_AddBoolToObject(out, "all_episodes", batch);
+    cJSON_AddStringToObject(out, "pipeline", pipeline);
+    cJSON *agents = cJSON_AddArrayToObject(out, "agents");
+    for (size_t i = 0; i < sizeof(manju_agents) / sizeof(*manju_agents); i++)
+        cJSON_AddItemToArray(agents, cJSON_CreateString(manju_agents[i]));
     char *out_json = cJSON_PrintUnformatted(out);
-    cJSON_Delete(out);
     http_resp_json(resp, out_json ? out_json : "{\"error\":\"serialize failed\"}");
     free(out_json);
+
+done:
+    if (problem) {
+        resp->status = failure;
+        http_resp_appendf(resp, "{\"error\":\"%s\"}", problem);
+    }
+    cJSON_Delete(out);
     free(dag_json);
+    manju_free_chapters(chapters, nch);
     free(directory);
     cJSON_Delete(root);
     return 0;
@@ -1985,6 +2181,19 @@ static int h_flow_resume(const http_request *req, http_response *resp, void *ud)
     char *directory=workspace_pick(ctx,selection,NULL);cJSON_Delete(selection);
     if(!directory){free(dag_json);resp->status=400;http_resp_json(resp,"{\"error\":\"saved workspace is unavailable\"}");return 0;}
     int automatic=rec->automatic;
+    if (!automatic && strstr(dag_json, "manju_compose_episode")) {
+        unsigned char selected[MANJU_EPISODE_LIMIT + 1] = {0};
+        cJSON *dag = cJSON_Parse(dag_json);
+        manju_collect_episodes(dag, selected);
+        cJSON_Delete(dag);
+        if (manju_busy(ctx, directory, selected)) {
+            free(dag_json);
+            free(directory);
+            resp->status = 409;
+            http_resp_json(resp, "{\"error\":\"有集数正在同一工作区制作，请等待当前任务完成再继续\"}");
+            return 0;
+        }
+    }
     char *name=xstrdup(rec->name),*input=xstrdup(rec->input);
     id = scheduler_submit_access(ctx->scheduler,0,automatic?input:dag_json,automatic?(void *)1:(void *)2,0,"flow",0,NULL,directory,0,0);
     if (id < 0) {

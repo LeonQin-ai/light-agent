@@ -16,6 +16,7 @@
 #include "security/secret.h"
 #include "api/manju_pipeline.h"
 #include "runtime/manju_paint.h"
+#include "runtime/manju_references.h"
 #include "runtime/manju_story.h"
 #include "runtime/manju_video.h"
 #include "llm/usage.h"
@@ -28,7 +29,6 @@
 #include <math.h>
 #include "cJSON.h"
 
-#define FLOW_MAX_NODES 64
 #define FLOW_MAX_PARALLEL 8
 #define FLOW_MAX_TASKLEN 8192 /* original node instruction; expansion is separate */
 #define FLOW_MAX_EXPANDED_CONTEXT (512 * 1024)
@@ -80,11 +80,14 @@ typedef struct flow_node {
     int manju_paint_episode;
     int manju_voice_episode;
     int manju_story_episode;
+    int manju_prior_episode;
     manju_story_video_mode manju_story_video_mode;
     int manju_video_episode;
     int manju_character_episode;
     int manju_clip_seconds;
     int manju_compose_clips;
+    int manju_use_generated_references;
+    char manju_reference_set[MANJU_REFERENCE_KEY_CAP];
     char manju_image_route[128];
     char manju_text_route[128];
     char manju_video_route[128];
@@ -324,6 +327,36 @@ static int flow_parse(const char *dag_json, flow_dag *d, char **err) {
                 }
                 nd->manju_story_video_mode = (manju_story_video_mode)mode;
             }
+        }
+        const cJSON *reference_set = cJSON_GetObjectItemCaseSensitive(jn, "manju_reference_set");
+        if (reference_set) {
+            const char *key = cJSON_GetStringValue(reference_set);
+            if (!manju_references_valid_key(key) ||
+                (!nd->manju_story_episode && !nd->manju_video_episode && !nd->manju_character_episode)) {
+                cJSON_Delete(root);
+                flow_err(err, "invalid Manju character reference set");
+                return -1;
+            }
+            memcpy(nd->manju_reference_set, key, sizeof nd->manju_reference_set);
+        }
+        const cJSON *use_generated = cJSON_GetObjectItemCaseSensitive(jn, "manju_use_generated_references");
+        if (use_generated) {
+            if (!nd->manju_video_episode || !reference_set || !cJSON_IsBool(use_generated)) {
+                cJSON_Delete(root);
+                flow_err(err, "generated character fallback requires a Manju video node with uploaded references");
+                return -1;
+            }
+            nd->manju_use_generated_references = cJSON_IsTrue(use_generated);
+        }
+        const cJSON *prior_episode = cJSON_GetObjectItemCaseSensitive(jn, "manju_prior_episode");
+        if (prior_episode) {
+            double previous = cJSON_GetNumberValue(prior_episode);
+            if (!nd->manju_story_episode || previous < 1 || previous != nd->manju_story_episode - 1) {
+                cJSON_Delete(root);
+                flow_err(err, "Manju previous episode must immediately precede a director node episode");
+                return -1;
+            }
+            nd->manju_prior_episode = (int)previous;
         }
         d->n++;
     }
@@ -772,6 +805,7 @@ static void flow_manju_story(flow_job *j) {
     int64_t started = time_now_ms();
     j->rc = manju_story_episode(client, j->workspace, node->manju_chapter, node->manju_story_episode,
                                node->manju_clip_seconds, node->manju_story_video_mode,
+                               node->manju_reference_set, router_has_image(ctx->router), node->manju_prior_episode,
                                flow_abort_requested, j->parent, &requests, &j->out);
     long long input = 0, output = 0;
     llm_usage_totals(client, &input, &output);
@@ -942,18 +976,20 @@ static void flow_worker(void *arg) {
                                     j->nd->manju_video_routes[2]};
             j->rc = manju_video_episode_mixed(j->ctx->router, names, j->nd->manju_image_route, j->workspace,
                                              j->nd->manju_video_episode, j->nd->manju_clip_seconds,
+                                             j->nd->manju_reference_set, j->nd->manju_use_generated_references,
                                              flow_paint_abort, flow_paint_progress, j, &j->out);
         } else {
             j->rc = manju_video_episode_selected(j->ctx->router, j->nd->manju_video_route,
                                                 j->nd->manju_image_route, j->workspace,
                                                 j->nd->manju_video_episode, j->nd->manju_clip_seconds,
+                                                j->nd->manju_reference_set, j->nd->manju_use_generated_references,
                                                 flow_paint_abort, flow_paint_progress, j, &j->out);
         }
         goto finish;
     }
     if (j->nd->manju_character_episode) {
         j->rc = manju_character_views(j->ctx->router, j->nd->manju_image_route, j->workspace,
-                                     j->nd->manju_character_episode, flow_paint_abort,
+                                     j->nd->manju_character_episode, j->nd->manju_reference_set, flow_paint_abort,
                                      flow_paint_progress, j, &j->out);
         goto finish;
     }

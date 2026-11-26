@@ -40,6 +40,16 @@ MP4 = (box(b"ftyp", b"isom\0\0\0\0isom") +
        box(b"mdat", b"\0\x01\x02\x03"))
 
 
+def solid_png(color):
+    def chunk(kind, payload):
+        return struct.pack(">I4s", len(payload), kind) + payload + struct.pack(">I", zlib.crc32(kind + payload))
+
+    header = struct.pack(">IIBBBBB", 400, 400, 8, 2, 0, 0, 0)
+    pixels = (b"\0" + color * 400) * 400
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) +
+            chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b""))
+
+
 class Provider(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
@@ -59,6 +69,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
         params = body.get("parameters", {})
         model = body.get("model")
         ark = model == SEEDANCE
+        images = []
         if ark:
             prompt = next((entry.get("text") for entry in body.get("content", [])
                            if entry.get("type") == "text"), "")
@@ -71,17 +82,22 @@ class Provider(http.server.BaseHTTPRequestHandler):
             duration = params.get("duration")
             media = source.get("media", [])
             visual_input = False
-            if model in (FIRST_FRAME, REFERENCE) and len(media) == 1:
-                item = media[0]
+            if (model == FIRST_FRAME and len(media) == 1) or (model == REFERENCE and 1 <= len(media) <= 9):
                 expected_type = "first_frame" if model == FIRST_FRAME else "reference_image"
                 prefix = "data:image/png;base64,"
-                url = item.get("url", "")
-                if item.get("type") == expected_type and url.startswith(prefix):
+                for item in media:
+                    url = item.get("url", "")
+                    if item.get("type") != expected_type or not url.startswith(prefix):
+                        break
                     image = base64.b64decode(url[len(prefix):], validate=True)
-                    width, height = struct.unpack(">II", image[16:24])
-                    visual_input = (image.startswith(b"\x89PNG\r\n\x1a\n") and min(width, height) >= 400
-                                    and (("ratio" not in params) if model == FIRST_FRAME else
-                                         (params.get("ratio") == "9:16" and "[Image 1]" in prompt)))
+                    if not image.startswith(b"\x89PNG\r\n\x1a\n") or len(image) < 24:
+                        break
+                    if min(struct.unpack(">II", image[16:24])) < 400:
+                        break
+                    images.append(image)
+                visual_input = len(images) == len(media) and (
+                    "ratio" not in params if model == FIRST_FRAME else
+                    params.get("ratio") == "9:16" and all(f"[Image {i + 1}]" in prompt for i in range(len(images))))
             valid = (self.path == SUBMIT and self.headers.get("X-DashScope-Async") == "enable"
                      and duration in (3, 4)
                      and ((model == MODEL and not media and params.get("ratio") == "9:16") or
@@ -93,6 +109,8 @@ class Provider(http.server.BaseHTTPRequestHandler):
         with self.server.lock:
             self.server.durations[model, duration] += 1
             self.server.submissions.append(prompt)
+            if model == REFERENCE:
+                self.server.reference_inputs.append((prompt, images))
             task_id = str(len(self.server.submissions))
         self.reply({"id": task_id} if ark else {"output": {"task_id": task_id, "task_status": "PENDING"}})
 
@@ -127,12 +145,16 @@ class Provider(http.server.BaseHTTPRequestHandler):
             self.reply({}, 400)
 
 
-def terminal(base, flow):
-    status, started = request(base, "/v1/flows", flow)
+def terminal(base, flow, endpoint="/v1/flows"):
+    status, started = request(base, endpoint, flow)
     assert status == 200, (status, started)
+    return wait_task(base, started["id"])
+
+
+def wait_task(base, task_id):
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
-        status, task = request(base, f"/v1/tasks/{started['id']}")
+        status, task = request(base, f"/v1/tasks/{task_id}")
         assert status == 200, (status, task)
         if task["status"] not in ("RUNNING", "QUEUED"):
             return task
@@ -176,13 +198,7 @@ def check_flow(base, provider, work):
 
 
 def check_mixed(base, provider, work):
-    def chunk(kind, payload):
-        return struct.pack(">I4s", len(payload), kind) + payload + struct.pack(">I", zlib.crc32(kind + payload))
-
-    pixels = (b"\0" + b"\x60\x70\x80" * 400) * 400
-    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 400, 400, 8, 2, 0, 0, 0)) +
-           chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b""))
-    (work / "hero.png").write_bytes(png)
+    (work / "hero.png").write_bytes(solid_png(b"\x60\x70\x80"))
     episode = work / "manju" / "ep03"
     episode.mkdir(parents=True)
     board = {"title": "Same hero", "badge": "Fixture", "shots": [
@@ -210,6 +226,102 @@ def check_mixed(base, provider, work):
     print("PASS: same episode routes three clips by input type with no title/end or resume submissions")
 
 
+def check_character_references(base, provider, work):
+    lulu = solid_png(b"\xa0\x10\x30")
+    mei = solid_png(b"\x10\x30\xa0")
+
+    def upload(name, data):
+        return {"name": name, "filename": "../hero.png",
+                "data_url": "data:image/png;base64," + base64.b64encode(data).decode()}
+
+    payload = {
+        "storyboard": {
+            "title": "两位主角", "badge": "Fixture", "voice_cast": [],
+            "characters": [{"id": "lulu", "name": "噜噜"}, {"id": "mei", "name": "噜妹"}],
+            "shots": [{"kind": "narration", "text": "两位主角来到灯塔",
+                       "character_ids": ["lulu", "mei", "lulu"], "video_mode": "text"}],
+        },
+        "episode": 4, "character_views": True, "clip_seconds": 3,
+        "video_routes": {"text": "fixture-video", "first_frame": FIRST_FRAME, "reference": REFERENCE},
+        "character_references": [upload("噜妹", mei), upload("噜噜", lulu)],
+    }
+    endpoint = "/v1/manju/import"
+    invalid = {**payload, "character_references": [upload("噜噜", b"not a PNG")]}
+    status, response = request(base, endpoint, invalid)
+    assert status == 400, response
+    assert not (work / "manju" / "ep04" / "shots.json").exists()
+
+    task = terminal(base, payload, endpoint)
+    nodes = {node["id"]: node for node in task["flow_nodes"]}
+    assert nodes["step2"]["status"] == "ok" and nodes["step2"]["video_requests"] == 1, nodes
+    assert nodes["character"]["status"] == "ok" and nodes["character"]["image_requests"] == 0, nodes
+    assert nodes["step3"]["status"] == "error", nodes  # Invalid voice_cast keeps this fixture offline.
+    with provider.lock:
+        prompt, images = provider.reference_inputs[-1]
+    assert images == [lulu, mei], (len(images), prompt)
+    assert "[Image 1] 对应角色「噜噜」" in prompt and "[Image 2] 对应角色「噜妹」" in prompt, prompt
+    stored = {p.read_bytes() for p in (work / "manju" / "references").glob("*.png")}
+    assert stored == {lulu, mei}, len(stored)
+    assert not (work / "manju" / "hero.png").exists()
+    print("PASS: uploaded role references control two ordered R2V inputs without regenerating either role")
+
+
+def check_episode_batch(base, provider, work):
+    work = work / "five-episode-workspace"
+    work.mkdir()
+    assert request(base, "/v1/workspaces", {"path": str(work)})[0] == 200
+    hero = solid_png(b"\x32\x94\xb0")
+    boards = [
+        {"title": f"分镜第{i}集", "badge": "Fixture", "voice_cast": [],
+         "characters": [{"id": "hero", "name": "小舟"}],
+         "shots": [{"kind": "narration", "text": f"第{i}集，小舟继续送信。",
+                    "video_prompt": f"Story beat {i}", "character_ids": ["hero"]}]}
+        for i in range(1, 6)
+    ]
+    payload = {"workspace": str(work), "all_episodes": True, "storyboards": boards,
+               "clip_seconds": 3, "video_route": REFERENCE,
+               "character_references": [{"name": "小舟", "filename": "hero.png",
+                   "data_url": "data:image/png;base64," + base64.b64encode(hero).decode()}]}
+    endpoint = "/v1/manju/import"
+    status, rejected = request(base, endpoint, {**payload, "storyboards": [*boards[:-1], {}]})
+    assert status == 400 and rejected.get("error"), (status, rejected)
+    assert not (work / "manju").exists()
+
+    with provider.lock:
+        before = len(provider.reference_inputs)
+    # request decodes the entire HTTP response as one JSON document.
+    status, started = request(base, endpoint, payload)
+    assert status == 200 and "error" not in started, (status, started)
+    assert started["id"] == started["task_id"] and started["chapters"] == 5, started
+    assert started["all_episodes"] is True
+    assert started["episodes"] == [
+        {"episode": i, "video": f"manju/ep{i:02d}/videos/ep{i:02d}-motion.mp4",
+         "compose_node": f"ep{i:02d}-step4"} for i in range(1, 6)
+    ], started
+    status, history = request(base, "/v1/flows/list")
+    assert status == 200, history
+    flow = next(item for item in history["records"] if item["id"] == started["task_id"])
+    dag = json.loads(flow["dag"])
+    video_nodes = [node for node in dag["nodes"] if "manju_video_episode" in node]
+    assert [node["manju_video_episode"] for node in video_nodes] == list(range(1, 6)), video_nodes
+    refsets = {node["manju_reference_set"] for node in video_nodes}
+    assert len(refsets) == 1 and all(refsets), refsets
+
+    task = wait_task(base, started["task_id"])
+    nodes = {node["id"]: node for node in task["flow_nodes"]}
+    for i, board in enumerate(boards, 1):
+        episode = work / "manju" / f"ep{i:02d}"
+        assert json.loads((episode / "shots.json").read_text(encoding="utf-8")) == board
+        assert nodes[f"ep{i:02d}-step2"]["status"] == "ok", nodes
+        assert nodes[f"ep{i:02d}-step2"]["video_requests"] == 1, nodes
+    with provider.lock:
+        inputs = provider.reference_inputs[before:]
+    assert len(inputs) == 5
+    for index, (prompt, images) in enumerate(inputs, 1):
+        assert f"Story beat {index}" in prompt and images == [hero], prompt
+    print("PASS: a five-episode import returns one JSON receipt and sends the same uploaded role to each episode")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
@@ -219,6 +331,7 @@ def main():
     ) as provider:
         provider.lock = threading.Lock()
         provider.submissions = []
+        provider.reference_inputs = []
         provider.durations = collections.Counter()
         provider.polls = collections.Counter()
         provider.fail_download = False
@@ -266,6 +379,8 @@ def main():
                 print(f"PASS: {model} uses the corresponding asynchronous protocol")
             check_flow(base, provider, pathlib.Path(tmp))
             check_mixed(base, provider, pathlib.Path(tmp))
+            check_character_references(base, provider, pathlib.Path(tmp))
+            check_episode_batch(base, provider, pathlib.Path(tmp))
         finally:
             process.terminate()
             process.wait(timeout=10)

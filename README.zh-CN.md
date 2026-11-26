@@ -26,7 +26,7 @@
 
 ### 1. 漫剧作品展示
 
-两支作品均由 light-agent 漫剧流程生成，带有中文配音和字幕。
+以下作品由 light-agent 漫剧流程生成，带有中文配音和字幕。
 
 #### 《拾光守灯人》
 
@@ -39,6 +39,40 @@ https://github.com/user-attachments/assets/5600a05c-49d3-4cf0-95be-8f0e179a9b14
 园艺机器人芽芽种下一颗发光的种子。屋顶空镜由文生视频生成，播种和发芽两镜共用一套角色三视图。[下载 MP4 · 20.6 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/starlight-greenhouse.mp4)
 
 https://github.com/user-attachments/assets/8a635a60-4224-406e-9ab2-674dcd1a0ed4
+
+#### 《噜噜和噜妹：雨后的那盏灯》
+
+一次导入五集分镜，五集共用两张角色参考图。正片镜头使用 HappyHorse 参考生视频，故事沿着同一盏小灯展开。
+
+##### 第 1 集 · 果园里的灯
+
+噜噜捡起一盏没亮的小灯，噜妹指向山坡上的温室。 [下载 MP4 · 13.35 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep01.mp4)
+
+https://github.com/user-attachments/assets/07d3ebe1-3320-4f2e-9b2d-f1feb562c700
+
+##### 第 2 集 · 借一片叶子
+
+两人用一片大叶子挡雨，木栈道却被水沟截断。 [下载 MP4 · 13.45 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep02.mp4)
+
+https://github.com/user-attachments/assets/0fd884dd-9d68-49ae-8155-3d12d4c68e1c
+
+##### 第 3 集 · 把灯送过溪
+
+他们把绿叶当小船，将灯送到对岸。 [下载 MP4 · 13.00 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep03.mp4)
+
+https://github.com/user-attachments/assets/9f25fceb-84d2-48f5-87ab-3b23794f0874
+
+##### 第 4 集 · 温室点灯
+
+小灯挂上温室门口，星形小窗透出第一束暖光。 [下载 MP4 · 13.70 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep04.mp4)
+
+https://github.com/user-attachments/assets/00e86d32-d390-47f3-9f15-ca5e009b68e3
+
+##### 第 5 集 · 雨后的那盏灯
+
+雨停了，灯照亮两人回家的路。 [下载 MP4 · 13.90 秒](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/lulu-lumei-ep05.mp4)
+
+https://github.com/user-attachments/assets/3cc78b78-0631-458d-9467-0c74d7e41448
 
 ### 2. 桌面对话与执行进度
 
@@ -181,8 +215,9 @@ CLI 部署可以显式指定执行目录和状态存储位置：
 
 1. 在 **更多 → Models** 分别添加三个 **HappyHorse（百炼 Token Plan）** 预设。需要生成首帧及角色参考图时，添加 `qwen-image-3.0-pro` 等文生图路由。点击各路由条目的 **Test** 检查配置。
 2. 打开 **多 Agent & Flow → 漫剧工房**。导入 `.txt` 或 `.md` 章节、导入分镜 `.json`，或点击 **加载三镜宣传样片**。内置《拾光守灯人》用 T2V 展示灯塔空镜，后两镜分别用 I2V 和 R2V 演出同一位原创守灯人阿澄。
-3. 检查三种视频路由和文生图路由，选每镜 3 秒或 4 秒。点击 **导入并组队制作**，再从 **查看制作进度** 跟踪处理过程。自定义分镜可将每个镜头的 `video_mode` 设为 `text`、`first_frame` 或 `reference`。
-4. 制作完成后，在工作区打开 `manju/epNN/videos/epNN-motion.mp4`。中断后继续运行时，任务会复用已保存的片段。配音与合成需要本机 Python 和漫剧依赖。
+3. 如果已有角色设定图，打开 **导入参考人物图**，输入剧本里的角色名并添加 PNG、JPEG 或 WebP。选择 **按镜头选视频模型**，参考生视频镜头会按角色使用对应图片，同框镜头可以带上多位角色的参考图。
+4. 一次导入多集时，可选择多个章节文件、带 `第…集` 或 `第…章` 标题的 `.txt` 或 `.md` 文件，或多个分镜 `.json` 文件（也可使用单个 JSON 数组）。在 **制作范围** 选择 **全部章节** 或 **指定范围**，再点击 **导入并组队制作**。同批各集复用角色参考图，自动生成分镜时会承接上一集结尾。
+5. 从 **查看制作进度** 跟踪各集，完成后在工作区打开 `manju/epNN/videos/epNN-motion.mp4`。继续任务时会复用已保存的片段。配音与合成需要本机 Python 和漫剧依赖。自定义分镜的 `video_mode` 支持 `text`、`first_frame` 和 `reference`，每段可选 3 秒或 4 秒。
 
 「文生视频」模式还可以选择百炼可灵或火山方舟 Seedance，以单路由制作整集。
 

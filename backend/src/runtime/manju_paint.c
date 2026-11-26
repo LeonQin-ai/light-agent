@@ -2,6 +2,7 @@
 #define _XOPEN_SOURCE 700
 #endif
 #include "runtime/manju_paint.h"
+#include "runtime/manju_references.h"
 #include "infra/util.h"
 #include "llm/image.h"
 #include "os/http_cancel.h"
@@ -34,7 +35,7 @@ typedef struct paint_run {
     const char *size;
     int total;
     atomic_int next, rejected;
-    int ready, requests;
+    int covered, ready, requests;
     mutex_t progress_lock;
     int (*abort_check)(void *);
     manju_paint_progress progress;
@@ -113,7 +114,7 @@ static void notify(paint_run *run, int ready, int requests) {
     mutex_lock(&run->progress_lock);
     run->ready += ready;
     run->requests += requests;
-    if (run->progress) run->progress(run->ready, run->total, run->requests, run->context);
+    if (run->progress) run->progress(run->covered + run->ready, run->total, run->requests, run->context);
     mutex_unlock(&run->progress_lock);
 }
 
@@ -234,22 +235,17 @@ static int panel_add(cJSON *entries, const char *file, const char *kind, int ind
 }
 
 static int paint_episode(router *routes, const char *route_name, const char *workspace, int episode,
-                         int characters, int (*abort_check)(void *), manju_paint_progress progress,
+                         int characters, const char *reference_set, int (*abort_check)(void *), manju_paint_progress progress,
                          void *context, char **result) {
     char directory[PAINT_PATH_CAP], episode_dir[PAINT_PATH_CAP], path[PAINT_PATH_CAP], relative[40];
     char *root = NULL, *canonical_directory = NULL, *text = NULL, *manifest = NULL;
-    cJSON *board = NULL, *doc = NULL;
+    cJSON *board = NULL, *doc = NULL, *references = NULL;
     int rc = -1, expected = 0;
     paint_run run = {.abort_check = abort_check, .progress = progress, .context = context};
     const char *error = "无法分配漫剧绘制任务";
     strbuf report;
     strbuf_init(&report);
     *result = NULL;
-    if (router_select_image(routes, route_name, &run.model) != 0) {
-        error = "没有匹配的文生图路由，请在 Model routes 配置并测试出图";
-        goto done;
-    }
-    if (strstr(run.model.model, "qwen-image-")) run.size = characters ? "1024x576" : "576x1024";
     root = existing_path(workspace && *workspace ? workspace : ".");
     snprintf(relative, sizeof relative, "manju/ep%02d", episode);
     if (!root || strlen(root) + strlen(relative) + 100 >= sizeof directory) {
@@ -280,6 +276,13 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
         error = "分镜角色清单无效，需要 0–24 个角色";
         goto done;
     }
+    if (characters && reference_set && *reference_set) {
+        references = manju_references_load(root, reference_set);
+        if (!references || !manju_references_resolve(references, board)) {
+            error = "无法读取人物参考图，或参考图名称对应多名角色";
+            goto done;
+        }
+    }
     run.total = characters ? cast_count : count + 2;
     if (!run.total) {
         strbuf_append(&report, "本集没有需要生成三视图的角色。");
@@ -298,6 +301,7 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
     if (characters) {
         for (int i = 0; i < cast_count; i++) {
             const cJSON *character = cJSON_GetArrayItem(cast, i);
+            if (manju_references_cover(references, character)) continue;
             const char *visual = field(character, "visual");
             const char *name = field(character, "name");
             const char *id = field(character, "id");
@@ -337,6 +341,12 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
         if (!run.panels[i + 1].prompt) goto done;
         expected++;
     }
+    if (expected && router_select_image(routes, route_name, &run.model) != 0) {
+        error = "没有匹配的文生图路由，请在 Model routes 配置出图或补充缺失角色的参考图";
+        goto done;
+    }
+    if (run.model.model && strstr(run.model.model, "qwen-image-"))
+        run.size = characters ? "1024x576" : "576x1024";
     path_join(directory, sizeof directory, episode_dir, characters ? "characters" : "frames");
     if (!existing_under(root, episode_dir) || fs_mkdirs(directory) != 0 || !existing_under(root, directory) ||
         !(canonical_directory = existing_path(directory))) {
@@ -344,8 +354,9 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
         goto done;
     }
     run.directory = canonical_directory;
+    run.covered = characters ? run.total - expected : 0;
     if (mutex_init(&run.progress_lock) != 0) goto done;
-    if (progress) progress(0, run.total, 0, context);
+    if (progress) progress(run.covered, run.total, 0, context);
     thread_t *threads[PAINT_WORKERS] = {0};
     for (int i = 0; i < PAINT_WORKERS && i < expected; i++)
         threads[i] = thread_create(paint_worker, &run);
@@ -357,7 +368,7 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
         }
     }
     mutex_destroy(&run.progress_lock);
-    if (!workers) {
+    if (expected && !workers) {
         error = "无法启动文生图工作线程";
         goto done;
     }
@@ -379,9 +390,10 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
         doc = cJSON_CreateObject();
         cJSON *entries = doc ? cJSON_AddArrayToObject(doc, "characters") : NULL;
         if (!entries || !cJSON_AddNumberToObject(doc, "ep", episode) ||
-            !cJSON_AddStringToObject(doc, "image_model", run.model.model)) goto done;
+            !cJSON_AddStringToObject(doc, "image_model", run.model.model ? run.model.model : "")) goto done;
         for (int i = 0; i < cast_count; i++) {
             const cJSON *character = cJSON_GetArrayItem(cast, i);
+            if (!run.panels[i].prompt) continue;
             cJSON *item = cJSON_CreateObject();
             if (!item || !cJSON_AddStringToObject(item, "id", field(character, "id")) ||
                 !cJSON_AddStringToObject(item, "name", field(character, "name")) ||
@@ -398,8 +410,8 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
             error = "无法发布角色三视图清单";
             goto done;
         }
-        strbuf_appendf(&report, "%s 完成 %d 个角色的正面、侧面和背面设定（%d 次出图请求）。\n角色清单：`%s`",
-                       run.model.model, cast_count, run.requests, path);
+        strbuf_appendf(&report, "已使用 %d 个角色的上传参考图，生成 %d 个角色的三视图（%d 次出图请求）。\n角色清单：`%s`",
+                       cast_count - expected, expected, run.requests, path);
         rc = 0;
         goto done;
     }
@@ -438,6 +450,7 @@ done:
     free(manifest);
     cJSON_Delete(board);
     cJSON_Delete(doc);
+    cJSON_Delete(references);
     route_clear(&run.model);
     return rc;
 }
@@ -445,11 +458,11 @@ done:
 int manju_paint_episode(router *routes, const char *route_name, const char *workspace, int episode,
                         int (*abort_check)(void *), manju_paint_progress progress, void *context,
                         char **result) {
-    return paint_episode(routes, route_name, workspace, episode, 0, abort_check, progress, context, result);
+    return paint_episode(routes, route_name, workspace, episode, 0, NULL, abort_check, progress, context, result);
 }
 
 int manju_character_views(router *routes, const char *route_name, const char *workspace, int episode,
-                          int (*abort_check)(void *), manju_paint_progress progress, void *context,
+                          const char *reference_set, int (*abort_check)(void *), manju_paint_progress progress, void *context,
                           char **result) {
-    return paint_episode(routes, route_name, workspace, episode, 1, abort_check, progress, context, result);
+    return paint_episode(routes, route_name, workspace, episode, 1, reference_set, abort_check, progress, context, result);
 }
