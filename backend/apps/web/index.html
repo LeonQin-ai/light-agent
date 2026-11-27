@@ -471,9 +471,17 @@
   .item b a{color:var(--fg); text-decoration:none}
   .item b a:hover{color:var(--accent)}
   .row{display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap}
-  .manju-references{margin-top:10px; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius-sm)}
-  .manju-references summary{cursor:pointer}
-  .manju-references .hint{margin:6px 0 0}
+  .manju-settings{margin-top:10px; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius-sm)}
+  .manju-settings summary{cursor:pointer}
+  .manju-settings .hint{margin:6px 0 0}
+  .manju-cast-fields{display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr)); gap:8px; margin-top:8px}
+  .manju-cast-fields label{display:grid; gap:4px}
+  .manju-cast-fields input,.manju-cast-fields select{width:100%; min-width:0}
+  .manju-cast-visual{grid-column:1/-1}
+  .manju-cast-list{display:grid; gap:4px; margin:8px 0 0; padding:0; list-style:none}
+  .manju-cast-list li{display:flex; flex-wrap:wrap; gap:6px; align-items:center}
+  .manju-cast-list span{flex:1; min-width:0; overflow-wrap:anywhere}
+  .manju-stages{padding-inline-start:1.4em; margin:8px 0 0}
   .manju-reference-list{display:flex; flex-wrap:wrap; gap:8px; list-style:none; padding:0; margin:8px 0 0}
   .manju-reference-list:empty{margin:0}
   .manju-reference-item{display:flex; align-items:center; gap:8px; padding:5px; border:1px solid var(--border); border-radius:var(--radius-sm); max-width:100%}
@@ -1562,6 +1570,8 @@ panels.agents = `
       <input id="manju-file" type="file" accept=".txt,.md,.json" multiple onchange="selectManjuImportScope()" style="flex:1;min-width:200px">
     </div>
     <div class="row" style="margin-top:8px">
+      <label for="manju-workspace">制作工作区</label>
+      <select id="manju-workspace" onchange="manjuCastWorkspaceChanged()"><option value="">默认工作区</option></select>
       <label for="manju-import-scope">制作范围</label>
       <select id="manju-import-scope" onchange="updateManjuEpisodeFields()">
         <option value="single">单集</option>
@@ -1578,9 +1588,63 @@ panels.agents = `
       </span>
       <span id="manju-scope-status" class="muted" role="status"></span>
     </div>
-    <details class="manju-references">
+    <div class="row" style="margin-top:8px">
+      <label for="manju-audio-mode">叙事配音</label>
+      <select id="manju-audio-mode" aria-describedby="manju-audio-hint">
+        <option value="auto">随来源</option>
+        <option value="dialogue">角色对白</option>
+        <option value="legacy">原有配音</option>
+      </select>
+      <span id="manju-audio-hint" class="hint">小说默认改编为角色对白。导入分镜时沿用剧本设定。</span>
+    </div>
+    <details id="manju-cast" class="manju-settings" ontoggle="if(this.open)showManjuCast()">
+      <summary>角色档案 <span id="manju-cast-count" class="muted"></span></summary>
+      <p class="hint">同一工作区的各集共用角色 ID、外观和音色。分镜中的 speaker 可填写角色 ID。</p>
+      <ul id="manju-cast-list" class="manju-cast-list" aria-label="制作角色"></ul>
+      <form id="manju-cast-form" oninput="this.dataset.dirty='1'" onsubmit="event.preventDefault();saveManjuCharacter(this)">
+        <div class="manju-cast-fields">
+          <label>角色 ID <input name="id" required maxlength="64" placeholder="a_yan" autocomplete="off"></label>
+          <label>角色姓名 <input name="name" required maxlength="160" placeholder="阿砚"></label>
+          <label>角色类型
+            <select name="role">
+              <option value="protagonist">主角</option>
+              <option value="supporting" selected>配角</option>
+              <option value="antagonist">反派</option>
+              <option value="npc">功能性角色</option>
+              <option value="creature">非人类角色</option>
+            </select>
+          </label>
+          <label>角色音色 <input name="voice" list="manju-voice-options" maxlength="64" placeholder="中文音色或留空"></label>
+          <datalist id="manju-voice-options">
+            <option value="zh-CN-YunxiNeural">年轻男声 · 云希</option>
+            <option value="zh-CN-YunyangNeural">成年男声 · 云扬</option>
+            <option value="zh-CN-XiaoxiaoNeural">成年女声 · 晓晓</option>
+            <option value="zh-CN-XiaoyiNeural">年轻女声 · 晓伊</option>
+          </datalist>
+          <label>语速调整（%） <input name="rate" type="number" min="-50" max="50" step="1" placeholder="0"></label>
+          <label>音高调整（Hz） <input name="pitch" type="number" min="-50" max="50" step="1" placeholder="0"></label>
+          <label class="manju-cast-visual">外观描述 <input name="visual" required maxlength="1200" placeholder="脸部特征、发型、服装和标志物"></label>
+        </div>
+        <details class="manju-settings">
+          <summary>角色版本（可选）</summary>
+          <div class="manju-cast-fields">
+            <label>外观 ID <input name="appearance_id" maxlength="64"></label>
+            <label>服装 ID <input name="outfit_id" maxlength="64"></label>
+            <label>表情 ID <input name="expression_id" maxlength="64"></label>
+            <label>声音 ID <input name="voice_id" maxlength="64"></label>
+            <label>动作 ID <input name="motion_id" maxlength="64"></label>
+          </div>
+        </details>
+        <div class="row">
+          <button id="manju-cast-save" type="submit" class="sec">保存角色</button>
+          <button type="button" class="sec" onclick="resetManjuCastForm(this.form)">清空表单</button>
+          <span id="manju-cast-status" class="hint" role="status"></span>
+        </div>
+      </form>
+    </details>
+    <details class="manju-settings">
       <summary>导入参考人物图 <span id="manju-reference-count" class="muted">（可选）</span></summary>
-      <p class="hint">按小说里的角色名添加 PNG、JPEG 或 WebP 图片，再选择「按镜头选视频模型」。角色镜头会使用该角色的参考图。</p>
+      <p class="hint">按角色名或角色 ID 添加 PNG、JPEG 或 WebP 图片，再选择「按镜头选视频模型」。角色镜头会使用该角色的参考图。</p>
       <div class="row">
         <label for="manju-reference-name">角色名</label>
         <input id="manju-reference-name" type="text" maxlength="160" placeholder="与小说中的角色名一致" style="flex:1;min-width:135px">
@@ -1638,6 +1702,14 @@ panels.agents = `
     <details id="manju-board" hidden>
       <summary>预览分镜</summary>
       <textarea id="manju-board-json" aria-label="分镜 JSON" rows="8" style="width:100%"></textarea>
+    </details>
+    <details class="manju-settings">
+      <summary>制作流程</summary>
+      <ol class="manju-stages">
+        <li>分镜导演编排场景、动作和人物对白。导入已有分镜时直接使用剧本。</li>
+        <li>画面制作与配音并行。画师制作画面，配音按说话角色选音色。</li>
+        <li>剪辑合成依序拼接镜头、对齐配音和字幕，校验成片。</li>
+      </ol>
     </details>
   </div>
   <div class="card">
@@ -2736,11 +2808,11 @@ const AGENT_PRESETS = [
   {key:'researcher', name:'researcher', label:'🔬 调研分析', kw:['调研','分析','调查','竞品','评估','对比','可行性','报告'],
    hint:'来源、判断与可执行建议', role:'你是资深调研分析师。先核对资料来源，再给出结论、证据、限制与可执行建议；需要报告文件时实际写入并检查，清楚标识推断与未确认事实。'},
   {key:'manju-director', name:'manju-director', label:'🎬 分镜导演', kw:['漫剧','分镜','镜头脚本','故事板','storyboard','短剧','漫画剧'],
-   hint:'小说章节 → 镜头脚本 shots.json', role:'你是漫剧分镜导演。完整读取章节，再直接保存 JSON。顶层含 title、badge、title_image_prompt、end_image_prompt、characters、shots。每镜含 kind、text、speaker、character_ids、scene、image_prompt。对白独立成镜（dialogue），旁白 narration，系统播报 sys。统一角色外观，每镜补充独立的竖版 9:16 画面提示。按情节决定镜头数量，不用逐句拆分原文。验证后交付路径与镜头数。'},
+   hint:'小说章节 → 镜头脚本 shots.json', role:'你是漫剧分镜导演。完整读取章节，再直接保存 JSON。顶层含 title、badge、title_image_prompt、end_image_prompt、characters、shots。每镜含 kind、text、speaker、character_ids、scene、image_prompt。对白独立成镜（dialogue），speaker 使用稳定角色 ID。角色对白模式（audio_mode: dialogue）用可见动作、演员反应和场景推进剧情，允许无台词的 action 镜头。统一角色外观，每镜补充独立的竖版 9:16 画面提示。按情节决定镜头数量，不用逐句拆分原文。验证后交付路径与镜头数。'},
   {key:'manju-artist', name:'manju-artist', label:'🎨 画师', kw:['画师','原画','绘制','画面渲染','赛璐璐','插画师'],
    hint:'镜头脚本 → 文生图逐镜画面 + 封面', role:'你是漫剧画师。沿用统一角色设定，用已配置的文生图模型逐镜产出竖版画面，校验图片后写入分镜清单，供合成步骤使用。'},
   {key:'manju-voice', name:'manju-voice', label:'🎙️ 配音', kw:['配音','声优','台词朗读','tts','旁白配音','voice actor'],
-   hint:'逐句神经网络配音，音画对齐', role:'你是漫剧配音导演。为镜头脚本逐句合成配音：python tools/manju/manju_pipeline.py tts --shots <shots.json> --out <audio目录>。旁白低沉男声、对白年轻男声、系统播报腔（edge_tts 神经网络音色）；镜头时长跟随语音长度。核对 audio.json 每句 wav 存在且时长合理。最终回复用反引号标出 audio 目录路径。'},
+   hint:'按说话角色配音，音画对齐', role:'你是漫剧配音导演。为镜头脚本合成配音：python tools/manju/manju_pipeline.py tts --shots <shots.json> --out <audio目录>。按 speaker 对应的角色音色和语速配音，保留无台词镜头的停顿和环境声。核对 audio.json 中的语音文件、角色绑定和时长。最终回复用反引号标出 audio 目录路径。'},
   {key:'manju-editor', name:'manju-editor', label:'🎞️ 剪辑合成', kw:['剪辑','合成','成片','渲染视频','ffmpeg','漫剧合成'],
    hint:'画面+配音 → 校验过的 mp4 成片', role:'你是漫剧剪辑合成师。把画面与配音合成整集成片：python tools/manju/manju_pipeline.py compose --shots <shots.json> --panels <frames目录> --audio <audio目录> --out <videos/epNN.mp4> --ep <集号> --manifest <manifest.json>。脚本校验通过后立即交付路径、时长和帧数。失败时报告错误并停止。'}
 ];
@@ -2816,6 +2888,7 @@ function loadManjuPromo(){
   updateManjuEpisodeFields();
   $('manju-path').value = '';
   $('manju-file').value = '';
+  $('manju-audio-mode').value = 'auto';
   $('manju-media-mode').value = 'mixed';
   $('manju-clip-seconds').value = '4';
   $('manju-board-json').value = JSON.stringify(board, null, 2);
@@ -2825,8 +2898,190 @@ function loadManjuPromo(){
   $('manju-stat').textContent = '已加载三镜。检查模型后，点击「导入并组队制作」开始。';
 }
 
-const MANJU_CHARACTER_REFERENCES = [];
+const MANJU_CAST_VERSIONS = ['appearance_id','outfit_id','expression_id','voice_id','motion_id'];
+const MANJU_CAST_REQUESTS = new Map();
+const MANJU_CAST_WRITES = new Map();
+
+function manjuCastError(result, fallback){
+  return new Error(result.obj?.error || fallback);
+}
+
+function readManjuCast(workspace){
+  const pending = MANJU_CAST_REQUESTS.get(workspace);
+  if(pending) return pending;
+  const query = workspace ? '?workspace=' + encodeURIComponent(workspace) : '';
+  const request = call('GET', '/v1/manju/characters' + query).then(result => {
+    const cast = result.obj;
+    if(result.status !== 200 || !Array.isArray(cast?.characters) ||
+       !cast.voice_cast || typeof cast.voice_cast !== 'object' || Array.isArray(cast.voice_cast)){
+      throw manjuCastError(result, '角色档案加载失败，请重试。');
+    }
+    return cast;
+  }).finally(() => MANJU_CAST_REQUESTS.delete(workspace));
+  MANJU_CAST_REQUESTS.set(workspace, request);
+  return request;
+}
+
+function resetManjuCastForm(form){
+  form.reset();
+  form.elements.namedItem('id').readOnly = false;
+  delete form.dataset.dirty;
+  $('manju-cast-status').textContent = '';
+}
+
+function editManjuCharacter(form, character, voice){
+  if(form.inert) return;
+  resetManjuCastForm(form);
+  for(const field of ['id','name','role','visual',...MANJU_CAST_VERSIONS]){
+    if(character[field] != null) form.elements.namedItem(field).value = character[field];
+  }
+  for(const field of ['voice','pitch','rate']){
+    if(voice?.[field]) form.elements.namedItem(field).value = field === 'voice'
+      ? voice[field] : parseInt(voice[field], 10);
+  }
+  form.elements.namedItem('id').readOnly = true;
+  form.querySelector('details').open = MANJU_CAST_VERSIONS.some(field => character[field]);
+  form.elements.namedItem('name').focus();
+}
+
+function renderManjuCast({characters,voice_cast}){
+  const list = $('manju-cast-list');
+  const form = $('manju-cast-form');
+  const roles = new Map(Array.from(form.elements.namedItem('role').options, option => [option.value, option.text]));
+  $('manju-cast-count').textContent = characters.length ? `（${characters.length} 人）` : '';
+  list.replaceChildren(...characters.map(character => {
+    const item = document.createElement('li');
+    const label = document.createElement('span');
+    const voice = Object.hasOwn(voice_cast, character.id) ? voice_cast[character.id] : null;
+    label.textContent = [character.name, character.id, roles.get(character.role), voice?.voice].filter(Boolean).join(' · ');
+    item.append(label);
+    for(const action of ['编辑','移除']){
+      const button = document.createElement('button');
+      button.className = 'sec sm';
+      button.type = 'button';
+      button.textContent = action;
+      button.setAttribute('aria-label', `${action}角色 ${character.name}`);
+      button.onclick = () => action === '编辑'
+        ? editManjuCharacter(form, character, voice)
+        : writeManjuCast(form, character.id, null, null);
+      item.append(button);
+    }
+    return item;
+  }));
+}
+
+async function showManjuCast(){
+  const select = $('manju-workspace');
+  const status = $('manju-cast-status');
+  const workspace = select.value;
+  status.textContent = '正在加载角色档案…';
+  try{
+    const cast = await (MANJU_CAST_WRITES.get(workspace) || readManjuCast(workspace));
+    if(select.isConnected && select.value === workspace){
+      renderManjuCast(cast);
+      status.textContent = '';
+    }
+  } catch(error){
+    if(select.isConnected && select.value === workspace) status.textContent = error.message;
+  }
+}
+
+function manjuCastWorkspaceChanged(){
+  resetManjuCastForm($('manju-cast-form'));
+  renderManjuCast({characters:[],voice_cast:{}});
+  $('manju-reference-name').value = '';
+  $('manju-reference-files').value = '';
+  $('manju-reference-status').textContent = '';
+  renderManjuCharacterReferences();
+  if($('manju-cast').open) void showManjuCast();
+}
+
+async function writeManjuCast(form, id, character, voice){
+  const select = $('manju-workspace');
+  const workspace = select.value;
+  if(MANJU_CAST_WRITES.has(workspace) || $('manju-submit').disabled) return;
+  const status = $('manju-cast-status');
+  const editing = form.elements.namedItem('id').readOnly;
+  form.inert = select.disabled = true;
+  status.textContent = '正在保存角色档案…';
+  const request = (async () => {
+    const cast = await readManjuCast(workspace);
+    const exists = cast.characters.some(profile => profile.id === id);
+    if(character && exists && !editing) throw new Error('角色 ID 已存在，请用「编辑」修改。');
+    if(character && !exists && cast.characters.length >= 24) throw new Error('每个工作区最多保存 24 个角色。');
+    const characters = character && exists
+      ? cast.characters.map(profile => profile.id === id ? character : profile)
+      : cast.characters.filter(profile => profile.id !== id);
+    if(character && !exists) characters.push(character);
+    const voiceEntries = Object.entries(cast.voice_cast).filter(([key]) => key !== id);
+    if(voice && Object.keys(voice).length) voiceEntries.push([id, voice]);
+    const body = {characters,voice_cast:Object.fromEntries(voiceEntries)};
+    if(workspace) body.workspace = workspace;
+    const result = await call('POST', '/v1/manju/characters', body);
+    if(result.status !== 200) throw manjuCastError(result, '角色档案保存失败，请重试。');
+    return result.obj;
+  })();
+  MANJU_CAST_WRITES.set(workspace, request);
+  try{
+    const cast = await request;
+    if(form.isConnected && select.value === workspace){
+      if(character || form.elements.namedItem('id').value === id) resetManjuCastForm(form);
+      renderManjuCast(cast);
+      status.textContent = character ? `已保存「${character.name}」。` : '已移除角色。';
+    }
+  } catch(error){
+    if(form.isConnected && select.value === workspace) status.textContent = error.message;
+  } finally {
+    MANJU_CAST_WRITES.delete(workspace);
+    form.inert = select.disabled = false;
+  }
+}
+
+function saveManjuCharacter(form){
+  const fields = new FormData(form);
+  const value = field => fields.get(field).trim();
+  const character = Object.fromEntries(['id','name','role','visual',...MANJU_CAST_VERSIONS]
+    .map(field => [field, value(field)]).filter(([, text]) => text));
+  const idPattern = /^[A-Za-z0-9_-]{1,64}$/;
+  const status = $('manju-cast-status');
+  if(!idPattern.test(character.id || '') ||
+     MANJU_CAST_VERSIONS.some(field => character[field] && !idPattern.test(character[field]))){
+    status.textContent = '角色和版本 ID 需由 1–64 位字母、数字、下划线或连字符组成。';
+    return;
+  }
+  if(['narrator','system'].includes(character.id)){
+    status.textContent = '此角色 ID 已保留给旁白或系统声，请选择其他 ID。';
+    return;
+  }
+  const encoder = new TextEncoder();
+  if(!character.name || !character.visual ||
+     encoder.encode(character.name).length > 160 || encoder.encode(character.visual).length > 1200){
+    status.textContent = '请填写角色姓名和外观描述，长度上限分别为 160 和 1200 UTF-8 字节。';
+    return;
+  }
+  const voice = {};
+  const voiceName = value('voice');
+  if(voiceName){
+    if(!/^[A-Za-z]+-[A-Za-z0-9-]+Neural$/.test(voiceName)){
+      status.textContent = '请填写有效的音色名称，例如 zh-CN-XiaoxiaoNeural。';
+      return;
+    }
+    voice.voice = voiceName;
+  }
+  for(const [field,unit] of [['pitch','Hz'],['rate','%']]){
+    const setting = value(field);
+    if(setting !== '') voice[field] = (Number(setting) < 0 ? '' : '+') + Number(setting) + unit;
+  }
+  void writeManjuCast(form, character.id, character, voice);
+}
+
+const MANJU_REFERENCE_DRAFTS = new Map();
 const MANJU_REFERENCE_MIB = 1024 * 1024;
+
+function manjuCharacterReferences(workspace = $('manju-workspace').value){
+  if(!MANJU_REFERENCE_DRAFTS.has(workspace)) MANJU_REFERENCE_DRAFTS.set(workspace, []);
+  return MANJU_REFERENCE_DRAFTS.get(workspace);
+}
 
 async function manjuReferenceMime(file){
   const bytes = new Uint8Array(await file.slice(0, 12).arrayBuffer());
@@ -2838,9 +3093,10 @@ async function manjuReferenceMime(file){
 }
 
 function renderManjuCharacterReferences(){
-  $('manju-reference-count').textContent = MANJU_CHARACTER_REFERENCES.length
-    ? `（已添加 ${MANJU_CHARACTER_REFERENCES.length} 张）` : '（可选）';
-  $('manju-reference-list').innerHTML = MANJU_CHARACTER_REFERENCES.map(({name, filename, preview}, index) => `
+  const references = manjuCharacterReferences();
+  $('manju-reference-count').textContent = references.length
+    ? `（已添加 ${references.length} 张）` : '（可选）';
+  $('manju-reference-list').innerHTML = references.map(({name, filename, preview}, index) => `
     <li class="manju-reference-item">
       <img src="${esc(preview)}" alt="${esc(`${name} 的参考图`)}">
       <div class="manju-reference-info"><strong>${esc(name)}</strong><small>${esc(filename)}</small></div>
@@ -2850,7 +3106,7 @@ function renderManjuCharacterReferences(){
 }
 
 function removeManjuCharacterReference(index){
-  const [image] = MANJU_CHARACTER_REFERENCES.splice(index, 1);
+  const [image] = manjuCharacterReferences().splice(index, 1);
   if(image) URL.revokeObjectURL(image.preview);
   renderManjuCharacterReferences();
   $('manju-reference-status').textContent = '';
@@ -2863,6 +3119,9 @@ async function addManjuCharacterReferences(){
   const name = $('manju-reference-name').value.trim();
   const picker = $('manju-reference-files');
   const files = Array.from(picker.files);
+  const select = $('manju-workspace');
+  const workspace = select.value;
+  const references = manjuCharacterReferences(workspace);
   if(!name || new TextEncoder().encode(name).length > 160){
     status.textContent = '请填写角色名，长度不超过 160 个 UTF-8 字节。';
     $('manju-reference-name').focus();
@@ -2872,7 +3131,7 @@ async function addManjuCharacterReferences(){
     status.textContent = '请选择要添加的人物图片。';
     return;
   }
-  if(MANJU_CHARACTER_REFERENCES.length + files.length > 9){
+  if(references.length + files.length > 9){
     status.textContent = '最多可添加 9 张参考图。';
     return;
   }
@@ -2881,7 +3140,7 @@ async function addManjuCharacterReferences(){
     return;
   }
   const total = files.reduce((sum, file) => sum + file.size, 0) +
-    MANJU_CHARACTER_REFERENCES.reduce((sum, image) => sum + image.blob.size, 0);
+    references.reduce((sum, image) => sum + image.blob.size, 0);
   if(total > 12 * MANJU_REFERENCE_MIB){
     status.textContent = '参考图总大小不能超过 12 MiB。';
     return;
@@ -2889,19 +3148,20 @@ async function addManjuCharacterReferences(){
   add.disabled = picker.disabled = true;
   try{
     const mimeTypes = await Promise.all(files.map(manjuReferenceMime));
+    if(!select.isConnected || select.value !== workspace) return;
     if(mimeTypes.includes('')){
       status.textContent = '请选择有效的 PNG、JPEG 或 WebP 人物图片。';
       return;
     }
     files.forEach((file, i) => {
       const blob = file.slice(0, file.size, mimeTypes[i]);
-      MANJU_CHARACTER_REFERENCES.push({name, filename:file.name, blob, preview:URL.createObjectURL(blob)});
+      references.push({name, filename:file.name, blob, preview:URL.createObjectURL(blob)});
     });
     picker.value = '';
     renderManjuCharacterReferences();
     status.textContent = `已为「${name}」添加 ${files.length} 张参考图。`;
   } catch(e){
-    status.textContent = `读取人物图片失败：${e.message}`;
+    if(select.isConnected && select.value === workspace) status.textContent = `读取人物图片失败：${e.message}`;
   } finally{
     add.disabled = picker.disabled = false;
   }
@@ -2987,6 +3247,14 @@ async function manjuImport(){
   const st = $('manju-stat');
   const submit = $('manju-submit');
   if(submit.disabled) return;
+  const workspaceSelect = $('manju-workspace');
+  const workspace = workspaceSelect.value;
+  const castForm = $('manju-cast-form');
+  if(castForm.inert || castForm.dataset.dirty){
+    st.textContent = '请先保存角色档案或清空角色表单。';
+    $('manju-cast').open = true;
+    return;
+  }
   const title = $('manju-title').value.trim();
   const scope = $('manju-import-scope').value;
   const batch = scope !== 'single';
@@ -3004,6 +3272,7 @@ async function manjuImport(){
   const files = Array.from($('manju-file').files).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', {numeric:true}));
   const jsonFiles = files.filter(file => /\.json$/i.test(file.name));
   const body = {episode};
+  if(workspace) body.workspace = workspace;
   if(batch) body.all_episodes = true;
   if(scope === 'range') body.episode_end = end;
   if(!path && jsonFiles.length && jsonFiles.length !== files.length){
@@ -3015,7 +3284,7 @@ async function manjuImport(){
   const mode = $('manju-media-mode').value;
   const videoMode = mode !== 'image';
   const mixed = mode === 'mixed';
-  const references = MANJU_CHARACTER_REFERENCES.slice();
+  const references = manjuCharacterReferences(workspace).slice();
   if($('manju-reference-files').files.length){
     st.textContent = '请先点击「添加图片」，将所选图片关联到角色。';
     return;
@@ -3048,7 +3317,8 @@ async function manjuImport(){
   if(title) body.title = title;
   const board = $('manju-board');
   const draft = board.hidden ? '' : $('manju-board-json').value.trim();
-  submit.disabled = true;
+  const audioMode = $('manju-audio-mode').value;
+  submit.disabled = workspaceSelect.disabled = true;
   try{
     if(path){
       body.path = path;
@@ -3078,6 +3348,18 @@ async function manjuImport(){
       st.textContent = '先选择小说文件（.txt/.md）、分镜 JSON 或填写服务器路径';
       return;
     }
+    if(audioMode === 'legacy'){
+      const selectedBoards = body.storyboards?.slice(episode - 1, body.episode_end) || [body.storyboard];
+      if(selectedBoards.some(board => board?.audio_mode === 'dialogue')){
+        st.textContent = '分镜已设为角色对白。请选择「随来源」或「角色对白」。';
+        $('manju-audio-mode').focus();
+        return;
+      }
+    }
+    if(audioMode !== 'auto') body.audio_mode = audioMode;
+    else if(!body.storyboard && !body.storyboards) body.audio_mode = 'dialogue';
+    const cast = await (MANJU_CAST_WRITES.get(workspace) || readManjuCast(workspace));
+    if(cast.characters.length) body.character_roster = {characters:cast.characters,voice_cast:cast.voice_cast};
     if(references.length){
       st.textContent = '读取人物参考图…';
       body.character_references = await Promise.all(references.map(async ({name, filename, blob}) =>
@@ -3108,7 +3390,7 @@ async function manjuImport(){
   } catch(e){
     st.textContent = '导入失败: ' + e.message;
   } finally{
-    submit.disabled = false;
+    submit.disabled = workspaceSelect.disabled = false;
   }
 }
 
@@ -4477,6 +4759,20 @@ async function workspaceLoad(){
   workspaceRender(CHAT_TABS_CACHE);flowWorkspaceRender();sideRecent(CHAT_TABS_CACHE);
 }
 function flowWorkspaceRender(){
+  const manjuWorkspace = $('manju-workspace');
+  if(manjuWorkspace){
+    const selected = manjuWorkspace.value;
+    manjuWorkspace.replaceChildren(new Option('默认工作区' + (WORKSPACE_DEFAULT ? ' · ' + workspaceLabel(WORKSPACE_DEFAULT) : ''), ''));
+    for(const workspace of orderedWorkspaces()){
+      if(workspace.path && workspace.path !== WORKSPACE_DEFAULT){
+        manjuWorkspace.add(new Option(workspaceLabel(workspace.path), workspace.path));
+      }
+    }
+    if(Array.from(manjuWorkspace.options).some(option => option.value === selected)){
+      manjuWorkspace.value = selected;
+      renderManjuCharacterReferences();
+    } else manjuCastWorkspaceChanged();
+  }
   const select=$('flow-workspace');if(!select)return;select.replaceChildren();
   const seen=new Set();for(const w of [...orderedWorkspaces(),{path:WORKSPACE_DEFAULT}]){
     if(!w.path || seen.has(w.path))continue;seen.add(w.path);const o=document.createElement('option');o.value=w.path;o.textContent=workspaceLabel(w.path);o.title=w.path;select.append(o);

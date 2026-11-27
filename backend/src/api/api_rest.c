@@ -1457,22 +1457,135 @@ static int manju_ensure_agent(runtime_ctx *ctx, const char *name, const char *ro
     return 0;
 }
 
+static const char *manju_field(const cJSON *object, const char *key) {
+    return cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(object, key));
+}
+
+static int manju_text(const char *value, size_t limit) {
+    return value && value[strspn(value, " \t\r\n")] && strlen(value) <= limit &&
+           str_utf8_valid_n(value, (long long)strlen(value));
+}
+
+static int manju_id(const char *value) {
+    const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+    return value && *value && strlen(value) <= 64 && value[strspn(value, alphabet)] == '\0';
+}
+
+static const cJSON *manju_character(const cJSON *characters, const char *id) {
+    if (!id) return NULL;
+    const cJSON *entry;
+    cJSON_ArrayForEach(entry, characters) {
+        const char *candidate = manju_field(entry, "id");
+        if (candidate && !strcmp(id, candidate)) return entry;
+    }
+    return NULL;
+}
+
+static int manju_voice_value(const cJSON *voice, const char *key, const char *unit, long limit) {
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(voice, key);
+    if (!item) return 1;
+    const char *s = cJSON_GetStringValue(item);
+    if (!s || (*s != '+' && *s != '-') || s[1] < '0' || s[1] > '9' || strlen(s) > 7) return 0;
+    char *end;
+    long value = strtol(s, &end, 10);
+    return end - s <= 3 && value >= -limit && value <= limit && !strcmp(end, unit);
+}
+
+static int manju_voice_name(const char *voice) {
+    if (!voice) return 0;
+    size_t first = strspn(voice, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz");
+    size_t size = strlen(voice);
+    return first && voice[first] == '-' && size > first + 7 && size <= 64 &&
+           voice[strspn(voice, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-")] == '\0' &&
+           !strcmp(voice + size - 6, "Neural");
+}
+
+static int manju_valid_cast(const cJSON *cast, int roster) {
+    const cJSON *characters = cJSON_GetObjectItemCaseSensitive(cast, "characters");
+    const cJSON *voices = cJSON_GetObjectItemCaseSensitive(cast, "voice_cast");
+    if (!cJSON_IsObject(cast) || !cJSON_IsArray(characters) || cJSON_GetArraySize(characters) > 24 ||
+        (voices && !cJSON_IsObject(voices))) return 0;
+    const cJSON *entry;
+    cJSON_ArrayForEach(entry, characters) {
+        const char *id = manju_field(entry, "id"), *role = manju_field(entry, "role");
+        if (!manju_id(id) || !strcmp(id, "narrator") || !strcmp(id, "system") ||
+            manju_character(characters, id) != entry || !manju_text(manju_field(entry, "name"), 160) ||
+            !manju_text(manju_field(entry, "visual"), 1200)) return 0;
+        if ((roster || cJSON_GetObjectItemCaseSensitive(entry, "role")) &&
+            (!role || (strcmp(role, "protagonist") && strcmp(role, "supporting") &&
+                       strcmp(role, "antagonist") && strcmp(role, "npc") && strcmp(role, "creature")))) return 0;
+        const char *versions[] = {"appearance_id", "outfit_id", "expression_id", "voice_id", "motion_id"};
+        for (size_t i = 0; i < sizeof versions / sizeof *versions; i++) {
+            const cJSON *version = cJSON_GetObjectItemCaseSensitive(entry, versions[i]);
+            if (version && !manju_id(cJSON_GetStringValue(version))) return 0;
+        }
+    }
+    cJSON_ArrayForEach(entry, voices) {
+        const cJSON *voice_field = cJSON_GetObjectItemCaseSensitive(entry, "voice");
+        const char *voice = cJSON_GetStringValue(voice_field);
+        if (!cJSON_IsObject(entry) || !manju_character(characters, entry->string) ||
+            cJSON_GetObjectItemCaseSensitive(voices, entry->string) != entry ||
+            (voice_field && !manju_voice_name(voice)) ||
+            !manju_voice_value(entry, "pitch", "Hz", 50) || !manju_voice_value(entry, "rate", "%", 50)) return 0;
+    }
+    return 1;
+}
+
+static int manju_audio_mode(const cJSON *object) {
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, "audio_mode");
+    if (!item) return 0;
+    const char *mode = cJSON_GetStringValue(item);
+    if (mode && !strcmp(mode, "dialogue")) return 1;
+    if (mode && !strcmp(mode, "legacy")) return 0;
+    return -1;
+}
+
 static int manju_valid_imported_board(const cJSON *board) {
     const char *title = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(board, "title"));
     const char *badge = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(board, "badge"));
     const cJSON *shots = cJSON_GetObjectItemCaseSensitive(board, "shots");
+    int dialogue = manju_audio_mode(board);
+    const cJSON *cards = cJSON_GetObjectItemCaseSensitive(board, "show_cards");
+    const cJSON *characters = cJSON_GetObjectItemCaseSensitive(board, "characters");
     int count = cJSON_GetArraySize(shots);
     if (!title || !*title || strlen(title) > 480 || !badge || !*badge || strlen(badge) > 360 ||
-        !cJSON_IsArray(shots) || count < 1 || count > 180) return 0;
+        !cJSON_IsArray(shots) || count < 1 || count > 180 || dialogue < 0 ||
+        (dialogue && (!manju_valid_cast(board, 0) || (cards && !cJSON_IsBool(cards))))) return 0;
     const cJSON *shot;
     cJSON_ArrayForEach(shot, shots) {
         const char *line = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(shot, "text"));
         const char *kind = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(shot, "kind"));
         const cJSON *mode_field = cJSON_GetObjectItemCaseSensitive(shot, "video_mode");
         const char *mode = cJSON_GetStringValue(mode_field);
-        if (!line || !*line || strlen(line) > 12000 || !kind ||
-            (strcmp(kind,"dialogue") && strcmp(kind,"narration") && strcmp(kind,"sys")) ||
+        if (!kind ||
             (mode_field && (!mode || (strcmp(mode, "text") && strcmp(mode, "first_frame") && strcmp(mode, "reference")))))
+            return 0;
+        if (!dialogue) {
+            if (!line || !*line || strlen(line) > 12000 ||
+                (strcmp(kind,"dialogue") && strcmp(kind,"narration") && strcmp(kind,"sys"))) return 0;
+            continue;
+        }
+        const cJSON *speaker_field = cJSON_GetObjectItemCaseSensitive(shot, "speaker");
+        const cJSON *text_field = cJSON_GetObjectItemCaseSensitive(shot, "text");
+        const char *speaker = cJSON_GetStringValue(speaker_field);
+        if (!strcmp(kind, "dialogue")) {
+            if (!manju_text(line, 420) || !manju_character(characters, speaker)) return 0;
+        } else if (strcmp(kind, "action") || (text_field && (!line || *line)) ||
+                   (speaker_field && (!speaker || *speaker))) return 0;
+        const cJSON *ids = cJSON_GetObjectItemCaseSensitive(shot, "character_ids");
+        if (!cJSON_IsArray(ids) || !manju_text(manju_field(shot, "scene"), 560) ||
+            !manju_text(manju_field(shot, "background"), 660) || !manju_text(manju_field(shot, "action"), 660) ||
+            !manju_text(manju_field(shot, "image_prompt"), 1200)) return 0;
+        const cJSON *id;
+        cJSON_ArrayForEach(id, ids) if (!manju_character(characters, cJSON_GetStringValue(id))) return 0;
+        const char *ambience = manju_field(shot, "ambience"), *effect = manju_field(shot, "sound_effect");
+        if ((cJSON_GetObjectItemCaseSensitive(shot, "ambience") &&
+             (!ambience || (strcmp(ambience, "room") && strcmp(ambience, "wind") &&
+                           strcmp(ambience, "rain") && strcmp(ambience, "fire")))) ||
+            (cJSON_GetObjectItemCaseSensitive(shot, "sound_effect") &&
+             (!effect || (strcmp(effect, "bell") && strcmp(effect, "steps") && strcmp(effect, "thunder"))))) return 0;
+        const cJSON *duration = cJSON_GetObjectItemCaseSensitive(shot, "duration_seconds");
+        if (duration && (!cJSON_IsNumber(duration) || !(duration->valuedouble >= 1 && duration->valuedouble <= 30)))
             return 0;
     }
     return 1;
@@ -1573,6 +1686,112 @@ static int manju_publish_file(const char *path, const char *data, size_t bytes) 
     return -1;
 }
 
+static int manju_roster_path(runtime_ctx *ctx, const char *workspace, char path[2048]) {
+    char id[17];
+    hash_hex(id, hash64(workspace, strlen(workspace)));
+    int length = snprintf(path, 2048, "%s/manju-characters-%s.json", ctx->state_root, id);
+    return length > 0 && length < 2048;
+}
+
+static cJSON *manju_load_roster(runtime_ctx *ctx, const char *workspace) {
+    char path[2048];
+    if (!manju_roster_path(ctx, workspace, path)) return NULL;
+    if (!fs_exists(path)) return cJSON_Parse("{\"characters\":[],\"voice_cast\":{}}");
+    int more = 0;
+    char *data = fs_read_file_slice(path, 0, 64 * 1024, NULL, &more);
+    cJSON *object = data && !more ? cJSON_ParseWithOpts(data, NULL, 1) : NULL;
+    free(data);
+    const char *stored = manju_field(object, "workspace");
+    if (!stored || strcmp(stored, workspace) || !manju_valid_cast(object, 1)) {
+        cJSON_Delete(object);
+        return NULL;
+    }
+    cJSON_DeleteItemFromObjectCaseSensitive(object, "workspace");
+    return object;
+}
+
+static int manju_copy_field(cJSON *object, const char *key, const cJSON *value) {
+    cJSON *copy = cJSON_Duplicate(value, 1);
+    if (!copy) return 0;
+    cJSON_DeleteItemFromObjectCaseSensitive(object, key);
+    if (cJSON_AddItemToObject(object, key, copy)) return 1;
+    cJSON_Delete(copy);
+    return 0;
+}
+
+static int h_manju_characters(const http_request *req, http_response *resp, void *ud) {
+    runtime_ctx *ctx = ud;
+    if (!authz_ok(ctx, req, resp)) return 0;
+    int write = !strcmp(req->method, "POST");
+    char *data = write ? body_str(req) : NULL;
+    cJSON *input = write ? cJSON_ParseWithOpts(data ? data : "", NULL, 1) : cJSON_CreateObject();
+    free(data);
+    char filter[2048];
+    if (!write && input && *query_param(req, "workspace", filter, sizeof filter))
+        cJSON_AddStringToObject(input, "workspace", filter);
+    if (!input || (write && !manju_valid_cast(input, 1))) {
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"角色档案格式无效，请检查角色 ID、类型、设定和音色\"}");
+        cJSON_Delete(input);
+        return 0;
+    }
+    char *workspace = workspace_pick(ctx, input, NULL);
+    if (!workspace) {
+        resp->status = 400;
+        http_resp_json(resp, "{\"error\":\"工作区未注册或不可用\"}");
+        cJSON_Delete(input);
+        return 0;
+    }
+    cJSON *roster = write ? cJSON_CreateObject() : manju_load_roster(ctx, workspace);
+    int ok = roster != NULL;
+    if (write && ok) {
+        const cJSON *voices = cJSON_GetObjectItemCaseSensitive(input, "voice_cast");
+        ok = manju_copy_field(roster, "characters", cJSON_GetObjectItemCaseSensitive(input, "characters")) &&
+             (voices ? manju_copy_field(roster, "voice_cast", voices) : cJSON_AddObjectToObject(roster, "voice_cast") != NULL);
+    }
+    if (ok) ok = cJSON_AddStringToObject(roster, "workspace", workspace) != NULL;
+    char *serialized = ok ? cJSON_PrintUnformatted(roster) : NULL;
+    if (write && serialized) {
+        char path[2048];
+        size_t bytes = strlen(serialized);
+        if (bytes > 64 * 1024) resp->status = 413;
+        else ok = manju_roster_path(ctx, workspace, path) && manju_publish_file(path, serialized, bytes) == 0;
+    }
+    if (ok && serialized && resp->status != 413) http_resp_json(resp, serialized);
+    else {
+        if (resp->status != 413) resp->status = 500;
+        http_resp_json(resp, "{\"error\":\"无法读取或保存角色档案\"}");
+    }
+    free(serialized);
+    free(workspace);
+    cJSON_Delete(input);
+    cJSON_Delete(roster);
+    return 0;
+}
+
+static int manju_apply_roster(cJSON *board, const cJSON *roster) {
+    if (!roster) return 1;
+    const cJSON *profiles = cJSON_GetObjectItemCaseSensitive(roster, "characters");
+    const cJSON *voice_profiles = cJSON_GetObjectItemCaseSensitive(roster, "voice_cast");
+    cJSON *voices = cJSON_GetObjectItemCaseSensitive(board, "voice_cast");
+    cJSON *character;
+    cJSON_ArrayForEach(character, cJSON_GetObjectItemCaseSensitive(board, "characters")) {
+        const char *id = manju_field(character, "id");
+        const cJSON *profile = manju_character(profiles, id);
+        if (!profile) continue;
+        const char *fields[] = {"visual", "role", "appearance_id", "outfit_id", "expression_id", "voice_id", "motion_id"};
+        for (size_t i = 0; i < sizeof fields / sizeof *fields; i++) {
+            const cJSON *value = cJSON_GetObjectItemCaseSensitive(profile, fields[i]);
+            if (value && !manju_copy_field(character, fields[i], value)) return 0;
+        }
+        const cJSON *voice = cJSON_GetObjectItemCaseSensitive(voice_profiles, id);
+        if (!voice) continue;
+        if (!voices) voices = cJSON_AddObjectToObject(board, "voice_cast");
+        if (!voices || !manju_copy_field(voices, id, voice)) return 0;
+    }
+    return 1;
+}
+
 static int manju_stage_board(const char *directory, const cJSON *board, int episode, int publish) {
     char relative[64], episode_dir[2048], path[2048];
     snprintf(relative, sizeof(relative), "manju/ep%02d", episode);
@@ -1634,7 +1853,7 @@ static int manju_busy(runtime_ctx *ctx, const char *workspace, const unsigned ch
 
 typedef struct {
     const char *novel_dir, *text_route, *image_route, *video_route, *reference_set;
-    const cJSON *mixed;
+    const cJSON *mixed, *roster;
     int video_mode, seconds, character_views, batch, supplied;
 } manju_import_plan;
 
@@ -1654,7 +1873,7 @@ static int manju_edge(cJSON *edges, const char *from, const char *to) {
 }
 
 static int manju_append_episode(cJSON *nodes, cJSON *edges, cJSON *episodes,
-                                const manju_import_plan *plan, int episode, int prior_episode) {
+                                const manju_import_plan *plan, int episode, int prior_episode, int dialogue) {
     static const char *const stages[] = {"step1", "step2", "step3", "step4", "character"};
     static const char *const tasks[] = {"读取小说章节并生成完整分镜。", "为本集制作并验证画面。",
         "为本集逐句配音并核对音频。", "合成并校验本集 MP4。", "生成缺少参考图的角色三视图。"};
@@ -1665,11 +1884,19 @@ static int manju_append_episode(cJSON *nodes, cJSON *edges, cJSON *episodes,
         if (!node || !cJSON_AddItemToArray(nodes, node)) { cJSON_Delete(node); return -1; }
         cJSON_AddStringToObject(node, "id", ids[i]);
         cJSON_AddStringToObject(node, "agent", manju_agents[i == 4 ? 1 : i]);
-        cJSON_AddStringToObject(node, "task", tasks[i]);
+        const char *task = tasks[i];
+        if (dialogue && i == 0) task = "统筹剧情与人物，编写角色对白、动作和场景分镜。";
+        if (dialogue && i == 2) task = "用各角色的音色配对白，核对台词是否适合镜头时长。";
+        if (dialogue && i == 3) task = "同步演员对白、环境声、音效和画面，合成并校验成片。";
+        cJSON_AddStringToObject(node, "task", task);
         if (i == 0) {
             char chapter[320];
             snprintf(chapter, sizeof(chapter), "%s/chapter%02d.md", plan->novel_dir, episode);
             cJSON_AddNumberToObject(node, "manju_story_episode", episode);
+            if (dialogue) {
+                if (!cJSON_AddBoolToObject(node, "manju_dialogue", 1) ||
+                    (plan->roster && !manju_copy_field(node, "manju_cast", plan->roster))) return -1;
+            }
             cJSON_AddStringToObject(node, "manju_chapter", chapter);
             if (prior_episode) cJSON_AddNumberToObject(node, "manju_prior_episode", prior_episode);
             if (plan->text_route) cJSON_AddStringToObject(node, "manju_text_route", plan->text_route);
@@ -1684,7 +1911,10 @@ static int manju_append_episode(cJSON *nodes, cJSON *edges, cJSON *episodes,
             if (*plan->reference_set && plan->character_views)
                 cJSON_AddBoolToObject(node, "manju_use_generated_references", 1);
         } else if (i == 1) cJSON_AddNumberToObject(node, "manju_paint_episode", episode);
-        else if (i == 2) cJSON_AddNumberToObject(node, "manju_voice_episode", episode);
+        else if (i == 2) {
+            cJSON_AddNumberToObject(node, "manju_voice_episode", episode);
+            if (dialogue && plan->video_mode) cJSON_AddNumberToObject(node, "manju_clip_seconds", plan->seconds);
+        }
         else if (i == 3) {
             cJSON_AddNumberToObject(node, "manju_compose_episode", episode);
             if (plan->video_mode) cJSON_AddBoolToObject(node, "manju_compose_clips", 1);
@@ -1694,8 +1924,10 @@ static int manju_append_episode(cJSON *nodes, cJSON *edges, cJSON *episodes,
         if ((i == 0 || (i == 1 && plan->video_mode) || i == 4) && *plan->reference_set)
             cJSON_AddStringToObject(node, "manju_reference_set", plan->reference_set);
     }
+    int preflight = dialogue && plan->video_mode;
     if ((!plan->supplied && manju_edge(edges, ids[0], ids[2])) ||
-        (!plan->supplied && manju_edge(edges, ids[0], ids[plan->character_views ? 4 : 1])) ||
+        (preflight && manju_edge(edges, ids[2], ids[plan->character_views ? 4 : 1])) ||
+        (!plan->supplied && !preflight && manju_edge(edges, ids[0], ids[plan->character_views ? 4 : 1])) ||
         (plan->character_views && manju_edge(edges, ids[4], ids[1])) ||
         manju_edge(edges, ids[1], ids[3]) || manju_edge(edges, ids[2], ids[3])) return -1;
     if (prior_episode) {
@@ -1711,6 +1943,7 @@ static int manju_append_episode(cJSON *nodes, cJSON *edges, cJSON *episodes,
     cJSON *summary = cJSON_CreateObject();
     if (!summary || !cJSON_AddNumberToObject(summary, "episode", episode) ||
         !cJSON_AddStringToObject(summary, "video", video) ||
+        (dialogue && !cJSON_AddStringToObject(summary, "audio_mode", "dialogue")) ||
         !cJSON_AddStringToObject(summary, "compose_node", ids[3]) || !cJSON_AddItemToArray(episodes, summary)) {
         cJSON_Delete(summary);
         return -1;
@@ -1733,8 +1966,8 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     const char *text = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "text"));
     const char *path = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "path"));
     const char *title = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(root, "title"));
-    const cJSON *board = cJSON_GetObjectItemCaseSensitive(root, "storyboard");
-    const cJSON *boards = cJSON_GetObjectItemCaseSensitive(root, "storyboards");
+    cJSON *board = cJSON_GetObjectItemCaseSensitive(root, "storyboard");
+    cJSON *boards = cJSON_GetObjectItemCaseSensitive(root, "storyboards");
     const cJSON *files = cJSON_GetObjectItemCaseSensitive(root, "chapter_files");
     const cJSON *batch_field = cJSON_GetObjectItemCaseSensitive(root, "all_episodes");
     int batch = cJSON_IsTrue(batch_field);
@@ -1748,10 +1981,13 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         http_resp_json(resp, "{\"error\":\"请选择一种小说或分镜来源，多集分镜请传入 storyboards 和 all_episodes\"}");
         return 0;
     }
-    if (board && (!cJSON_IsObject(board) || !manju_valid_imported_board(board))) {
+    int requested_audio = manju_audio_mode(root);
+    int explicit_audio = cJSON_GetObjectItemCaseSensitive(root, "audio_mode") != NULL;
+    const cJSON *roster = cJSON_GetObjectItemCaseSensitive(root, "character_roster");
+    if (requested_audio < 0 || (roster && !manju_valid_cast(roster, 1))) {
         cJSON_Delete(root);
         resp->status = 400;
-        http_resp_json(resp, "{\"error\":\"请导入有效分镜 JSON，包含 title、badge 与 shots\"}");
+        http_resp_json(resp, "{\"error\":\"请选择有效配音模式并检查角色档案\"}");
         return 0;
     }
     if (board && (!title || !*title))
@@ -1876,10 +2112,20 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
     int nch = boards ? board_count : 0;
     char **chapters = NULL;
     char *dag_json = NULL;
-    cJSON *out = NULL;
+    cJSON *out = NULL, *workspace_roster = NULL;
     int failure = 400;
     const char *problem = NULL;
     if (!supplied) {
+        if (requested_audio && !roster) {
+            workspace_roster = manju_load_roster(ctx, directory);
+            if (!workspace_roster) {
+                failure = 500;
+                problem = "无法载入制作工作区中的角色档案";
+                goto done;
+            }
+            if (cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(workspace_roster, "characters")))
+                roster = workspace_roster;
+        }
         if (files) chapters = manju_uploaded_chapters(files, &nch);
         else if (text && *text) chapters = manju_split_chapters(text, &nch);
         else chapters = manju_read_chapters(path, &nch);
@@ -1900,9 +2146,34 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         problem = range_error;
         goto done;
     }
-    if (supplied && !manju_check_boards(board, boards, reference_input, episode, last)) {
-        problem = "请检查各集分镜的 title、badge 和 shots，并确保每张人物参考图能唯一匹配角色";
-        goto done;
+    if (supplied) {
+        for (int i = episode; i <= last; i++) {
+            cJSON *current = boards ? cJSON_GetArrayItem(boards, i - 1) : board;
+            int mode = manju_audio_mode(current);
+            if (!cJSON_IsObject(current) || mode < 0 ||
+                (explicit_audio && !requested_audio && mode)) {
+                problem = "导入的分镜和选择的配音模式不一致";
+                goto done;
+            }
+            if (requested_audio && !mode) {
+                cJSON_DeleteItemFromObjectCaseSensitive(current, "audio_mode");
+                if (!cJSON_AddStringToObject(current, "audio_mode", "dialogue")) {
+                    failure = 500;
+                    problem = "无法设置角色对白模式";
+                    goto done;
+                }
+                mode = 1;
+            }
+            if (mode && manju_valid_imported_board(current) && !manju_apply_roster(current, roster)) {
+                failure = 500;
+                problem = "无法应用角色档案";
+                goto done;
+            }
+        }
+        if (!manju_check_boards(board, boards, reference_input, episode, last)) {
+            problem = "请检查各集分镜、角色与人物参考图，角色对白模式需要对白或无声动作、场景和背景";
+            goto done;
+        }
     }
     if (boards && (!title || !*title))
         title = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(manju_source_board(NULL, boards, episode), "title"));
@@ -1998,15 +2269,17 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
         .novel_dir = novel_dir, .text_route = text_route, .image_route = image_route,
         .video_route = video_route, .reference_set = reference_set, .mixed = mixed,
         .video_mode = video_mode, .seconds = (int)seconds, .character_views = character_views,
-        .batch = batch, .supplied = supplied
+        .batch = batch, .supplied = supplied, .roster = roster
     };
     cJSON *dag = cJSON_CreateObject();
     cJSON *nodes = cJSON_AddArrayToObject(dag, "nodes"), *edges = cJSON_AddArrayToObject(dag, "edges");
     out = cJSON_CreateObject();
     cJSON *episodes = cJSON_AddArrayToObject(out, "episodes");
     int built = nodes && edges && episodes;
-    for (int i = episode; built && i <= last; i++)
-        built = manju_append_episode(nodes, edges, episodes, &plan, i, i > episode ? i - 1 : 0) == 0;
+    for (int i = episode; built && i <= last; i++) {
+        int dialogue = supplied ? manju_audio_mode(manju_source_board(board, boards, i)) : requested_audio;
+        built = manju_append_episode(nodes, edges, episodes, &plan, i, i > episode ? i - 1 : 0, dialogue) == 0;
+    }
     if (built) dag_json = cJSON_PrintUnformatted(dag);
     cJSON_Delete(dag);
     char *verr = NULL;
@@ -2059,6 +2332,7 @@ done:
         http_resp_appendf(resp, "{\"error\":\"%s\"}", problem);
     }
     cJSON_Delete(out);
+    cJSON_Delete(workspace_roster);
     free(dag_json);
     manju_free_chapters(chapters, nch);
     free(directory);
@@ -7035,6 +7309,8 @@ int api_attach(runtime_ctx *ctx) {
     http_server_route(ctx->http, "POST", "/v1/flows", h_flow_run, ctx);
     http_server_route(ctx->http, "POST", "/v1/flows/decompose", h_flow_decompose, ctx);
     http_server_route(ctx->http, "POST", "/v1/manju/import", h_manju_import, ctx);
+    http_server_route(ctx->http, "GET", "/v1/manju/characters", h_manju_characters, ctx);
+    http_server_route(ctx->http, "POST", "/v1/manju/characters", h_manju_characters, ctx);
     http_server_route(ctx->http, "GET", "/v1/desktop/startup-animation", h_desktop_animation, ctx);
     http_server_route(ctx->http, "PUT", "/v1/desktop/startup-animation", h_desktop_animation, ctx);
     http_server_route(ctx->http, "GET", "/v1/flows/list", h_flow_list, ctx);

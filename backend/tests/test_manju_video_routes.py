@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.parse
 import urllib.request
 import zlib
 
@@ -328,6 +329,52 @@ def check_episode_batch(base, provider, work):
     print("PASS: a five-episode import returns one JSON receipt and sends the same uploaded role to each episode")
 
 
+def check_dialogue_import(base, provider, work):
+    project = work / "dialogue-workspace"
+    episode = project / "manju" / "ep01"
+    episode.mkdir(parents=True)
+    assert request(base, "/v1/workspaces", {"path": str(project)})[0] == 200
+    hero = {"id": "hero", "name": "阿铃", "visual": "青色衣领和铜铃",
+            "role": "protagonist", "appearance_id": "hero-v2"}
+    voice = {"voice": "zh-CN-YunxiNeural", "pitch": "+0Hz", "rate": "-5%"}
+    roster = {"characters": [hero], "voice_cast": {"hero": voice}}
+    url = "/v1/manju/characters"
+    assert request(base, url, {"workspace": str(project), **roster})[0] == 200
+    own = request(base, url + "?" + urllib.parse.urlencode({"workspace": str(project)}))[1]
+    assert own["characters"] == [hero] and own["voice_cast"] == {"hero": voice}, own
+    assert request(base, url)[1]["characters"] == []
+    assert request(base, url, {"workspace": str(project), "characters": [hero, hero]})[0] == 400
+
+    direction = {"scene": "院子", "background": "夜色下的门和石阶",
+                 "action": "举起铜铃看向山口", "image_prompt": "青衣少年背对镜头", "character_ids": ["hero"]}
+    board = {"title": "铜铃", "badge": "Fixture", "characters": [{**hero, "visual": "旧设定"}],
+             "shots": [{**direction, "kind": "dialogue", "speaker": "hero", "text": "娘，你快看！"},
+                       {**direction, "kind": "action", "ambience": "wind", "sound_effect": "bell"}]}
+    payload = {"workspace": str(project), "audio_mode": "dialogue", "character_roster": roster,
+               "storyboard": board, "video_route": "fixture-video", "clip_seconds": 4}
+    with provider.lock:
+        before = len(provider.submissions)
+    invalid = {**board, "shots": [{**direction, "kind": "narration", "text": "旁白"}]}
+    assert request(base, "/v1/manju/import", {**payload, "storyboard": invalid})[0] == 400
+    assert not (episode / "shots.json").exists()
+
+    # Fail preflight deterministically, without requiring a real TTS provider.
+    (episode / "audio").write_text("unwritable as a directory", encoding="utf-8")
+    status, started = request(base, "/v1/manju/import", payload)
+    assert status == 200 and started["episodes"][0]["audio_mode"] == "dialogue", (status, started)
+    saved = json.loads((episode / "shots.json").read_text(encoding="utf-8"))
+    assert saved["characters"] == [hero] and saved["voice_cast"] == {"hero": voice}, saved
+    assert saved["shots"][1]["kind"] == "action" and "text" not in saved["shots"][1]
+    history = request(base, "/v1/flows/list")[1]
+    dag = json.loads(next(item["dag"] for item in history["records"] if item["id"] == started["id"]))
+    assert {"from": "step3", "to": "step2"} in dag["edges"], dag
+    assert any(node.get("manju_voice_episode") == 1 and node["manju_clip_seconds"] == 4 for node in dag["nodes"])
+    assert wait_task(base, started["id"])["status"] == "FAILED"
+    with provider.lock:
+        assert len(provider.submissions) == before
+    print("PASS: workspace cast persists, dialogue boards are validated, and failed speech preflight prevents video requests")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=pathlib.Path)
@@ -388,6 +435,7 @@ def main():
             check_mixed(base, provider, pathlib.Path(tmp))
             check_character_references(base, provider, pathlib.Path(tmp))
             check_episode_batch(base, provider, pathlib.Path(tmp))
+            check_dialogue_import(base, provider, pathlib.Path(tmp))
         finally:
             process.terminate()
             process.wait(timeout=10)

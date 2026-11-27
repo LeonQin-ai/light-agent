@@ -80,6 +80,8 @@ typedef struct flow_node {
     int manju_paint_episode;
     int manju_voice_episode;
     int manju_story_episode;
+    int manju_dialogue;
+    char *manju_cast_json;
     int manju_prior_episode;
     manju_story_video_mode manju_story_video_mode;
     int manju_video_episode;
@@ -103,6 +105,11 @@ typedef struct flow_dag {
     int n;
     flow_node nodes[FLOW_MAX_NODES];
 } flow_dag;
+
+static void flow_dag_free(flow_dag *dag) {
+    for (int i = 0; i < dag->n; i++) free(dag->nodes[i].manju_cast_json);
+    free(dag);
+}
 
 static int flow_node_index(flow_dag *d, const char *id) {
     for (int i = 0; i < d->n; i++)
@@ -304,6 +311,15 @@ static int flow_parse(const char *dag_json, flow_dag *d, char **err) {
             snprintf(nd->manju_text_route, sizeof nd->manju_text_route, "%s", name);
         }
         cJSON *story = cJSON_GetObjectItemCaseSensitive(jn, "manju_story_episode");
+        const cJSON *dialogue = cJSON_GetObjectItemCaseSensitive(jn, "manju_dialogue");
+        const cJSON *cast = cJSON_GetObjectItemCaseSensitive(jn, "manju_cast");
+        if ((dialogue && (!story || !cJSON_IsBool(dialogue))) ||
+            (cast && (!story || !cJSON_IsTrue(dialogue) || !cJSON_IsObject(cast)))) {
+            cJSON_Delete(root);
+            flow_err(err, "Manju cast requires a dialogue director node");
+            return -1;
+        }
+        nd->manju_dialogue = cJSON_IsTrue(dialogue);
         if (story) {
             double episode = cJSON_GetNumberValue(story);
             const char *chapter = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(jn, "manju_chapter"));
@@ -359,6 +375,14 @@ static int flow_parse(const char *dag_json, flow_dag *d, char **err) {
             nd->manju_prior_episode = (int)previous;
         }
         d->n++;
+        if (cast) {
+            nd->manju_cast_json = cJSON_PrintUnformatted(cast);
+            if (!nd->manju_cast_json || strlen(nd->manju_cast_json) > 64 * 1024) {
+                cJSON_Delete(root);
+                flow_err(err, "Manju cast exceeds 64 KiB or cannot be serialized");
+                return -1;
+            }
+        }
     }
 
     /* unique ids */
@@ -806,6 +830,7 @@ static void flow_manju_story(flow_job *j) {
     j->rc = manju_story_episode(client, j->workspace, node->manju_chapter, node->manju_story_episode,
                                node->manju_clip_seconds, node->manju_story_video_mode,
                                node->manju_reference_set, router_has_image(ctx->router), node->manju_prior_episode,
+                               node->manju_dialogue, node->manju_cast_json,
                                flow_abort_requested, j->parent, &requests, &j->out);
     long long input = 0, output = 0;
     llm_usage_totals(client, &input, &output);
@@ -906,8 +931,11 @@ static void flow_manju_pipeline(flow_job *j, int voice) {
     char *argv[] = {python, "-I", "-X", "utf8", "-u", "-c", bootstrap, script_length, (char *)workspace,
                     "compose", "--shots", shots, clips ? "--clips" : "--panels", panels, "--audio", audio,
                     "--out", video, "--ep", ep, "--manifest", manifest, NULL};
+    char clip_seconds[4];
+    snprintf(clip_seconds, sizeof(clip_seconds), "%d", j->nd->manju_clip_seconds);
     char *voice_argv[] = {python, "-I", "-X", "utf8", "-u", "-c", bootstrap, script_length, (char *)workspace,
-                         "tts", "--shots", shots, "--out", audio, "--ep", ep, NULL};
+                         "tts", "--shots", shots, "--out", audio, "--ep", ep,
+                         j->nd->manju_clip_seconds ? "--clip-seconds" : NULL, clip_seconds, NULL};
     const char *stage = voice ? "配音" : "合成";
     j->rc = -1;
     proc_popen *proc = proc_popen_new_direct(voice ? voice_argv : argv, 1);
@@ -1120,16 +1148,16 @@ int flow_validate(const char *dag_json, char **err) {
         return -1;
     }
     if (flow_parse(dag_json, d, err) != 0) {
-        free(d);
+        flow_dag_free(d);
         return -1;
     }
     if (flow_layer(d) < d->n) {
         flow_err(err, "cycle detected in flow graph");
-        free(d);
+        flow_dag_free(d);
         return -1;
     }
 
-    free(d);
+    flow_dag_free(d);
     return 0;
 }
 
@@ -1157,13 +1185,13 @@ int flow_run(runtime_ctx *ctx, const char *dag_json, int64_t task_id, char **ans
     if (flow_parse(dag_json, d, &err) != 0) {
         log_warn("flow: parse failed: %s", err ? err : "?");
         free(err);
-        free(d);
+        flow_dag_free(d);
         return -1;
     }
 
     if (flow_layer(d) < d->n) {
         log_warn("flow: cycle detected");
-        free(d);
+        flow_dag_free(d);
         return -1;
     }
 
@@ -1171,7 +1199,7 @@ int flow_run(runtime_ctx *ctx, const char *dag_json, int64_t task_id, char **ans
     for (int i = 0; i < d->n; i++) {
         if (agent_pool_find(ctx->agents, d->nodes[i].agent) < 0) {
             log_warn("flow: node '%s' references unregistered agent '%s'", d->nodes[i].id, d->nodes[i].agent);
-            free(d);
+            flow_dag_free(d);
             return -1;
         }
     }
@@ -1190,7 +1218,7 @@ int flow_run(runtime_ctx *ctx, const char *dag_json, int64_t task_id, char **ans
         free(tasks);
         free(jobs);
         flow_prog_end(task_id);
-        free(d);
+        flow_dag_free(d);
         return -1;
     }
 
@@ -1314,7 +1342,7 @@ int flow_run(runtime_ctx *ctx, const char *dag_json, int64_t task_id, char **ans
     free(tasks);
     for(int i=0;i<d->n;i++)free(jobs[i].result_path);
     free(jobs);
-    free(d);
+    flow_dag_free(d);
 
     *answer = fin.len > 0 ? fin.buf : xstrdup("(flow produced no output)");
     if (parent) {

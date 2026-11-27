@@ -28,13 +28,13 @@
 
 以下作品由 light-agent 漫剧流程生成，带有中文配音和字幕。
 
-#### 《铜铃过山》· 少年屠龙
+#### 《铜铃过山》· 少年屠龙 · 对白版
 
 怕雷的少年阿铃带着祖母留下的缺口铜铃上山。第一次交手败北后，他再次走进石峡，迎战威胁村庄的恶龙。
 
-剧本由 light-agent 中的 DeepSeek 创作。漫剧工房以 Qwen 分镜图为首帧，用 HappyHorse 生成 43 段 4 秒视频，其中 10 处通过慢镜和补帧衔接。成片保留原来的中文配音和按时间轴对齐的字幕。 [下载 720p MP4 · 3:32](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/copper-bell-crossing.mp4) · [原始故事分镜](docs/demo/copper-bell-storyboard.json)
+原故事由 light-agent 中的 DeepSeek 创作。对白版由阿铃先开口，母亲在画外回应。15 句母子对白分别使用两种音色，38 个无对白镜头用动作、风声和铜铃声推进剧情。light-agent 复用基于 Qwen 首帧生成的 43 段 HappyHorse 视频，其中 10 处用慢镜和补帧衔接，最终剪成 53 个 4 秒镜头。 [下载 720p MP4 · 3:32](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/copper-bell-crossing.mp4) · [对白分镜](docs/demo/copper-bell-dialogue-storyboard.json) · [原始故事分镜](docs/demo/copper-bell-storyboard.json)
 
-https://github.com/user-attachments/assets/1529e5c8-7910-416b-a8f5-fa1e8aa3bb48
+https://github.com/user-attachments/assets/3b2dce7c-44cc-4336-9681-7c10cb04b271
 
 #### 《拾光守灯人》
 
@@ -194,6 +194,10 @@ CLI 部署可以显式指定执行目录和状态存储位置：
 5. 从 **查看制作进度** 跟踪各集，完成后在工作区打开 `manju/epNN/videos/epNN-motion.mp4`。继续任务时会复用已保存的片段。配音与合成需要本机 Python 和漫剧依赖。自定义分镜的 `video_mode` 支持 `text`、`first_frame` 和 `reference`，每段可选 3 秒或 4 秒。
 
 「文生视频」模式还可以选择百炼可灵或火山方舟 Seedance，以单路由制作整集。
+
+漫剧工房导入小说时默认使用 **角色对白**。分镜把对白、人物动作和场景背景分别交给配音、画面和剪辑阶段。无对白的镜头可以使用风雨、火声、脚步或铜铃等环境声和音效。视频制作会先检查每句台词是否能在对应的 3 或 4 秒镜头内说完。原有分镜默认沿用其配音模式。
+
+在 **角色档案** 中可按工作区保存角色类型、外观说明、版本 ID、音色、语速和音高。续集分镜可复用同一角色的造型与音色，画面制作继续使用导入的人物参考图。
 
 《拾光守灯人》在 Windows 桌面端用三个已配置的 HappyHorse 模型完成首次制作，用时 4 分 45 秒。样片采用预写分镜和 `qwen-image-3.0-pro` 生成的 R2V 角色参考图。第二镜锁定首帧后只新增了 1 次视频生成请求，下载中断时沿用原任务 ID 恢复。成片分辨率为 720 × 1280。[成片与实录](#桌面端演示)
 

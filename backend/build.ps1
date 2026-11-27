@@ -28,6 +28,8 @@ try {
     if ($LASTEXITCODE) { throw 'Attachment processor generation failed' }
     python tools/gen_web_ui.py
     if ($LASTEXITCODE) { throw 'UI generation failed' }
+    python tools/gen_manju_pipeline.py
+    if ($LASTEXITCODE) { throw 'Manju pipeline generation failed' }
     New-Item -ItemType Directory -Force build | Out-Null
     $sourceFiles = @(Get-ChildItem src -Recurse -Filter *.c | Where-Object {
         $_.FullName -notmatch '[\\/]os[\\/](linux|macos|posix)[\\/]'

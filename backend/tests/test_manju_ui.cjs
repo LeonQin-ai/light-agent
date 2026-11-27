@@ -13,6 +13,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   page.on('pageerror',e=>errors.push(e.message));
   let importBody=null,imports=0,agentsGets=0,flowLists=0,rejectImport=false,batchEpisodes=[];
   const agents=[{name:'coder',role:'开发'}];
+  const castByWorkspace=new Map();
   await page.route('http://ui.test/**',async route=>{
    const r=route.request(),u=new URL(r.url());let obj=[];
    if(u.pathname==='/')return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(__dirname,'../apps/web/index.html'),'utf8')});
@@ -25,7 +26,16 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
     {name:'horse-reference',provider:'openai',model:'happyhorse-1.1-r2v',video_generation:true,video_input:'reference'},
     {name:'seedance-video',provider:'openai',model:'doubao-seedance-2-0-260128',video_generation:true}
    ];
-   if(u.pathname==='/v1/workspaces')obj={default_workspace:'D:/default',workspaces:[]};
+   if(u.pathname==='/v1/workspaces')obj={default_workspace:'D:/default',workspaces:[{path:'D:/film',name:'漫剧项目'}]};
+   if(u.pathname==='/v1/manju/characters'){
+    if(r.method()==='POST'){
+     const {workspace,characters,voice_cast}=r.postDataJSON();
+     obj={characters,voice_cast};
+     castByWorkspace.set(workspace || 'D:/default',obj);
+    }else{
+     obj=castByWorkspace.get(u.searchParams.get('workspace') || 'D:/default') || {characters:[],voice_cast:{}};
+    }
+   }
    if(u.pathname==='/v1/agents'){
     if(r.method()==='POST'){const b=r.postDataJSON();agents.push({name:b.name,role:b.role});obj={ok:true,index:agents.length-1};}
     else{agentsGets++;obj={agents,facts:{}};}
@@ -83,6 +93,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   assert.ok(importBody,'import endpoint called');
   assert.equal(importBody.title,'测试小说');
   assert.equal(importBody.episode,1);
+  assert.equal(importBody.audio_mode,'dialogue','novel defaults to character dialogue');
   assert.equal(importBody.text_route,'deepseek-script');
   assert.equal(importBody.image_route,'qwen-panels');
   assert.equal(importBody.character_views,true);
@@ -127,6 +138,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   await submit.click();
   await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('已导入 3 镜分镜'));
   assert.equal(imports,4);
+  assert.ok(!('audio_mode' in importBody),'preview board keeps its authored playback');
   assert.deepEqual(importBody.video_routes,{text:'horse-video',first_frame:'horse-first',reference:'horse-reference'});
   assert.deepEqual(importBody.storyboard.shots.map(s=>s.video_mode),['text','first_frame','reference']);
   assert.ok(importBody.storyboard.shots[1].character_ids.includes(importBody.storyboard.shots[2].character_ids[0]));
@@ -242,6 +254,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   assert.equal(imports,9);
   assert.deepEqual(importBody.storyboards,[first,second]);
   assert.ok(!('storyboard' in importBody) && !('text_route' in importBody));
+  assert.ok(!('audio_mode' in importBody),'legacy storyboards keep their authored playback');
 
   await novelFiles.setInputFiles([jsonFile('02-归途.json',second),jsonFile('01-初见.json',first)]);
   await scope.selectOption('range');
@@ -253,7 +266,85 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   assert.deepEqual(importBody.storyboards,[first,second]);
   assert.equal(importBody.episode_end,1);
 
+  const workspace=page.getByLabel('制作工作区');
+  const cast=page.locator('#manju-cast');
+  await workspace.selectOption('D:/film');
+  assert.equal(await referenceList.getByRole('img').count(),0,'references stay in the workspace they were added to');
+  await cast.locator('summary').first().click();
+  await cast.getByLabel('角色 ID',{exact:true}).fill('yan');
+  await cast.getByLabel('角色姓名').fill('阿砚');
+  await cast.getByLabel('角色类型').selectOption('protagonist');
+  await cast.getByLabel('角色音色').fill('zh-CN-YunxiNeural');
+  await cast.getByLabel('语速调整').fill('-6');
+  await cast.getByLabel('外观描述').fill('深色短发，肩上系着铜铃');
+  await cast.getByText('角色版本（可选）',{exact:true}).click();
+  await cast.getByLabel('外观 ID').fill('yan_young');
+  const save=cast.getByRole('button',{name:'保存角色'});
+  await save.click();
+  await cast.getByRole('button',{name:'编辑角色 阿砚'}).waitFor();
+  await cast.getByLabel('角色 ID',{exact:true}).fill('mother');
+  await cast.getByLabel('角色姓名').fill('阿娘');
+  await cast.getByLabel('角色音色').fill('zh-CN-XiaoxiaoNeural');
+  await cast.getByLabel('音高调整').fill('-4');
+  await cast.getByLabel('外观描述').fill('深色发髻，穿灰蓝布衣');
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('请先保存角色档案'));
+  assert.equal(imports,10,'unfinished cast edits must not be silently dropped');
+  await save.click();
+  await cast.getByRole('button',{name:'编辑角色 阿娘'}).waitFor();
+  await workspace.selectOption('');
+  await page.waitForFunction(()=>!document.getElementById('manju-cast-list').children.length);
+  assert.equal(await referenceList.getByRole('img').count(),2);
+  await workspace.selectOption('D:/film');
+  await cast.getByRole('button',{name:'编辑角色 阿砚'}).click();
+  assert.equal(await cast.getByLabel('角色 ID',{exact:true}).inputValue(),'yan');
+  assert.equal(await cast.getByLabel('外观 ID').inputValue(),'yan_young');
+  assert.equal(await cast.getByLabel('语速调整').inputValue(),'-6');
+  await cast.getByRole('button',{name:'清空表单'}).click();
+  assert.ok(await cast.getByLabel('角色 ID',{exact:true}).isEditable());
+
+  await scope.selectOption('single');
+  await novelFiles.setInputFiles([txtFile('01.md','阿娘让阿砚把铜铃系好。'),txtFile('02.md','阿砚踏上山路。')]);
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('第 1–2 集'));
+  assert.equal(imports,11);
+  assert.equal(importBody.workspace,'D:/film');
+  assert.equal(importBody.audio_mode,'dialogue');
+  assert.deepEqual(importBody.character_roster,{
+   characters:[
+    {id:'yan',name:'阿砚',role:'protagonist',visual:'深色短发，肩上系着铜铃',appearance_id:'yan_young'},
+    {id:'mother',name:'阿娘',role:'supporting',visual:'深色发髻，穿灰蓝布衣'}
+   ],
+   voice_cast:{
+    yan:{voice:'zh-CN-YunxiNeural',rate:'-6%'},
+    mother:{voice:'zh-CN-XiaoxiaoNeural',pitch:'-4Hz'}
+   }
+  });
+  const audio=page.getByLabel('叙事配音');
+  await audio.selectOption('legacy');
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('第 1–2 集'));
+  assert.equal(imports,12);
+  assert.equal(importBody.audio_mode,'legacy','legacy option is explicit');
+  const authoredDialogue={
+   title:'铜铃',badge:'回归',audio_mode:'dialogue',
+   characters:importBody.character_roster.characters,
+   shots:[{kind:'dialogue',speaker:'yan',text:'娘，我带上了。',character_ids:['yan','mother']}]
+  };
+  await scope.selectOption('single');
+  await novelFiles.setInputFiles(jsonFile('对白.json',authoredDialogue));
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('分镜已设为角色对白'));
+  assert.equal(imports,12,'dialogue boards must not be sent with contradictory legacy mode');
+  await audio.selectOption('auto');
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('已导入 1 镜分镜'));
+  assert.equal(imports,13);
+  assert.deepEqual(importBody.storyboard,authoredDialogue);
+  assert.deepEqual(Object.keys(importBody.character_roster.voice_cast),['yan','mother']);
+  assert.ok(!('audio_mode' in importBody));
+
   assert.deepEqual(errors,[]);
-  console.log('PASS: manju presets, imports, per-character photos, all/range novel and storyboard batches, live episode progress');
+  console.log('PASS: manju imports, reference photos, workspace cast, dialogue mode, and batch episode progress');
  }finally{await browser.close();fs.rmSync(tmp,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

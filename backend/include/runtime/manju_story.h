@@ -14,4 +14,5 @@ typedef enum {
 int manju_story_episode(llm *client, const char *workspace, const char *chapter_path, int episode,
                         int clip_seconds, manju_story_video_mode video_mode,
                         const char *reference_set, int can_generate_first_frame, int prior_episode,
+                        int dialogue_mode, const char *cast_json,
                         int (*abort_check)(void *), void *context, int *requests, char **result);

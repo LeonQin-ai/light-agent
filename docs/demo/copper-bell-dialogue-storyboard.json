@@ -1,0 +1,740 @@
+{
+  "title": "铜铃过山｜对白版",
+  "badge": "国风奇幻·少年屠龙",
+  "logline": "怕雷的少年阿铃带着祖母留下的缺口铜铃上山。第一次交手败北后，他利用铜铃、山风和一道缺鳞，引恶龙吞下自己的火。",
+  "art_direction": "原创手绘国风奇幻分镜，墨青主调的山雾与岩壁，细密笔触勾出石桥裂纹与崖石纹理；少年土红围巾是全片唯一暖色，龙身墨黑，鳞缝透青绿光纹，龙火为青绿色，火光层层叠出明暗，逆光剪影交代对抗体量；构图以竖幅九比十六重直向纵深，山脊、石桥、断崖形成竖向引导线，画面干净无字无框。",
+  "title_image_prompt": "竖直画幅，浓墨青山雾层层退远，山脊线上一块突出的崖石，十七岁靛青布衣少年背对镜头站在崖边，土红围巾被山风吹得扬起，腰间黄铜铃露出一道缺口；远处天际被青绿火光映亮，龙影没入乌云只剩轮廓，晨雾里有细碎光点，构图留出上方大片空天。",
+  "end_image_prompt": "满版竖幅电影特写。清晨一枚黄铜铃在少年掌心安静躺着，铃身有一个浅缺口，靛青袖口和土红布料围在四周。柔软晨光落在手掌和铜铃上，桥石虚化填满余下画面。视觉中心在中下部，收束成暖铜与墨青，画面只取手、铃和石面，无边框或字。",
+  "characters": [
+    {
+      "id": "hero",
+      "name": "阿铃",
+      "visual": "十七岁东亚少年，黑色短发微微凌乱，左眉有一小点浅疤；穿洗得发白的靛青布衣，袖口与膝头有补丁，脖子围着一条旧土红围巾，长到能垂在胸前；腰间系绳挂一枚黄铜铃，铃身有一道缺口，摇起来声音沙哑；身形清瘦，手脚有干活磨出的茧，眼神里常带一点迟疑。",
+      "role": "protagonist",
+      "appearance_id": "hero-01",
+      "outfit_id": "indigo-scarf",
+      "voice_id": "aling"
+    },
+    {
+      "id": "dragon",
+      "name": "炽脊",
+      "visual": "巨型恶龙，周身墨黑厚鳞，鳞缝间透出流动的青绿光纹，从颈背一直延到长尾；头顶两支铜色后掠长角，眼是一双琥珀色竖瞳；宽大双翼翼膜墨黑、边缘发青绿微光；口鼻宽厚，吐息为成团青绿火焰，飞翔时鳞火在身后拖出长光，落地时震动整面崖壁。",
+      "role": "antagonist",
+      "appearance_id": "dragon-01"
+    },
+    {
+      "id": "mother",
+      "name": "母亲",
+      "role": "supporting",
+      "visual": "阿铃的母亲，黑发束于脑后，身着旧青褐布衣。现有素材中，她在石桥和家中的这些镜头均从画外说话。",
+      "appearance_id": "mother-01",
+      "voice_id": "mother"
+    }
+  ],
+  "shots": [
+    {
+      "kind": "dialogue",
+      "scene": "山脊",
+      "background": "浓雾遮住山脊，乌云下透着青绿光。",
+      "action": "少年背对镜头站在山崖，红围巾突然扬起。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直画幅，浓墨青山雾层层退远，山脊线上一块突出的崖石，十七岁靛青布衣少年背对镜头站在崖边，土红围巾被山风吹得扬起，腰间黄铜铃露出一道缺口；远处天际被青绿火光映亮，龙影没入乌云只剩轮廓，晨雾里有细碎光点，构图留出上方大片空天。",
+      "ambience": "wind",
+      "duration_seconds": 4,
+      "speaker": "hero",
+      "text": "娘，那是什么？",
+      "delivery": "压低声音，尾字带一点迟疑。"
+    },
+    {
+      "kind": "dialogue",
+      "scene": "村外",
+      "background": "墨青雷云压在村舍上，云缝泄出青光。",
+      "action": "雾卷过屋檐，一道闪电劈开乌云。",
+      "character_ids": [],
+      "image_prompt": "竖直远景，墨青厚云压在山脊上，云底透出一道青绿闪电，山间细雾被风撕开，前景只有一串村屋剪影的屋檐，画面大部留给翻滚的云，光只从云缝漏下。",
+      "ambience": "wind",
+      "duration_seconds": 4,
+      "speaker": "mother",
+      "text": "别怕。到我身后来。",
+      "delivery": "坚定但低声，近处画外。",
+      "sound_effect": "thunder"
+    },
+    {
+      "kind": "action",
+      "scene": "村外",
+      "background": "墨青雷云压在村舍上，云缝泄出青光。",
+      "action": "雾卷过屋檐，一道闪电劈开乌云。",
+      "character_ids": [],
+      "image_prompt": "竖直远景，墨青厚云压在山脊上，云底透出一道青绿闪电，山间细雾被风撕开，前景只有一串村屋剪影的屋檐，画面大部留给翻滚的云，光只从云缝漏下。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "石桥",
+      "background": "湿透的石桥横过雾谷。",
+      "action": "村民抬头，一条巨龙的鳞光掠过云后。",
+      "character_ids": [
+        "dragon"
+      ],
+      "image_prompt": "竖直构图，细密笔触的长石桥横过山谷，桥上只有几个极小的黑影抬头，桥外云层里一条墨黑长影若隐若现，鳞缝青绿光纹在云中一段段亮起，像被雾擦亮的刀。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "石桥",
+      "background": "湿透的石桥横过雾谷。",
+      "action": "村民抬头，一条巨龙的鳞光掠过云后。",
+      "character_ids": [
+        "dragon"
+      ],
+      "image_prompt": "竖直构图，细密笔触的长石桥横过山谷，桥上只有几个极小的黑影抬头，桥外云层里一条墨黑长影若隐若现，鳞缝青绿光纹在云中一段段亮起，像被雾擦亮的刀。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "dialogue",
+      "scene": "石桥桥头",
+      "background": "潮湿桥板映着雷云微光。",
+      "action": "阿铃低着头，双手捂住耳朵。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直中景，少年站在古老石桥桥头，双手捂住耳朵低着头，土红围巾被风掀起一角，身后是他小小缩起的肩，桥板湿冷反着暗光，远处雷云压过来。",
+      "ambience": "rain",
+      "duration_seconds": 4,
+      "speaker": "hero",
+      "text": "它朝桥来了！",
+      "delivery": "被眼前的动静吓了一跳。"
+    },
+    {
+      "kind": "dialogue",
+      "scene": "石桥桥头",
+      "background": "灰色石栏上挂着细雨，近处光暗。",
+      "action": "阿铃抬起眼睛，把铜铃攥在手心。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖近景，少年侧脸贴着石栏，眼睛盯着脚下的石板纹路，一手仍按在耳边，另一只手攥紧了腰间的黄铜铃，铃上缺口在阴天里泛一点暗金。",
+      "ambience": "rain",
+      "duration_seconds": 4,
+      "speaker": "mother",
+      "text": "阿铃，握紧铜铃。",
+      "delivery": "提醒，近处画外。"
+    },
+    {
+      "kind": "action",
+      "scene": "石桥桥头",
+      "background": "灰色石栏上挂着细雨，近处光暗。",
+      "action": "阿铃抬起眼睛，把铜铃攥在手心。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖近景，少年侧脸贴着石栏，眼睛盯着脚下的石板纹路，一手仍按在耳边，另一只手攥紧了腰间的黄铜铃，铃上缺口在阴天里泛一点暗金。",
+      "ambience": "rain",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "dialogue",
+      "scene": "家中",
+      "background": "雨天旧木屋内，窗格投下一束冷光。",
+      "action": "阿铃摊开手，让母亲看见有缺口的铜铃。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直特写，少年的手掌摊开，掌心托着有缺口的黄铜铃，指腹有干活磨出的茧；背景木窗格漏进一格斜光正好落在铃上，屋外雾灰成片。",
+      "ambience": "room",
+      "duration_seconds": 4,
+      "speaker": "mother",
+      "text": "这是你祖母留下的。",
+      "delivery": "平静，近处画外。"
+    },
+    {
+      "kind": "dialogue",
+      "scene": "家中",
+      "background": "雨天旧木屋内，窗格投下一束冷光。",
+      "action": "阿铃摊开手，让母亲看见有缺口的铜铃。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直特写，少年的手掌摊开，掌心托着有缺口的黄铜铃，指腹有干活磨出的茧；背景木窗格漏进一格斜光正好落在铃上，屋外雾灰成片。",
+      "ambience": "room",
+      "duration_seconds": 4,
+      "speaker": "hero",
+      "text": "它都裂了，还能响？",
+      "delivery": "疑惑，朝向身旁的母亲。"
+    },
+    {
+      "kind": "dialogue",
+      "scene": "家中",
+      "background": "木梁后面是雾蓝色天光。",
+      "action": "缺口铜铃被穿在旧麻绳上，轻轻晃动。",
+      "character_ids": [],
+      "image_prompt": "一个满版竖幅电影特写。雨前清晨，旧木屋内一枚有小缺口的黄铜铃挂在木梁下，旧麻绳系住铃钮。雾蓝色窗光斜照铃身，后景是柔暗木纹。镜头只见一枚铃，画面从上到下连续铺满，四边无框，纯画面。",
+      "ambience": "room",
+      "duration_seconds": 4,
+      "speaker": "mother",
+      "text": "看不见路，就摇它。",
+      "delivery": "温柔但笃定，从铃铛特写外传来。",
+      "sound_effect": "bell"
+    },
+    {
+      "kind": "action",
+      "scene": "后山松林",
+      "background": "天色昏暗，松林在鳞火下泛绿。",
+      "action": "巨龙扇动双翼俯冲落地，树梢向下折去。",
+      "character_ids": [
+        "dragon"
+      ],
+      "image_prompt": "竖直大全景，墨黑巨龙俯冲落在松林山头，双翼展开压弯树冠，落地腾起碎石与烟尘，青绿鳞火从翼膜边缘漫开，松树只剩细密剪影，天光被火光映绿。",
+      "ambience": "fire",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "后山松林",
+      "background": "天色昏暗，松林在鳞火下泛绿。",
+      "action": "巨龙扇动双翼俯冲落地，树梢向下折去。",
+      "character_ids": [
+        "dragon"
+      ],
+      "image_prompt": "竖直大全景，墨黑巨龙俯冲落在松林山头，双翼展开压弯树冠，落地腾起碎石与烟尘，青绿鳞火从翼膜边缘漫开，松树只剩细密剪影，天光被火光映绿。",
+      "ambience": "fire",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "村口",
+      "background": "青焰照亮土墙，屋檐是浓烟下的剪影。",
+      "action": "火苗扑上柴垛，向旁边的梁柱蔓延。",
+      "character_ids": [],
+      "image_prompt": "竖直中景，村口堆着的旧柴垛被青绿火焰包住，火苗舔上梁柱，浓烟斜斜往村里飘，火光把土墙照成深浅两层，几间屋子的屋檐化作黑色剪影。",
+      "ambience": "fire",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "dialogue",
+      "scene": "村口",
+      "background": "晨雾裹住残烟，村屋只剩几抹轮廓。",
+      "action": "阿铃束紧土红围巾，把柴刀绑在背上。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直全身中景，少年站在村口雾里，把一把旧柴刀斜绑在背上，土红围巾在胸前系紧，腰间铜铃露出缺口，身后是残烟未散的屋影，天光灰白。",
+      "ambience": "wind",
+      "duration_seconds": 4,
+      "speaker": "hero",
+      "text": "娘，我把它引开。",
+      "delivery": "紧张，克制着不让声音发抖。"
+    },
+    {
+      "kind": "dialogue",
+      "scene": "村口",
+      "background": "晨雾裹住残烟，村屋只剩几抹轮廓。",
+      "action": "阿铃束紧土红围巾，把柴刀绑在背上。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直全身中景，少年站在村口雾里，把一把旧柴刀斜绑在背上，土红围巾在胸前系紧，腰间铜铃露出缺口，身后是残烟未散的屋影，天光灰白。",
+      "ambience": "wind",
+      "duration_seconds": 4,
+      "speaker": "mother",
+      "text": "我在桥头等你。",
+      "delivery": "忍住担心，近处画外。"
+    },
+    {
+      "kind": "dialogue",
+      "scene": "村口山道",
+      "background": "烧黑的树桩沿着灰白山路排开。",
+      "action": "阿铃离开村口，向石阶走去。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直背影构图，少年走在通往山里的土路上，肩背绷直，柴刀柄从他肩头露出一截，路边是被火烤黑的树桩和一层薄雾，前方的山道向上收窄成一点白。",
+      "ambience": "wind",
+      "duration_seconds": 4,
+      "speaker": "hero",
+      "text": "等我敲两下就回来。",
+      "delivery": "向身后的母亲告别。",
+      "sound_effect": "steps"
+    },
+    {
+      "kind": "action",
+      "scene": "山道",
+      "background": "苔藓和雨水衬出陡峭岩阶的灰青色。",
+      "action": "阿铃用鞋尖探过湿石，向上迈步。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "整幅竖版插画，镜头贴近陡峭石阶向上仰拍，靛青布衣少年的布鞋踏过潮湿岩阶，膝部补丁清楚，红围巾从画面上缘滑过，黄铜铃在腰间晃动。灰青岩石与苔藓覆盖画面四角，充满画幅，无留白边。",
+      "ambience": "wind",
+      "duration_seconds": 4,
+      "sound_effect": "steps"
+    },
+    {
+      "kind": "action",
+      "scene": "山道",
+      "background": "苔藓和雨水衬出陡峭岩阶的灰青色。",
+      "action": "阿铃用鞋尖探过湿石，向上迈步。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "整幅竖版插画，镜头贴近陡峭石阶向上仰拍，靛青布衣少年的布鞋踏过潮湿岩阶，膝部补丁清楚，红围巾从画面上缘滑过，黄铜铃在腰间晃动。灰青岩石与苔藓覆盖画面四角，充满画幅，无留白边。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "崖下",
+      "background": "夜空墨青，凹石下只剩一点暖光。",
+      "action": "阿铃蜷在岩下，一粒火星熄灭，远处有绿光掠过。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直夜景，少年蜷在崖下一块凹石里抱着膝盖，围巾当被子盖住半身，身边一小堆将熄的暗火，远处山影里有一道青绿光痕掠过，雾气贴着地面。",
+      "ambience": "fire",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "崖下",
+      "background": "夜空墨青，凹石下只剩一点暖光。",
+      "action": "阿铃蜷在岩下，一粒火星熄灭，远处有绿光掠过。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直夜景，少年蜷在崖下一块凹石里抱着膝盖，围巾当被子盖住半身，身边一小堆将熄的暗火，远处山影里有一道青绿光痕掠过，雾气贴着地面。",
+      "ambience": "fire",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "焦坡",
+      "background": "灰烬覆盖黑石，狭谷里浮着白雾。",
+      "action": "阿铃捏起带青纹的碎鳞，抬头找龙。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖版侧俯拍中近景，阿铃捡起一片指甲状墨青碎鳞，凹槽青纹只有一处缺口。土红围巾垂向灰烬，远处石坡的龙迹蜿蜒向狭峡。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "焦坡",
+      "background": "光斜照出一圈龙身压过的焦黑凹痕。",
+      "action": "阿铃站在凹痕边，手里碎鳞映出一点青光。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直俯拍，石坡上有一圈被龙身压出的巨大凹痕，凹痕中央的岩石泛出铁黑光泽，少年站在圈边显得很小，手里捏着那片碎鳞，光从侧面切过凹痕边缘。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "焦坡",
+      "background": "光斜照出一圈龙身压过的焦黑凹痕。",
+      "action": "阿铃站在凹痕边，手里碎鳞映出一点青光。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直俯拍，石坡上有一圈被龙身压出的巨大凹痕，凹痕中央的岩石泛出铁黑光泽，少年站在圈边显得很小，手里捏着那片碎鳞，光从侧面切过凹痕边缘。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "峡谷",
+      "background": "浓雾占满峡谷，龙身照亮低处雾层。",
+      "action": "巨龙俯身悬在雾里，阿铃下意识退了一步。",
+      "character_ids": [
+        "hero",
+        "dragon"
+      ],
+      "image_prompt": "竖直仰拍大全景，浓雾里墨黑巨龙的胸腹压到画面上半，青绿光纹如脉在鳞间亮起，少年在雾的底部抬头，小得只有一块靛青和一抹土红，冲击感强。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "峡谷",
+      "background": "岩壁被迎面压来的青火映亮。",
+      "action": "阿铃被气浪震向岩壁，红围巾翻飞。",
+      "character_ids": [
+        "hero",
+        "dragon"
+      ],
+      "image_prompt": "竖直斜构图，青绿火浪从龙头侧面横扫，少年被震得腾空向后撞向岩壁，围巾横飞成一道红线，他身后的岩壁裂开细纹，火光把两人都照成半黑半绿的剪影。",
+      "ambience": "fire",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "峡谷",
+      "background": "岩壁被迎面压来的青火映亮。",
+      "action": "阿铃被气浪震向岩壁，红围巾翻飞。",
+      "character_ids": [
+        "hero",
+        "dragon"
+      ],
+      "image_prompt": "竖直斜构图，青绿火浪从龙头侧面横扫，少年被震得腾空向后撞向岩壁，围巾横飞成一道红线，他身后的岩壁裂开细纹，火光把两人都照成半黑半绿的剪影。",
+      "ambience": "fire",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "崖边",
+      "background": "崖下白雾深不见底，石棱泛冷光。",
+      "action": "阿铃伸手去抓，柴刀从崖边滑走。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直中景，少年半跪在崖边伸手去抓，柴刀已翻下崖去，只剩一点冷光坠进白雾，他前额的碎发被风吹开，左眉的浅疤在余光里很清楚。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "dialogue",
+      "scene": "石壁下",
+      "background": "尘埃贴着裂开岩壁，远处绿光消失。",
+      "action": "阿铃按住胸口，靠墙缓慢喘气。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖近景，少年靠着岩壁坐下，一手压着被震得发闷的胸口，另一手撑地，土红围巾上落了灰，眼睛望着雾里那点远去的青绿光，嘴角还带着喘。",
+      "ambience": "wind",
+      "duration_seconds": 4,
+      "speaker": "hero",
+      "text": "没了刀，我拿什么挡？",
+      "delivery": "受挫，吸气后说。"
+    },
+    {
+      "kind": "action",
+      "scene": "石壁下",
+      "background": "尘埃贴着裂开岩壁，远处绿光消失。",
+      "action": "阿铃按住胸口，靠墙缓慢喘气。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖近景，少年靠着岩壁坐下，一手压着被震得发闷的胸口，另一手撑地，土红围巾上落了灰，眼睛望着雾里那点远去的青绿光，嘴角还带着喘。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "月下石台",
+      "background": "窄石台一面是白月光，一面是青雾。",
+      "action": "阿铃取下空刀鞘，垂眼看着它。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直中景，月下少年坐在石台边，把空了的刀鞘解开放在膝上，低头看着它，月光冷白洒满岩面，远处天际挂着一线暗青色的雾。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "后山松林",
+      "background": "青火和暗处村舍隔着一道山脊。",
+      "action": "巨龙俯下头，火从四面聚向张开的嘴。",
+      "character_ids": [
+        "dragon"
+      ],
+      "image_prompt": "竖版远景，墨黑双翼巨龙从云雾降到村外，青焰被吸成弧线朝巨龙的嘴里汇去。山脊的一侧是青焰，另一侧是暗影中的村舍。",
+      "ambience": "fire",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "后山松林",
+      "background": "青火和暗处村舍隔着一道山脊。",
+      "action": "巨龙俯下头，火从四面聚向张开的嘴。",
+      "character_ids": [
+        "dragon"
+      ],
+      "image_prompt": "竖版远景，墨黑双翼巨龙从云雾降到村外，青焰被吸成弧线朝巨龙的嘴里汇去。山脊的一侧是青焰，另一侧是暗影中的村舍。",
+      "ambience": "fire",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "崖边",
+      "background": "深青夜色衬出远处村里一豆灯火。",
+      "action": "阿铃把缺口铜铃捏紧，手指慢慢松开。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直特写，少年手指紧紧捏住黄铜铃，缺口卡在拇指与食指之间，掌背筋微微绷起，背景虚成一片深青夜色，一点灯火在他身后很远的地方。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "崖边",
+      "background": "深青夜色衬出远处村里一豆灯火。",
+      "action": "阿铃把缺口铜铃捏紧，手指慢慢松开。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直特写，少年手指紧紧捏住黄铜铃，缺口卡在拇指与食指之间，掌背筋微微绷起，背景虚成一片深青夜色，一点灯火在他身后很远的地方。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "dialogue",
+      "scene": "崖边",
+      "background": "月光斜照少年脸和细小的铜铃。",
+      "action": "阿铃把铜铃举到耳边，闭上眼。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖近景，少年举着铜铃对着自己的耳朵，闭着眼像在听什么，铃在他指间轻轻歪着，一丝月光从铃的缺口穿过，落在他眉上那道浅疤。",
+      "ambience": "wind",
+      "duration_seconds": 4,
+      "speaker": "hero",
+      "text": "原来还有这个。",
+      "delivery": "听到铜铃响，突然冷静下来。",
+      "sound_effect": "bell"
+    },
+    {
+      "kind": "action",
+      "scene": "山脊",
+      "background": "清晨金光擦过山脊，薄雾还没散尽。",
+      "action": "阿铃背上绳圈沿峭壁前行，刀鞘留在原地。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直全身远景，少年沿着山脊往高走，肩上盘着一圈麻绳，背上没有刀，土红围巾在晨雾里扬起，他走得很慢但很稳，天边泛出淡淡金光。",
+      "ambience": "wind",
+      "duration_seconds": 4,
+      "sound_effect": "steps"
+    },
+    {
+      "kind": "action",
+      "scene": "山脊",
+      "background": "清晨金光擦过山脊，薄雾还没散尽。",
+      "action": "阿铃背上绳圈沿峭壁前行，刀鞘留在原地。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直全身远景，少年沿着山脊往高走，肩上盘着一圈麻绳，背上没有刀，土红围巾在晨雾里扬起，他走得很慢但很稳，天边泛出淡淡金光。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "裂石",
+      "background": "峡顶晨光照出岩缝和雾口。",
+      "action": "阿铃系紧绳结，把铃垂进峡谷。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖直中景，少年半跪在一块裂开的巨岩前系紧绳结，绳的另一头垂进白雾，黄铜铃悬在雾口轻晃，岩壁细密笔触爬满裂纹，晨光贴着石棱勾亮。",
+      "ambience": "wind",
+      "duration_seconds": 4,
+      "sound_effect": "bell"
+    },
+    {
+      "kind": "action",
+      "scene": "峡谷",
+      "background": "雾中悬着一枚铜铃，龙鳞泛出青光。",
+      "action": "巨龙转头，琥珀色眼睛追向响铃。",
+      "character_ids": [
+        "dragon"
+      ],
+      "image_prompt": "竖直中景，墨黑巨龙的头部转向雾中细绳上的一点铜色，双角后掠，琥珀眼缩成窄缝，青绿光纹顺着颈背一处一处亮过去，雾里只听得见铃。",
+      "ambience": "wind",
+      "duration_seconds": 4,
+      "sound_effect": "bell"
+    },
+    {
+      "kind": "action",
+      "scene": "峡谷",
+      "background": "雾中悬着一枚铜铃，龙鳞泛出青光。",
+      "action": "巨龙转头，琥珀色眼睛追向响铃。",
+      "character_ids": [
+        "dragon"
+      ],
+      "image_prompt": "竖直中景，墨黑巨龙的头部转向雾中细绳上的一点铜色，双角后掠，琥珀眼缩成窄缝，青绿光纹顺着颈背一处一处亮过去，雾里只听得见铃。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "峡谷",
+      "background": "裂岩之间，雾中翻起青火和碎石。",
+      "action": "巨龙撞入石隙，尖角和翼缘被岩壁绊住。",
+      "character_ids": [
+        "dragon"
+      ],
+      "image_prompt": "竖直中景，巨龙侧身撞进两块裂岩之间，翼尖卡在石缝，碎石沿崖坡滚落，青绿火光从鳞缝挤到半空，它仰头张口却只吐出一小团火。",
+      "ambience": "fire",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "dialogue",
+      "scene": "绳降处",
+      "background": "两道雾带被山风撕开，青火掠过岩壁。",
+      "action": "阿铃顺绳降下，从脚边引开一股火焰。",
+      "character_ids": [
+        "hero",
+        "dragon"
+      ],
+      "image_prompt": "竖直俯冲构图，少年抓着长绳从崖顶滑下，身体斜掠向龙颈，他手里的东西引开一串青绿火光，光尾在雾中拉成明亮弧线，风把雾吹成两道。",
+      "ambience": "fire",
+      "duration_seconds": 4,
+      "speaker": "hero",
+      "text": "来啊！往这边！",
+      "delivery": "冲着巨龙喊，让它追自己。"
+    },
+    {
+      "kind": "action",
+      "scene": "绳降处",
+      "background": "两道雾带被山风撕开，青火掠过岩壁。",
+      "action": "阿铃顺绳降下，从脚边引开一股火焰。",
+      "character_ids": [
+        "hero",
+        "dragon"
+      ],
+      "image_prompt": "竖直俯冲构图，少年抓着长绳从崖顶滑下，身体斜掠向龙颈，他手里的东西引开一串青绿火光，光尾在雾中拉成明亮弧线，风把雾吹成两道。",
+      "ambience": "fire",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "谷口",
+      "background": "大风把谷口照成明暗分明的青色。",
+      "action": "火浪被强风推回，阿铃吊在绳上躲开。",
+      "character_ids": [
+        "hero",
+        "dragon"
+      ],
+      "image_prompt": "竖直大全景，谷口一道强风把成片青绿火浪反推回去，火光裹住巨龙的后半身与双翼，少年吊在绳上被光映成剪影，整面岩壁亮得发白。",
+      "ambience": "fire",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "谷口",
+      "background": "青焰翻过巨龙胸前缺鳞处。",
+      "action": "阿铃举起铜铃，巨龙展开双翼挣扎。",
+      "character_ids": [
+        "hero",
+        "dragon"
+      ],
+      "image_prompt": "竖版远景，高处岩隙内，阿铃在绳上扬起缺口铜铃，土红围巾翻飞。青绿火浪折向墨黑巨龙胸甲的单一缺鳞处，宽双翼成剪影。无伤口细节。",
+      "ambience": "fire",
+      "duration_seconds": 4,
+      "sound_effect": "bell"
+    },
+    {
+      "kind": "action",
+      "scene": "谷口",
+      "background": "青焰翻过巨龙胸前缺鳞处。",
+      "action": "阿铃举起铜铃，巨龙展开双翼挣扎。",
+      "character_ids": [
+        "hero",
+        "dragon"
+      ],
+      "image_prompt": "竖版远景，高处岩隙内，阿铃在绳上扬起缺口铜铃，土红围巾翻飞。青绿火浪折向墨黑巨龙胸甲的单一缺鳞处，宽双翼成剪影。无伤口细节。",
+      "ambience": "fire",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "深谷",
+      "background": "绝壁下是暗青雾海，天边透出一星冷光。",
+      "action": "巨龙坠入谷雾，身后的青焰渐渐熄灭。",
+      "character_ids": [
+        "dragon"
+      ],
+      "image_prompt": "竖版极远景，山谷从近崖向下深不见底，墨黑双翼巨龙与熄灭的青焰一起坠入灰白雾海，仅看见剪影和两支铜角，孤星从云后出现，无血腥画面。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "深谷",
+      "background": "绝壁下是暗青雾海，天边透出一星冷光。",
+      "action": "巨龙坠入谷雾，身后的青焰渐渐熄灭。",
+      "character_ids": [
+        "dragon"
+      ],
+      "image_prompt": "竖版极远景，山谷从近崖向下深不见底，墨黑双翼巨龙与熄灭的青焰一起坠入灰白雾海，仅看见剪影和两支铜角，孤星从云后出现，无血腥画面。",
+      "ambience": "wind",
+      "duration_seconds": 4
+    },
+    {
+      "kind": "action",
+      "scene": "村中",
+      "background": "细雨过后的青石窄巷与温黄格窗。",
+      "action": "村里有人推开门，脚步从窗光经过。",
+      "character_ids": [],
+      "image_prompt": "整张无分格的竖版插画。视点在雨后村屋檐下，镜头贴近青石小巷。石墙、紧闭的石瓦屋檐与温黄的格窗占满画面。落在青石路上的细光映出两名平安归家的村民脚步剪影。取景全部在窄巷，天空在取景范围外。",
+      "ambience": "rain",
+      "duration_seconds": 4,
+      "sound_effect": "steps"
+    },
+    {
+      "kind": "dialogue",
+      "scene": "石桥",
+      "background": "湿亮的石桥石板连着清晨亮起的村舍。",
+      "action": "阿铃步入桥头村灯的暖光里。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖版中近景，雨后暖日，阿铃穿靛青布衣和土红围巾平静地走过湿润石桥，脸和缺口黄铜铃清楚。取景沿桥面稍俯拍，石栏和一列灯笼引向低处的村屋，只拍少年、地面、围栏和村屋近处，视野没有天空。",
+      "ambience": "wind",
+      "duration_seconds": 4,
+      "speaker": "hero",
+      "text": "娘，我回来了。",
+      "delivery": "缓缓放松，带一点疲惫。",
+      "sound_effect": "steps"
+    },
+    {
+      "kind": "dialogue",
+      "scene": "石桥",
+      "background": "湿亮的石桥石板连着清晨亮起的村舍。",
+      "action": "阿铃步入桥头村灯的暖光里。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "竖版中近景，雨后暖日，阿铃穿靛青布衣和土红围巾平静地走过湿润石桥，脸和缺口黄铜铃清楚。取景沿桥面稍俯拍，石栏和一列灯笼引向低处的村屋，只拍少年、地面、围栏和村屋近处，视野没有天空。",
+      "ambience": "wind",
+      "duration_seconds": 4,
+      "speaker": "mother",
+      "text": "进屋，饭还热着。",
+      "delivery": "桥头画外，语气轻柔。"
+    },
+    {
+      "kind": "action",
+      "scene": "石桥",
+      "background": "微暖晨光照在粗糙桥面与靛青袖口。",
+      "action": "阿铃摊开手，缺口铜铃安静停在掌心。",
+      "character_ids": [
+        "hero"
+      ],
+      "image_prompt": "满版竖幅电影特写。清晨一枚黄铜铃在少年掌心安静躺着，铃身有一个浅缺口，靛青袖口和土红布料围在四周。柔软晨光落在手掌和铜铃上，桥石虚化填满余下画面。视觉中心在中下部，收束成暖铜与墨青，画面只取手、铃和石面，无边框或字。",
+      "ambience": "room",
+      "duration_seconds": 4
+    }
+  ],
+  "voice_cast": {
+    "hero": {
+      "voice": "zh-CN-YunxiNeural",
+      "pitch": "+0Hz",
+      "rate": "+3%"
+    },
+    "mother": {
+      "voice": "zh-CN-XiaoxiaoNeural",
+      "pitch": "-7Hz",
+      "rate": "+0%"
+    }
+  },
+  "audio_mode": "dialogue",
+  "show_cards": false
+}

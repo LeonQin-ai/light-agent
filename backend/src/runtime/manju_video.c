@@ -231,12 +231,34 @@ static void video_worker(void *context) {
     http_set_cancel_check(NULL, NULL);
 }
 
+static const cJSON *cast_member(const cJSON *board, const char *id) {
+    const cJSON *cast = cJSON_GetObjectItemCaseSensitive(board, "characters"), *character;
+    cJSON_ArrayForEach(character, cast) {
+        const char *key = field(character, "id");
+        if (id && key && !strcmp(id, key)) return character;
+    }
+    return NULL;
+}
+
+static int speaker_on_screen(const cJSON *shot, const char *speaker) {
+    const cJSON *entry;
+    if (speaker)
+        cJSON_ArrayForEach(entry, cJSON_GetObjectItemCaseSensitive(shot, "character_ids")) {
+            const char *id = cJSON_GetStringValue(entry);
+            if (id && !strcmp(id, speaker)) return 1;
+        }
+    return 0;
+}
+
 static char *make_prompt(const cJSON *board, const cJSON *shot, const char *visual, int seconds) {
     const char *title = field(board, "title");
     const char *direction = field(board, "art_direction");
     const char *action = field(shot, "video_prompt");
     const char *text = field(shot, "text");
     const char *scene = field(shot, "scene");
+    const char *mode = field(board, "audio_mode"), *kind = field(shot, "kind");
+    int action_only = kind && !strcmp(kind, "action");
+    int dialogue = kind && !strcmp(kind, "dialogue") && mode && !strcmp(mode, "dialogue");
     strbuf prompt;
     strbuf_init(&prompt);
     strbuf_appendf(&prompt, "生成%d秒、9:16竖版的精绘二维中文漫剧视频。保持统一的角色和画风。"
@@ -244,9 +266,29 @@ static char *make_prompt(const cJSON *board, const cJSON *shot, const char *visu
     if (direction && *direction) strbuf_appendf(&prompt, "\n画风：%s", direction);
     strbuf_appendf(&prompt, "\n场景及角色外观：%s", visual && *visual ? visual : scene && *scene ? scene : title);
     if (action && *action) strbuf_appendf(&prompt, "\n镜头动作：%s", action);
-    else if (text && *text) strbuf_appendf(&prompt, "\n依据文案表现动作与情绪：%s", text);
-    else strbuf_append(&prompt, "\n一点自然的环境运动，镜头缓慢推进。");
+    else if (!dialogue && !action_only) {
+        if (text && *text) strbuf_appendf(&prompt, "\n依据文案表现动作与情绪：%s", text);
+        else strbuf_append(&prompt, "\n一点自然的环境运动，镜头缓慢推进。");
+    }
     manju_append_cast(&prompt, board, shot);
+    if (dialogue) {
+        const char *speaker = field(shot, "speaker");
+        if (speaker_on_screen(shot, speaker)) {
+            const char *name = field(cast_member(board, speaker), "name");
+            const char *delivery = field(shot, "delivery");
+            strbuf_appendf(&prompt, "\n画面中只有角色 %s 开口说话，嘴部清晰可见；其他人用自然动作和表情回应。"
+                                    "口型参考这句台词，不在画面中绘制台词：%s", name ? name : speaker, text);
+            if (delivery && *delivery) strbuf_appendf(&prompt, "\n说话语气：%s", delivery);
+        } else {
+            strbuf_append(&prompt, "\n对白来自画外；画面里的角色保持倾听，用视线和动作回应，不做说话口型。");
+        }
+    } else if (action_only) {
+        if (!mode || strcmp(mode, "dialogue")) {
+            const char *beat = field(shot, "action");
+            if (!action && beat && *beat) strbuf_appendf(&prompt, "\n画面中的动作：%s", beat);
+        }
+        strbuf_append(&prompt, "\n这一镜无人说话，以环境运动、动作和表情推进情节。");
+    }
     if (prompt.len > 6000) {
         strbuf_free(&prompt);
         return NULL;
@@ -321,15 +363,6 @@ done:
     llm_image_result_free(&generated);
     route_clear(&image);
     return out;
-}
-
-static const cJSON *cast_member(const cJSON *board, const char *id) {
-    const cJSON *cast = cJSON_GetObjectItemCaseSensitive(board, "characters"), *character;
-    cJSON_ArrayForEach(character, cast) {
-        const char *key = field(character, "id");
-        if (id && key && !strcmp(id, key)) return character;
-    }
-    return NULL;
 }
 
 static int shot_has_uploaded_references(const cJSON *board, const cJSON *shot, const cJSON *references) {
@@ -494,22 +527,26 @@ static int video_episode(router *routes, const char *route_name, const char *con
     run.total = count + 2;
     run.clips = calloc((size_t)run.total, sizeof(*run.clips));
     if (!run.clips) goto done;
+    const char *audio_mode = field(board, "audio_mode");
+    int show_cards = !audio_mode || strcmp(audio_mode, "dialogue") ||
+                     cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(board, "show_cards"));
     for (int i = 0; i < run.total; i++) {
         int last = i == run.total - 1;
         cJSON *shot = i && !last ? cJSON_GetArrayItem(shots, i - 1) : NULL;
         const char *kind = !i ? "title" : last ? "end" : field(shot, "kind");
-        if (!kind || (shot && (strcmp(kind, "narration") && strcmp(kind, "dialogue") && strcmp(kind, "sys"))) ||
-            (shot && (!field(shot, "text") || !*field(shot, "text")))) {
+        const char *text = field(shot, "text");
+        int spoken = kind && (!strcmp(kind, "narration") || !strcmp(kind, "dialogue") || !strcmp(kind, "sys"));
+        if (!kind || (shot && strcmp(kind, "action") && (!spoken || !text || !*text))) {
             error = "分镜类型或台词无效";
             goto done;
         }
         run.clips[i].kind = kind;
         const char *visual = field(shot ? shot : board,
                                    !i ? "title_image_prompt" : last ? "end_image_prompt" : "image_prompt");
+        /* Reuse the nearest clip for hidden or unspecified cards. */
+        if (!shot && (!show_cards || !visual || !*visual || (!names && preferred != LLM_VIDEO_TEXT))) continue;
         run.clips[i].prompt = make_prompt(board, shot, visual, seconds);
         if (!run.clips[i].prompt) goto done;
-        /* Reuse the nearest clip for unspecified cards to avoid extra cloud calls. */
-        if ((!i || last) && ((!visual || !*visual) || (!names && preferred != LLM_VIDEO_TEXT))) continue;
         int mode = preferred;
         if (names && shot) {
             const char *explicit_mode = field(shot, "video_mode");

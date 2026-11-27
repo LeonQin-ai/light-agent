@@ -47,6 +47,15 @@ static const char *field(const cJSON *object, const char *key) {
 }
 
 void manju_append_cast(strbuf *prompt, const cJSON *board, const cJSON *shot) {
+    const char *mode = field(board, "audio_mode");
+    if (shot && mode && !strcmp(mode, "dialogue")) {
+        const char *scene = field(shot, "scene"), *background = field(shot, "background");
+        const char *action = field(shot, "action"), *emotion = field(shot, "emotion");
+        if (scene && *scene) strbuf_appendf(prompt, "\n地点：%s", scene);
+        if (background && *background) strbuf_appendf(prompt, "\n场景背景与光线：%s", background);
+        if (action && *action) strbuf_appendf(prompt, "\n画面中的动作：%s", action);
+        if (emotion && *emotion) strbuf_appendf(prompt, "\n人物表情：%s", emotion);
+    }
     const cJSON *ids = cJSON_GetObjectItemCaseSensitive(shot, "character_ids");
     const cJSON *cast = cJSON_GetObjectItemCaseSensitive(board, "characters");
     const cJSON *id;
@@ -201,15 +210,24 @@ static char *visual_prompt(const char *direction, const char *visual, const char
                           "无可读文字、字幕、气泡、边框和标志。\n");
     if (direction && *direction) strbuf_appendf(&prompt, "%s\n", direction);
     if (visual && *visual) strbuf_append(&prompt, visual);
-    else strbuf_appendf(&prompt, "将以下情节描绘成单幅画面，忠实表达场景和人物动作，不绘制文字：%s", text);
+    else {
+        const char *action = field(shot, "action");
+        strbuf_appendf(&prompt, "将以下情节描绘成单幅画面，忠实表达场景和人物动作，不绘制文字：%s",
+                       action && *action ? action : text ? text : "");
+    }
     manju_append_cast(&prompt, board, shot);
     return strbuf_detach(&prompt);
 }
 
 static int valid_shot(const cJSON *shot) {
     const char *kind = field(shot, "kind"), *text = field(shot, "text"), *prompt = field(shot, "image_prompt");
-    return kind && (!strcmp(kind, "narration") || !strcmp(kind, "dialogue") || !strcmp(kind, "sys")) &&
-           text && *text && strlen(text) <= 12000 && (!prompt || strlen(prompt) <= 12000);
+    if (!kind || (prompt && strlen(prompt) > 12000)) return 0;
+    if (!strcmp(kind, "action")) {
+        const char *action = field(shot, "action");
+        return (prompt && *prompt) || (action && *action && strlen(action) <= 12000);
+    }
+    return (!strcmp(kind, "narration") || !strcmp(kind, "dialogue") || !strcmp(kind, "sys")) &&
+           text && *text && strlen(text) <= 12000;
 }
 
 static int panel_add(cJSON *entries, const char *file, const char *kind, int index, int last) {
@@ -293,8 +311,11 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
     if (!run.panels) goto done;
     const char *direction = field(board, "art_direction");
     const char *opening = field(board, "title_image_prompt"), *closing = field(board, "end_image_prompt");
-    if ((direction && strlen(direction) > 10000) || (opening && strlen(opening) > 12000) ||
-        (closing && strlen(closing) > 12000)) {
+    const char *audio_mode = field(board, "audio_mode");
+    int show_cards = !audio_mode || strcmp(audio_mode, "dialogue") ||
+                     cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(board, "show_cards"));
+    if ((direction && strlen(direction) > 10000) ||
+        (show_cards && ((opening && strlen(opening) > 12000) || (closing && strlen(closing) > 12000)))) {
         error = "画风或首尾卡提示过长";
         goto done;
     }
@@ -320,12 +341,12 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
             expected++;
         }
     }
-    if (!characters && opening && *opening) {
+    if (!characters && show_cards && opening && *opening) {
         run.panels[0].prompt = visual_prompt(direction, opening, title, board, NULL);
         if (!run.panels[0].prompt) goto done;
         expected++;
     }
-    if (!characters && closing && *closing) {
+    if (!characters && show_cards && closing && *closing) {
         run.panels[count + 1].prompt = visual_prompt(direction, closing, title, board, NULL);
         if (!run.panels[count + 1].prompt) goto done;
         expected++;

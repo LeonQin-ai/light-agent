@@ -12,12 +12,12 @@
       分镜：{title, badge, shots:[{kind:"narration"|"dialogue"|"sys", text}]}
   panels  --shots <shots.json> --out <dir> --ep <N>
       画师：标题卡 + 每镜一张 + 片尾卡 PNG（panel_000.png ...）+ poster.png + panels.json
-  tts     --shots <shots.json> --out <dir> [--ep <N>]
+  tts     --shots <shots.json> --out <dir> [--ep <N>] [--clip-seconds {3,4}]
       配音：edge_tts 并发合成（逐句验证、断点续跑），44100 单声道，audio.json
   compose --shots <shots.json> (--panels <dir> | --clips <dir>) --audio <dir> --out <ep.mp4> --ep <N>
           [--manifest <path>]
       合成：逐帧推拉/平移/手持抖动 + 颗粒 + 字幕淡入，rawvideo 管道进 ffmpeg，
-      语音按镜补零 + 低频 drone amix；cv2/ffmpeg 双重校验；写/合并 manifest；失败 exit 1。
+      配音与环境声按镜混合；cv2/ffmpeg 双重校验；写/合并 manifest；失败 exit 1。
 
 依赖：numpy cv2 PIL imageio_ffmpeg soundfile edge_tts
 """
@@ -62,6 +62,9 @@ VOICE = {
     "title": "zh-CN-YunjianNeural",
     "end": "zh-CN-YunjianNeural",
 }
+LEGACY_RATE = "+10%"
+AMBIENCE = ("room", "wind", "rain", "fire")
+SOUND_EFFECTS = ("bell", "steps", "thunder")
 
 
 def get_font(size, bold=False):
@@ -529,6 +532,18 @@ def title_overlay(title, p, subtitle):
     return _pack(ov)
 
 
+def dialogue_subtitle(text):
+    overlay = Image.new("RGBA", (W, H))
+    draw = ImageDraw.Draw(overlay)
+    font = get_font(34, True)
+    caption = wrap_cjk(text, font, W - 120)
+    left, _, right, bottom = draw.multiline_textbbox((0, 0), caption, font=font, spacing=9, align="center")
+    position = ((W - (right - left)) // 2 - left, H - 112 - bottom)
+    draw.multiline_text(position, caption, font=font, spacing=9, align="center",
+                        fill=(249, 247, 240, 255), stroke_width=3, stroke_fill=(13, 10, 17, 255))
+    return _pack(overlay)
+
+
 def end_overlay(text, p):
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(ov)
@@ -540,21 +555,25 @@ def end_overlay(text, p):
 
 
 # ---------------------------------------------------------------- TTS（manju_av.voice_of / audio_for）
-def _speak(text, voice, pitch, mp3):
+def _speak(text, voice, pitch, rate, mp3):
     import edge_tts
 
     async def go():
         synthesis = edge_tts.Communicate(
-            text, voice, pitch=pitch, rate="+10%", connect_timeout=10, receive_timeout=20,
+            text, voice, pitch=pitch, rate=rate, connect_timeout=10, receive_timeout=20,
         )
         await asyncio.wait_for(synthesis.save(mp3), timeout=35)
 
     asyncio.run(go())
 
 
-def voice_cache_key(text, voice, pitch):
-    style = voice if pitch == "+0Hz" else voice + "|" + pitch
-    return hashlib.md5((style + "|" + text).encode("utf-8")).hexdigest()[:20]
+def voice_cache_key(text, voice, pitch, rate=LEGACY_RATE):
+    if rate == LEGACY_RATE:
+        style = voice if pitch == "+0Hz" else voice + "|" + pitch
+        key = style + "|" + text
+    else:
+        key = "v2:" + json.dumps([voice, pitch, rate, text], ensure_ascii=False)
+    return hashlib.md5(key.encode("utf-8")).hexdigest()[:20]
 
 
 def verified_voice_samples(path):
@@ -579,8 +598,8 @@ def verified_voice_samples(path):
         return 0
 
 
-def voice_of(text, voice, pitch, cache_dir):
-    wav = os.path.join(cache_dir, voice_cache_key(text, voice, pitch) + ".wav")
+def voice_of(text, voice, pitch, rate, cache_dir):
+    wav = os.path.join(cache_dir, voice_cache_key(text, voice, pitch, rate) + ".wav")
     cached = verified_voice_samples(wav)
     if cached:
         return cached, True
@@ -591,7 +610,7 @@ def voice_of(text, voice, pitch, cache_dir):
             with tempfile.TemporaryDirectory(dir=cache_dir, prefix=".voice-") as staging:
                 mp3 = os.path.join(staging, "voice.mp3")
                 pending = os.path.join(staging, "voice.wav")
-                _speak(text, voice, pitch, mp3)
+                _speak(text, voice, pitch, rate, mp3)
                 result = subprocess.run(
                     [ff, "-hide_banner", "-loglevel", "error", "-y", "-i", mp3,
                      "-ar", str(SR), "-ac", "1", "-c:a", "pcm_s16le", pending],
@@ -619,23 +638,70 @@ def pad_to(data, n):
     return out
 
 
-# ---------------------------------------------------------------- 编码（manju_av.encode 原样）
+def mix_shot_audio(data, n, ambience, sound_effect, seed):
+    voice = pad_to(data, n)
+    if not ambience and not sound_effect:
+        return voice
+
+    rng = np.random.default_rng(seed)
+    t = np.arange(n, dtype=np.float32) / SR
+    sound = np.zeros(n, dtype=np.float32)
+    if ambience == "room":
+        sound += 0.014 * np.convolve(rng.standard_normal(n, dtype=np.float32),
+                                    np.full(17, 1 / 17, dtype=np.float32), mode="same")
+        sound += 0.008 * np.sin(2 * np.pi * 77 * t)
+    elif ambience == "wind":
+        sound += 0.042 * np.convolve(rng.standard_normal(n, dtype=np.float32),
+                                    np.full(47, 1 / 47, dtype=np.float32), mode="same") * (
+                                        0.68 + 0.32 * np.sin(2 * np.pi * 0.49 * t))
+    elif ambience == "rain":
+        sound += 0.017 * np.convolve(rng.standard_normal(n, dtype=np.float32),
+                                    np.full(5, 1 / 5, dtype=np.float32), mode="same")
+    elif ambience == "fire":
+        sparks = rng.random(n, dtype=np.float32) > 0.997
+        impulses = rng.uniform(-0.08, 0.08, n).astype(np.float32) * sparks
+        sound += np.convolve(impulses, np.exp(-np.arange(18, dtype=np.float32) / 4), mode="same")
+
+    if sound_effect == "bell":
+        hit = np.maximum(t - 0.15, 0)
+        sound += 0.12 * (np.sin(2 * np.pi * 587 * hit) + 0.3 * np.sin(2 * np.pi * 1193 * hit)) * np.exp(-3.3 * hit)
+    elif sound_effect == "steps":
+        for moment in (0.25, 0.79):
+            hit = np.maximum(t - moment, 0)
+            sound += 0.10 * np.sin(2 * np.pi * 92 * hit) * np.exp(-28 * hit)
+    elif sound_effect == "thunder":
+        hit = np.maximum(t - 0.25, 0)
+        sound += 0.19 * (np.sin(2 * np.pi * 46 * hit) + 0.28 * np.sin(2 * np.pi * 83 * hit)) * (
+            1 - np.exp(-18 * hit)) * np.exp(-2.1 * hit)
+
+    fade = min(SR // 10, n // 2)
+    if fade:
+        ramp = np.linspace(0, 1, fade, dtype=np.float32)
+        sound[:fade] *= ramp
+        sound[-fade:] *= ramp[::-1]
+    sound[:len(data)] *= 0.55
+    return np.clip(voice + sound, -0.97, 0.97)
+
+
+# ---------------------------------------------------------------- 编码
 def encode(frames_iter, out_path, dur, voice_wav, freq):
     ff = imageio_ffmpeg.get_ffmpeg_exe()
-    af = ("[2:a]volume=0.045,tremolo=f=0.6:d=0.6,afade=t=in:st=0:d=1.4,"
-          "afade=t=out:st=%.2f:d=1.8[dr];"
-          "[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=mono,apad[v];"
-          "[v][dr]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.97[a]"
-          % max(0.0, dur - 2.0))
     cmd = [ff, "-hide_banner", "-loglevel", "error", "-y",
            "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "%dx%d" % (W, H),
            "-r", str(FPS), "-i", "-",
-           "-i", voice_wav,
-           "-f", "lavfi", "-i", "sine=frequency=%d:sample_rate=44100:duration=%.2f" % (freq, dur),
-           "-filter_complex", af,
-           "-map", "0:v", "-map", "[a]",
-           "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", out_path]
+           "-i", voice_wav]
+    if freq is None:
+        cmd += ["-map", "0:v", "-map", "1:a"]
+    else:
+        af = ("[2:a]volume=0.045,tremolo=f=0.6:d=0.6,afade=t=in:st=0:d=1.4,"
+              "afade=t=out:st=%.2f:d=1.8[dr];"
+              "[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=mono,apad[v];"
+              "[v][dr]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.97[a]"
+              % max(0.0, dur - 2.0))
+        cmd += ["-f", "lavfi", "-i", "sine=frequency=%d:sample_rate=44100:duration=%.2f" % (freq, dur),
+                "-filter_complex", af, "-map", "0:v", "-map", "[a]"]
+    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", out_path]
     with tempfile.TemporaryFile() as log, subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=log) as pr:
         try:
@@ -658,6 +724,12 @@ def encode(frames_iter, out_path, dur, voice_wav, freq):
 def load_json(path):
     with open(path, encoding="utf-8-sig") as fh:
         return json.load(fh)
+
+
+def load_storyboard(path):
+    with open(path, "rb") as fh:
+        source = fh.read()
+    return json.loads(source.decode("utf-8-sig")), hashlib.sha256(source).hexdigest()
 
 
 def save_json(path, obj):
@@ -761,14 +833,19 @@ def shot_plan_meta(shots, ep):
     return entries
 
 
-def build_overlays(doc, ep, p):
+def build_overlays(doc, ep, p, show_cards=True):
     """按 shots.json 重建全部 overlay（标题/正文/片尾），与 panels 阶段一致。"""
     title, badge = doc["title"], doc["badge"]
-    shots = doc["shots"]
-    ovls = [title_overlay(title, p, "第 %d 话 · %s" % (ep, badge))]
-    for sh in shots:
-        ovls.append(body_overlay(sh["kind"], sh["text"], p, badge))
-    ovls.append(end_overlay("第 %d 话 完" % ep, p))
+    dialogue_mode = doc.get("audio_mode") == "dialogue"
+    ovls = [title_overlay(title, p, "第 %d 话 · %s" % (ep, badge)) if show_cards else None]
+    for shot in doc["shots"]:
+        if shot["kind"] == "action":
+            ovls.append(None)
+        elif dialogue_mode:
+            ovls.append(dialogue_subtitle(shot["text"]))
+        else:
+            ovls.append(body_overlay(shot["kind"], shot["text"], p, badge))
+    ovls.append(end_overlay("第 %d 话 完" % ep, p) if show_cards else None)
     return ovls
 
 
@@ -818,56 +895,113 @@ def cmd_panels(args):
 
 
 # ---------------------------------------------------------------- 子命令：tts
+def story_audio_options(doc):
+    dialogue_mode = doc.get("audio_mode") == "dialogue"
+    show_cards = doc.get("show_cards", False) if dialogue_mode else True
+    if type(show_cards) is not bool:
+        raise ValueError("show_cards 必须为 true 或 false")
+    if dialogue_mode and not doc["shots"]:
+        raise ValueError("对白模式至少需要一个镜头")
+
+    shots = [(0, None, None)]  # 标题卡和片尾卡保留清单位置。
+    for index, shot in enumerate(doc["shots"], start=1):
+        kind = shot["kind"]
+        text = shot.get("text")
+        if dialogue_mode and kind not in ("dialogue", "action"):
+            raise ValueError("对白模式第 %d 镜仅支持 dialogue 或 action" % index)
+        if kind == "action" and text is not None and (not isinstance(text, str) or text.strip()):
+            raise ValueError("动作镜头 %d 不能包含台词，画面描述请放入 action" % index)
+        speaker = shot.get("speaker")
+        if dialogue_mode and kind == "dialogue":
+            if not isinstance(speaker, str) or not speaker.strip():
+                raise ValueError("对白镜头 %d 缺少说话角色" % index)
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("对白镜头 %d 缺少台词" % index)
+        duration = shot.get("duration_seconds", 3 if kind == "action" else None)
+        if duration is not None and (type(duration) not in (int, float) or not 1 <= duration <= 30):
+            raise ValueError("第 %d 镜的 duration_seconds 必须为 1 到 30 秒" % index)
+        ambience, effect = shot.get("ambience"), shot.get("sound_effect")
+        ambience, effect = ambience if ambience != "" else None, effect if effect != "" else None
+        if (ambience is not None and ambience not in AMBIENCE) or (effect is not None and effect not in SOUND_EFFECTS):
+            raise ValueError("第 %d 镜的环境声或音效无效" % index)
+        shots.append((math.ceil(duration * FPS) if duration else 0, ambience, effect))
+    shots.append((0, None, None))
+    return dialogue_mode, show_cards, shots
+
+
+def check_clip_speech(samples, clip_seconds, index, speaker):
+    if samples > clip_seconds * SR:
+        raise ValueError("第 %d 镜（%s）的对白长 %.2f 秒，超过 %d 秒视频片段。请拆成更短的台词或调整角色语速。"
+                         % (index, speaker, samples / SR, clip_seconds))
+
+
 def cmd_tts(args):
-    doc = load_json(args.shots)
+    doc, storyboard_digest = load_storyboard(args.shots)
+    dialogue_mode, _, shots = story_audio_options(doc)
     ep = args.ep
     cache = os.path.join(args.out, "cache")
     os.makedirs(cache, exist_ok=True)
 
     lines = [("title", "第%d话。%s" % (ep, doc["badge"]), None)]
-    lines += [(sh["kind"], sh["text"], sh.get("speaker")) for sh in doc["shots"]]
+    lines += [(sh["kind"], sh.get("text"), sh.get("speaker")) for sh in doc["shots"]]
     lines.append(("end", "第%d话，完。" % ep, None))
 
     cast = doc.get("voice_cast", {})
     if not isinstance(cast, dict):
         raise ValueError("voice_cast 必须是角色与音色设置的映射")
+    clip_frames = args.clip_seconds * FPS if dialogue_mode and args.clip_seconds else 0
     grouped = {}
+    entries = [None] * len(lines)
     for index, (kind, text, speaker) in enumerate(lines):
+        if kind == "action" or (dialogue_mode and kind in ("title", "end")):
+            frames = clip_frames or shots[index][0] or (34 if kind == "title" else 28)
+            entries[index] = dict(kind=kind, samples=0, frames=frames)
+            continue
         if kind not in VOICE or not isinstance(text, str) or not text.strip():
             raise ValueError("第 %d 条配音缺少有效的 kind 或 text" % index)
         style = cast.get(speaker, {}) if isinstance(speaker, str) else {}
         if not isinstance(style, dict):
             raise ValueError("配音角色 %s 的设置须为对象" % speaker)
         voice, pitch = style.get("voice", VOICE[kind]), style.get("pitch", "+0Hz")
+        rate = style.get("rate", "+0%" if dialogue_mode else LEGACY_RATE)
         if (not isinstance(voice, str) or not re.fullmatch(r"[A-Za-z]+-[A-Za-z0-9-]+Neural", voice)
                 or not isinstance(pitch, str) or not re.fullmatch(r"[+-]\d{1,2}Hz", pitch)):
             raise ValueError("配音角色 %s 的 voice 或 pitch 格式错误" % speaker)
-        grouped.setdefault((text, voice, pitch), []).append(index)
+        if (not isinstance(rate, str) or not re.fullmatch(r"[+-][0-9]{1,2}%", rate)
+                or abs(int(rate[:-1])) > 50):
+            raise ValueError("配音角色 %s 的 rate 必须在 -50%% 到 +50%% 之间" % speaker)
+        rate = "%+d%%" % int(rate[:-1])
+        grouped.setdefault((text, voice, pitch, rate), []).append(index)
 
     failures = []
-    entries = [None] * len(lines)
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {
-            pool.submit(voice_of, text, voice, pitch, cache): (text, voice, pitch, indexes)
-            for (text, voice, pitch), indexes in grouped.items()
+            pool.submit(voice_of, text, voice, pitch, rate, cache): (text, voice, pitch, rate, indexes)
+            for (text, voice, pitch, rate), indexes in grouped.items()
         }
         for future in as_completed(futures):
-            text, voice, pitch, indexes = futures[future]
+            text, voice, pitch, rate, indexes = futures[future]
             try:
                 samples, cached = future.result()
             except Exception as error:
                 failures.append((indexes, str(error)))
                 print("[tts] ERROR lines %s: %s" % (indexes, error), flush=True)
                 continue
-            key = voice_cache_key(text, voice, pitch)
+            key = voice_cache_key(text, voice, pitch, rate)
             for index in indexes:
                 kind, _, speaker = lines[index]
-                minimum = 34 if kind == "title" else 28
-                padding = 8 if kind == "end" else 10
-                frames = max(minimum, round(samples / SR * FPS) + padding)
+                if clip_frames:
+                    check_clip_speech(samples, args.clip_seconds, index, speaker)
+                    frames = clip_frames
+                elif dialogue_mode:
+                    frames = max(shots[index][0], math.ceil(samples * FPS / SR) + 4)
+                else:
+                    minimum = 34 if kind == "title" else 28
+                    padding = 8 if kind == "end" else 10
+                    frames = max(minimum, round(samples / SR * FPS) + padding)
                 entries[index] = dict(file="cache/" + key + ".wav", kind=kind,
                                       samples=samples, frames=frames,
-                                      speaker=speaker, voice=voice, pitch=pitch)
+                                      speaker=speaker, voice=voice, pitch=pitch, rate=rate)
                 print("[tts] %02d %s %d samples -> %d frames (%s)" %
                       (index, kind, samples, frames, "cached" if cached else "generated"), flush=True)
 
@@ -876,15 +1010,18 @@ def cmd_tts(args):
         raise RuntimeError("配音未完成，失败条目 %s；成功的音频已保存，重试时继续" % failed)
     with tempfile.TemporaryDirectory(dir=args.out, prefix=".audio-manifest-") as staging:
         pending = os.path.join(staging, "audio.json")
-        save_json(pending, dict(ep=ep, sr=SR, fps=FPS, entries=entries,
-                                provider="edge-tts"))
+        audio_manifest = dict(ep=ep, sr=SR, fps=FPS, entries=entries, provider="edge-tts")
+        if dialogue_mode:
+            audio_manifest.update(audio_mode="dialogue", storyboard_digest=storyboard_digest)
+        save_json(pending, audio_manifest)
         os.replace(pending, os.path.join(args.out, "audio.json"))
     print("[tts] %d lines -> %s" % (len(entries), args.out), flush=True)
 
 
 # ---------------------------------------------------------------- 子命令：compose
 def cmd_compose(args):
-    doc = load_json(args.shots)
+    doc, storyboard_digest = load_storyboard(args.shots)
+    dialogue_mode, show_cards, shot_audio = story_audio_options(doc)
     video_mode = args.clips is not None
     if video_mode:
         pj, clip_seconds = clip_manifest(args.clips, args.shots)
@@ -896,10 +1033,12 @@ def cmd_compose(args):
         visual_dir = args.panels
         entries = pj["panels"]
     aj = load_json(manifest_asset(args.audio, "audio.json"))
+    if dialogue_mode and (aj.get("audio_mode") != "dialogue" or aj.get("storyboard_digest") != storyboard_digest):
+        raise ValueError("配音清单与当前对白分镜不匹配，请重新生成配音")
     ep = args.ep
     p = palette_of(ep)
     ep_name = "ep%02d" % ep
-    title, badge = doc["title"], doc["badge"]
+    title = doc["title"]
     shots = doc["shots"]
 
     audio_entries = aj["entries"]
@@ -914,24 +1053,35 @@ def cmd_compose(args):
                 type(audio.get("frames")) is not int or audio["frames"] <= 0):
             raise ValueError("分镜、画面与音轨顺序或帧数不一致，清单条目 %d" % index)
 
-    ovls = build_overlays(doc, ep, p)
+    ovls = build_overlays(doc, ep, p, show_cards)
     plan = []
-    for i, (e, ae) in enumerate(zip(entries, audio_entries)):
+    active_entries = range(len(entries)) if show_cards else range(1, len(entries) - 1)
+    for i in active_entries:
+        e, ae = entries[i], audio_entries[i]
         visual_path = manifest_asset(visual_dir, e["file"])
-        wav_path = manifest_asset(args.audio, ae["file"])
-        data, sr = sf.read(wav_path, dtype="float32", always_2d=False)
-        if data.ndim > 1:
-            data = data.mean(axis=1).astype(np.float32)
-        if sr != SR:
-            n = int(round(len(data) * SR / sr))
-            idx = np.linspace(0, len(data) - 1, n, dtype=np.float32)
-            data = np.interp(idx, np.arange(len(data), dtype=np.float32), data).astype(np.float32)
+        if ae["kind"] == "action" or (dialogue_mode and ae["kind"] in ("title", "end")):
+            data = np.empty(0, dtype=np.float32)
+        else:
+            wav_path = manifest_asset(args.audio, ae["file"])
+            data, sr = sf.read(wav_path, dtype="float32", always_2d=False)
+            if dialogue_mode and (sr != SR or data.ndim != 1 or not len(data) or len(data) != ae.get("samples")):
+                raise ValueError("第 %d 镜配音的采样率、声道或长度与清单不一致" % i)
+            if data.ndim > 1:
+                data = data.mean(axis=1).astype(np.float32)
+            if sr != SR:
+                n = int(round(len(data) * SR / sr))
+                idx = np.linspace(0, len(data) - 1, n, dtype=np.float32)
+                data = np.interp(idx, np.arange(len(data), dtype=np.float32), data).astype(np.float32)
         n = ae["frames"]
+        _, ambience, effect = shot_audio[i]
         if video_mode:
-            # A clip stays in motion for 3–4s. Hold its last frame if speech
-            # needs longer, preserving the last syllable and the subtitle.
-            n = max(n, clip_frames, math.ceil(len(data) * FPS / SR))
-            plan.append(dict(clip=visual_path, ovl=ovls[i], n=n, audio=data))
+            if dialogue_mode:
+                check_clip_speech(len(data), clip_seconds, i, ae.get("speaker"))
+                n = clip_frames
+            else:
+                # Preserve the full narration in legacy storyboards.
+                n = max(n, clip_frames, math.ceil(len(data) * FPS / SR))
+            visual = dict(clip=visual_path)
         else:
             bgr = cv2.imdecode(np.fromfile(visual_path, dtype=np.uint8), cv2.IMREAD_COLOR)
             if bgr is None:
@@ -943,9 +1093,9 @@ def cmd_compose(args):
                 left, top = (width - crop_w) // 2, (height - crop_h) // 2
                 bgr = cv2.resize(bgr[top:top + crop_h, left:left + crop_w], (BW, BH))
             panel = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            plan.append(dict(panel=panel, ovl=ovls[i], n=n, audio=data,
-                             z0=e["z0"], z1=e["z1"], cx=e["cx"], cy=e["cy"],
-                             px=e.get("px", 0.0), py=e.get("py", 0.0), ph=e.get("ph", 0.0)))
+            visual = dict(panel=panel, z0=e["z0"], z1=e["z1"], cx=e["cx"], cy=e["cy"],
+                          px=e.get("px", 0.0), py=e.get("py", 0.0), ph=e.get("ph", 0.0))
+        plan.append(dict(**visual, ovl=ovls[i], n=n, audio=data, ambience=ambience, effect=effect, seed=ep * 997 + i))
 
     total_frames = sum(s["n"] for s in plan)
     dur = total_frames / float(FPS)
@@ -954,10 +1104,10 @@ def cmd_compose(args):
     chunks = []
     for s in plan:
         need = int(round(s["n"] / float(FPS) * SR))
-        chunks.append(pad_to(s["audio"], need))
+        chunks.append(mix_shot_audio(s["audio"], need, s["ambience"], s["effect"], s["seed"]))
     voice = np.concatenate(chunks) if chunks else np.zeros(1, dtype=np.float32)
 
-    # 逐帧：推拉 + 平移 + 正弦手持抖动（manju_anim）+ 雨丝 + 快速颗粒 + 淡入合成
+    # 逐帧：视频与图片使用同一套字幕淡入，图片另加运镜与颗粒。
     def frames(pending_poster):
         fi = 0
         for index, s in enumerate(plan):
@@ -1001,10 +1151,12 @@ def cmd_compose(args):
         pending_poster = os.path.join(stage, "poster.png") if generate_poster else None
         voice_wav = os.path.join(stage, "voice.wav")
         sf.write(voice_wav, voice, SR, subtype="PCM_16")
-        encode(frames(pending_poster), tmp_video, dur, voice_wav, 92 + ep * 3)
+        encode(frames(pending_poster), tmp_video, dur, voice_wav, None if dialogue_mode else 92 + ep * 3)
         rec = verify_episode(tmp_video, ep_name, title, len(shots), total_frames, poster_path)
         if video_mode:
             rec.update(visual_mode="video", clip_seconds=clip_seconds, video_model=pj.get("video_model"))
+        if dialogue_mode:
+            rec["audio_mode"] = "dialogue"
         publish_episode(tmp_video, out_path, manifest, rec, pending_poster)
 
     print("[ep] %s | %s | shots=%d | %.2fs | %d frames | %.2f MB | audio=%s | open=%s/%s"
@@ -1077,6 +1229,7 @@ def main():
     s.add_argument("--out", required=True)
     s.add_argument("--ep", type=int, default=1,
                    help="话数（用于标题/片尾念白，默认 1）")
+    s.add_argument("--clip-seconds", type=int, choices=(3, 4), help="按视频片段时长预检对白")
     s.set_defaults(fn=cmd_tts)
 
     s = sub.add_parser("compose", help="合成：面板或视频片段 + 配音 -> MP4（含校验和清单）")
