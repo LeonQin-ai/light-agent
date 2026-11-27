@@ -10769,6 +10769,18 @@ int main(int argc, char **argv) {
     }
 #ifdef _WIN32
     if (argc > 1 && (!strcmp(argv[0],"ssh") || !strcmp(argv[0],"ssh.exe") || strstr(argv[0],"issue-ssh"))) {
+        if (!strcmp(argv[argc-1], "SSH_TEST_AUTH")) {
+            fputs("testuser@127.0.0.1: Permission denied (publickey,password).\n", stderr);
+            return 255;
+        }
+        if (!strcmp(argv[argc-1], "SSH_TEST_EXEC")) {
+            fputs("remote-file: Permission denied\n", stderr);
+            return 1;
+        }
+        if (!strcmp(argv[argc-1], "SSH_TEST_TRANSPORT")) {
+            fputs("ssh: connect to host 127.0.0.1: Connection refused\n", stderr);
+            return 255;
+        }
         printf("%s",argv[argc-1]); return 0;
     }
     if (argc==2 && !strcmp(argv[1],"--ssh-args")) {
@@ -10789,6 +10801,64 @@ int main(int argc, char **argv) {
             CHECK(result && result->ok && !strcmp(result->output,commands[i]));
             tool_result_free(result); free(json); cJSON_Delete(args);
         }
+        ssh_run_auth auth = {0};
+        tool_ctx ctx = {0};
+        ctx.state_root = "state-test/ssh-auth-retry";
+        ctx.session_id = "auth-chat";
+        ctx.ssh_auth = &auth;
+        ssh_session_profiles_clear(ctx.state_root, ctx.session_id);
+        CHECK(ssh_session_profile_record(ctx.state_root, ctx.session_id, NULL,
+                                         "127.0.0.1", "testuser", 22, NULL, NULL, NULL) == 0);
+        tool_result *result = tool_execute(reg, "ssh", "{\"command\":\"SSH_TEST_AUTH\"}", &ctx);
+        CHECK(result && !result->ok && strstr(result->output, "[ssh_auth]"));
+        CHECK(result && strstr(result->output, "缺少此连接的托管密码"));
+        CHECK(auth.count == 1 && !auth.retry_error);
+        tool_result_free(result);
+        result = tool_execute(reg, "ssh",
+            "{\"host\":\"testuser@127.0.0.1\",\"command\":\"SSH_TEST_CHANGED_COMMAND\"}", &ctx);
+        CHECK(result && !result->ok && strstr(result->output, "[ssh_auth]") && auth.retry_error);
+        tool_result_free(result);
+        result = tool_execute(reg, "ssh",
+            "{\"host\":\"testuser@127.0.0.2\",\"command\":\"SSH_TEST_EXEC\"}", &ctx);
+        CHECK(result && !result->ok && strstr(result->output, "[ssh_exec]"));
+        tool_result_free(result);
+        result = tool_execute(reg, "ssh",
+            "{\"host\":\"testuser@127.0.0.2\",\"command\":\"SSH_TEST_TRANSPORT\"}", &ctx);
+        CHECK(result && !result->ok && strstr(result->output, "[ssh_transport]"));
+        tool_result_free(result);
+        CHECK(auth.count == 1);
+        char vault_key[96];
+        CHECK(ssh_session_vault_key(ctx.session_id, "127.0.0.1", "testuser", 22,
+                                    vault_key, sizeof(vault_key)) == 0);
+        CHECK(ssh_vault_put(ctx.state_root, vault_key, "FixtureAuthPassword42!") == 0);
+        result = tool_execute(reg, "ssh",
+            "{\"host\":\"testuser@127.0.0.1\",\"command\":\"SSH_TEST_AUTH\"}", &ctx);
+        CHECK(result && !result->ok && strstr(result->output, "拒绝了当前托管密码"));
+        CHECK(result && !strstr(result->output, "FixtureAuthPassword42!"));
+        CHECK(auth.count == 2);
+        tool_result_free(result);
+        auth = (ssh_run_auth){0};
+        result = tool_execute(reg, "ssh",
+            "{\"host\":\"testuser@127.0.0.1\",\"command\":\"SSH_TEST_FRESH_RUN\"}", &ctx);
+        CHECK(result && result->ok && strstr(result->output, "SSH_TEST_FRESH_RUN"));
+        tool_result_free(result);
+        ssh_session_profiles_clear(ctx.state_root, ctx.session_id);
+        static const char environments[] = "{\"environments\":{\"fixture\":{\"host\":\"127.0.0.1\",\"user\":\"testuser\",\"port\":22}}}";
+        CHECK(fs_mkdirs("state-test/ssh-auth-retry/ssh") == 0);
+        CHECK(fs_write_file("state-test/ssh-auth-retry/ssh/environments.json", environments,
+                            sizeof(environments) - 1) == 0);
+        CHECK(ssh_vault_put(ctx.state_root, "fixture", "FixtureNamedPassword58!") == 0);
+        for (int i = 0; i < 2; i++) {
+            ctx.session_id = i == 0 ? "auth-named-one" : "auth-named-two";
+            auth = (ssh_run_auth){0};
+            ssh_session_profiles_clear(ctx.state_root, ctx.session_id);
+            result = tool_execute(reg, "ssh",
+                "{\"environment\":\"fixture\",\"command\":\"SSH_TEST_AUTH\"}", &ctx);
+            CHECK(result && !result->ok && strstr(result->output, "拒绝了当前托管密码"));
+            CHECK(auth.count == 1 && !auth.retry_error && !strcmp(auth.endpoint, "testuser@127.0.0.1:22"));
+            tool_result_free(result);
+        }
+        CHECK(ssh_vault_delete(ctx.state_root, "fixture") == 0);
         tool_registry_free(reg); SetEnvironmentVariableA("PATH",old); free(old); strbuf_free(&env);
         fs_remove("build/issue-ssh/ssh.exe"); printf("%d passed, %d failed\n",g_pass,g_fail); return g_fail?1:0;
     }

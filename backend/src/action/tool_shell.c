@@ -574,6 +574,24 @@ static char *ssh_named_password(const tool_ctx *ctx, const char *name,
     return password;
 }
 
+static const char *ssh_auth_error(int has_password) {
+    return has_password
+        ? "[ssh_auth] SSH 认证失败：服务器拒绝了当前托管密码。请更新会话凭据或对应的命名环境后继续。"
+        : "[ssh_auth] SSH 认证失败：当前会话缺少此连接的托管密码，密钥或代理认证也未通过。请配置会话凭据或选择已配置的命名环境后继续。";
+}
+
+static void ssh_prefix_error(tool_result *result, const char *prefix) {
+    strbuf message;
+    strbuf_init(&message);
+    strbuf_append(&message, prefix);
+    if (result->output) strbuf_append(&message, result->output);
+    if (message.buf) {
+        free(result->output);
+        result->output = strbuf_detach(&message);
+    }
+    strbuf_free(&message);
+}
+
 static tool_result *ssh_exec(const tool *self, const tool_ctx *ctx, const char *args_json) {
     cJSON *args = cJSON_Parse(args_json);
     cJSON *host = args ? cJSON_GetObjectItemCaseSensitive(args, "host") : NULL;
@@ -593,6 +611,7 @@ static tool_result *ssh_exec(const tool *self, const tool_ctx *ctx, const char *
     const char *password_text = NULL;
     char *vault_password = NULL;
     const char *managed_environment = NULL;
+    const char *credential_kind = "key-agent", *credential_id = "";
     int current_managed_profile = 0;
     int ssh_exit_code = -1, ssh_timed_out = 0;
     char vault_key[96] = {0};
@@ -673,15 +692,24 @@ static tool_result *ssh_exec(const tool *self, const tool_ctx *ctx, const char *
      * without a session retain their explicit-password compatibility path. */
     if (vault_key[0] && ctx) {
         if (ctx->session_id && *ctx->session_id &&
-            !ssh_session_pending_key(vault_key, pending_vault_key, sizeof(pending_vault_key)))
+            !ssh_session_pending_key(vault_key, pending_vault_key, sizeof(pending_vault_key))) {
             vault_password = ssh_vault_get(ctx->state_root, pending_vault_key);
-        if (!vault_password && current_managed_profile)
+            if (vault_password) { credential_kind = "pending"; credential_id = pending_vault_key; }
+        }
+        if (!vault_password && current_managed_profile) {
             vault_password = ssh_named_password(ctx, managed_environment,
                                                 host_text, user_text, port_no);
-        if (!vault_password) vault_password = ssh_vault_get(ctx->state_root, vault_key);
-        if (!vault_password && managed_environment)
+            if (vault_password) { credential_kind = "named"; credential_id = managed_environment; }
+        }
+        if (!vault_password) {
+            vault_password = ssh_vault_get(ctx->state_root, vault_key);
+            if (vault_password) { credential_kind = "vault"; credential_id = vault_key; }
+        }
+        if (!vault_password && managed_environment) {
             vault_password = ssh_named_password(ctx, managed_environment,
                                                 host_text, user_text, port_no);
+            if (vault_password) { credential_kind = "named"; credential_id = managed_environment; }
+        }
         password_text = vault_password;
     }
     if (!password_text && (!ctx || !ctx->session_id || !*ctx->session_id) &&
@@ -696,9 +724,12 @@ static tool_result *ssh_exec(const tool *self, const tool_ctx *ctx, const char *
         (profile_root && ((profile.identity_file && !ssh_path_valid(profile.identity_file)) ||
                           (profile.known_hosts && !ssh_path_valid(profile.known_hosts)) ||
                           (profile.proxy_jump && !ssh_host_valid(profile.proxy_jump))))) {
+        const char *error = !host_text ?
+            "[ssh_setup] 当前会话尚未配置 SSH 连接。请指定主机与账号，或选择已配置的命名环境。" :
+            "ssh: host, command or port is invalid";
         free(embedded_user); ssh_vault_secret_free(vault_password); cJSON_Delete(profile_root);
         cJSON_Delete(args);
-        return tool_result_new(0, "ssh: host, command or port is invalid");
+        return tool_result_new(0, error);
     }
     quoted = ssh_quote_arg(command->valuestring);
     if (!quoted) {
@@ -709,6 +740,37 @@ static tool_result *ssh_exec(const tool *self, const tool_ctx *ctx, const char *
         timeout_ms = 100;
     if (timeout_ms > 60000)
         timeout_ms = 60000;
+
+    ssh_run_auth *auth = ctx && ctx->session_id && *ctx->session_id ? ctx->ssh_auth : NULL;
+    uint64_t auth_key = 0;
+    if (auth) {
+        snprintf(auth->endpoint, sizeof(auth->endpoint), "%s%s%s:%d",
+                 user_text ? user_text : "", user_text ? "@" : "", host_text, port_no);
+        /* Resolve before comparing, so model switches between explicit and
+         * implicit endpoint arguments do not retry the same credentials. */
+        strbuf endpoint;
+        strbuf_init(&endpoint);
+        strbuf_appendf(&endpoint, "%s|%s|%d|%s|%s|%s|%s|%s", host_text, user_text ? user_text : "", port_no,
+                       credential_kind, credential_id,
+                       profile_root && profile.identity_file ? profile.identity_file : "",
+                       profile_root && profile.proxy_jump ? profile.proxy_jump : "",
+                       profile_root && profile.known_hosts ? profile.known_hosts : "");
+        if (endpoint.buf) auth_key = hash64(endpoint.buf, endpoint.len);
+        else auth = NULL;
+        strbuf_free(&endpoint);
+    }
+    if (auth) {
+        for (size_t i = 0; i < auth->count; ++i) {
+            if (auth->rejected[i] == auth_key) {
+                auth->retry_error = ssh_auth_error(password_text != NULL);
+                memcpy(auth->retry_endpoint, auth->endpoint, sizeof(auth->endpoint));
+                free(embedded_user); ssh_vault_secret_free(vault_password);
+                cJSON_Delete(profile_root); cJSON_Delete(args); free(quoted);
+                return tool_result_new(0, auth->retry_error);
+            }
+        }
+    }
+
     strbuf_init(&cmd);
     if (password_text) {
         if (ssh_append_askpass(&cmd, ctx, &profile, profile_root != NULL, host_text, user_text,
@@ -749,6 +811,25 @@ static tool_result *ssh_exec(const tool *self, const tool_ctx *ctx, const char *
      * successful login, so keep the credential while reporting tool failure. */
     int login_ok = result && !ssh_timed_out &&
                    (result->ok || (ssh_exit_code >= 0 && ssh_exit_code != 255));
+    if (result && !result->ok && !ssh_timed_out && ssh_exit_code == 255 && result->output &&
+        (strstr(result->output, ": Permission denied (") ||
+         strstr(result->output, ": Too many authentication failures"))) {
+        if (auth) {
+            size_t cap = sizeof(auth->rejected) / sizeof(auth->rejected[0]);
+            if (auth->count == cap) {
+                memmove(auth->rejected, auth->rejected + 1, (cap - 1) * sizeof(auth->rejected[0]));
+                auth->count--;
+            }
+            auth->rejected[auth->count++] = auth_key;
+        }
+        tool_result *classified = tool_result_new(0, ssh_auth_error(password_text != NULL));
+        if (classified) { tool_result_free(result); result = classified; }
+    } else if (result && !result->ok) {
+        if (login_ok) ssh_prefix_error(result, "[ssh_exec] SSH 命令执行失败。\n");
+        else if (ssh_exit_code == 255 || ssh_timed_out) ssh_prefix_error(result, "[ssh_transport] SSH 连接未成功完成。\n");
+    }
+    if (login_ok && auth && auth->retry_error && !strcmp(auth->retry_endpoint, auth->endpoint))
+        auth->retry_error = NULL;
     if (login_ok && ctx && vault_key[0] && password_text)
         ssh_vault_put(ctx->state_root, vault_key, password_text);
     if (login_ok && ctx && ctx->session_id && *ctx->session_id)
@@ -780,7 +861,7 @@ static tool_result *ssh_exec(const tool *self, const tool_ctx *ctx, const char *
 const tool *tool_ssh(void) {
     static const tool t = {
         "ssh",
-        "Run one remote SSH command. Always use this tool for SSH work instead of shell. Host, user, port and password supplied by the user are captured locally before planning; omit host/environment to use this chat's saved connection. Never include a password argument. Supports named environments, keys/agent, and local vault password authentication without sshpass or Python.",
+        "Run one SSH command through the local credential vault. Omit host/environment to use this chat's saved connection, or select a user-configured named environment. Never include a password argument. A [ssh_auth] result requires the user to configure or correct credentials before another attempt. Continue independent steps and report this blocker without changing the command or using shell for SSH.",
         "{\"type\":\"object\",\"properties\":{\"host\":{\"type\":\"string\"},\"environment\":{\"type\":\"string\"},\"user\":{\"type\":\"string\"},"
         "\"command\":{\"type\":\"string\"},\"port\":{\"type\":\"integer\"},"
         "\"timeout_ms\":{\"type\":\"integer\"}},\"required\":[\"command\"]}",

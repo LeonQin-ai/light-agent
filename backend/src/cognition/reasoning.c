@@ -270,6 +270,7 @@ struct reasoning {
     int unresolved_failed_tool_count;
     int unresolved_failed_tools_overflow;
     int tool_fail_aborted;
+    ssh_run_auth ssh_auth;
     int run_mutated; /* successful effects retained; independent of UI step cap */
     uint64_t search_seen[512]; /* successful read-only discoveries in this run */
     int search_seen_n;
@@ -461,6 +462,10 @@ static void normalized_evidence_path(reasoning *r, const char *path, char *out, 
 
 static void failure_scope(reasoning *r, const char *name, const char *args_json, char *out, size_t cap) {
     out[0] = '\0';
+    if (!strcmp(name, "ssh")) {
+        snprintf(out, cap, "%s", r->ssh_auth.endpoint);
+        return;
+    }
     if (!is_exploratory_tool(name) && strcmp(name, "file_read") &&
         strcmp(name,"file_write") && strcmp(name,"file_edit")) return;
     cJSON *args = cJSON_Parse(args_json ? args_json : "{}");
@@ -578,10 +583,11 @@ static void note_failed_tool(reasoning *r, const char *tool_name, const char *ar
  * Successful reads alone are NOT delivery: reading a same-basename unrelated
  * file must never launder a still-missing required source. Real failures
  * (permission denial, content mismatch, existing unread files) keep blocking.
- * Simple mode treats every unresolved failure as a note. */
+ * Simple mode treats unresolved failures as notes except for SSH auth. */
 static int failed_entry_is_advisory(reasoning *r, int i) {
-    if (r->gate_mode) return 1;
     const char *err = r->unresolved_failure_errors[i];
+    if (!strcmp(r->unresolved_failed_tools[i], "ssh") && !strncmp(err, "[ssh_auth]", 10)) return 0;
+    if (r->gate_mode) return 1;
     if (!strstr(err, "does not exist")) return 0;
     const char *scope = r->unresolved_failed_scopes[i];
     if (*scope && fs_exists(scope)) return 0;
@@ -683,7 +689,10 @@ static void resolve_failed_tool(reasoning *r, const char *tool_name, const char 
          * Re-resolve that same path; never clear a different file's failure. */
         char failed_now[2048];
         const char *failed_scope = r->unresolved_failed_scopes[i];
-        if(*failed_scope){normalized_evidence_path(r,failed_scope,failed_now,sizeof(failed_now));failed_scope=failed_now;}
+        if (*failed_scope && strcmp(r->unresolved_failed_tools[i], "ssh")) {
+            normalized_evidence_path(r, failed_scope, failed_now, sizeof(failed_now));
+            failed_scope = failed_now;
+        }
         size_t n = strlen(failed_scope);
         int retry = !strcmp(r->unresolved_failed_tools[i], tool_name) && !strcmp(failed_scope, scope);
         int replacement = !strcmp(tool_name, "file_read") && is_exploratory_tool(r->unresolved_failed_tools[i]) &&
@@ -3727,6 +3736,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
     tctx.state_root = r->state_root;
     tctx.session_id = r->cur ? r->cur->id : "default";
     tctx.credential_strict = r->credential_strict;
+    tctx.ssh_auth = &r->ssh_auth;
     tctx.task_input = r->last_prompt;
     tctx.should_abort = tool_abort_requested;
     tctx.abort_ud = r;
@@ -3847,6 +3857,7 @@ static int h_act(state_machine *sm, void *ud, const char *input, char **out) {
         /* A lane holds a pthread mutex: never migrate its coroutine to
          * another worker while the lane is locked. The pool provides fairness. */
         if (run_aborted(r) || task_has_messages(r->run_task)) break;
+        r->ssh_auth.endpoint[0] = 0;
         snprintf(r->prog_tool, sizeof(r->prog_tool), "%s", r->actions[i].tool);
         progress_emit(r, "executing");
         /* policy hard-block: a denied action is intentionally NOT executed.
@@ -5827,6 +5838,7 @@ int reasoning_run_ex(reasoning *r, const char *session_id, const char *prompt, c
     cJSON_Delete(r->file_equalities);r->file_equalities=NULL;r->file_checks_failed=r->file_checks_invalid=0;r->file_check_error[0]=0;
     r->unresolved_failed_tools_overflow = 0;
     r->tool_fail_aborted = 0;
+    r->ssh_auth = (ssh_run_auth){0};
     r->visual_request_failed = 0;
     r->run_mutated = 0;
     r->run_successful_tools = 0;
@@ -5905,6 +5917,7 @@ restart_planning:
             free(delivery_candidate);delivery_candidate=NULL;completion_reviewed=0;
             r->stall_nudged = 0;
             r->invalid_args_n = 0;
+            r->ssh_auth = (ssh_run_auth){0};
             /* A steering message genuinely revises the task, so contract
              * governance restarts from a clean slate for the revised goal. */
             r->completion_candidate_seen = 0;
@@ -5934,7 +5947,7 @@ restart_planning:
         st = state_machine_run(r->sm, prompt, &result);
         usage_book_round(r);
         if (run_aborted(r)) { st = ST_FAILED; break; }
-        if (r->tool_fail_aborted) {
+        if (r->tool_fail_aborted || r->ssh_auth.retry_error) {
             round_log_append(r, result && *result ? result : "(tool failed repeatedly)");
             obs_log_append(r, result && *result ? result : "(tool failed repeatedly)");
             st = ST_FAILED; /* do not report an incomplete task as completed */
@@ -6073,14 +6086,15 @@ restart_planning:
                     "[system] The previous model response was rejected before execution; no tool from that response ran. Return the next necessary operation as a complete JSON action array [{\"tool\":\"registered_tool_name\",\"args\":{...}}]. Do not return a promise to call tools or retry a fictitious failed command. If all requested work is verified, return a valid complete_task declaration; otherwise continue the remaining actual work. Use complete_task with status blocked only for a genuine blocker.");
                 continue;
             }
-            /* issue #25: a failed action (e.g. ssh login failure) must not end
-             * the task. Without an explicit recovery instruction the model
+            /* issue #25: a failed action need not end the task.
+             * Without an explicit recovery instruction the model
              * tends to answer with an apology and the remaining steps of the
              * plan never execute. Tell it to diagnose, retry/redirect, and
              * carry on with the rest of the task. */
             round_log_append(r, "[system] 上一轮有动作执行失败（失败原因和输出在上面）。"
                                 "失败的工具调用只是任务中的一个挫折，不是终止信号："
                                 "请分析失败原因（命令错误、路径不存在、网络/登录失败等），"
+                                "[ssh_auth] 需要用户补充或更正凭据，继续独立步骤并报告该阻塞，勿重试 SSH。"
                                 "如果来自 Python、脚本、构建或测试命令，先读完整错误输出与退出码，定位根因并修正所有同类错误；"
                                 "编辑后重新运行原命令，核对退出码和预期产物确实存在且可读取；只写入脚本或描述修复方案不算完成。"
                                 "修正后重试或改用其他方法，并继续执行任务的剩余步骤；"
@@ -6121,7 +6135,7 @@ restart_planning:
                 failure_recovery_nudges < 1 && r->round_idx < r->max_rounds) {
                 failure_recovery_nudges++;
                 round_log_append(r, txt ? txt : "");
-                round_log_append(r, "[system] 任务尚未完成：前面有工具调用失败且没有成功核实。不要输出最终总结或停止；先根据失败工具的真实错误调整参数、路径或方法，重试该工具或用可验证的替代方式完成受影响步骤，再继续原任务。修复后的内容必须经过成功工具结果验证。失败工具：");
+                round_log_append(r, "[system] 任务尚未完成：前面有工具调用失败且没有成功核实。不要输出最终总结或停止；先根据失败工具的真实错误调整参数、路径或方法，重试该工具或用可验证的替代方式完成受影响步骤，再继续原任务。修复后的内容必须经过成功工具结果验证。遇到 [ssh_auth] 时继续独立步骤，然后报告需更新的凭据，勿重试 SSH。失败工具：");
                 for (int i=0;i<r->unresolved_failed_tool_count;i++) {
                     if (failed_entry_is_advisory(r,i)) continue;
                     strbuf failure; strbuf_init(&failure);
@@ -6297,7 +6311,8 @@ restart_planning:
      * transcript. Without this, a stage failure on the LAST round skipped
      * synthesis entirely (the old `st == ST_DONE` guard) and the caller
      * received the raw round log with no answer at all. */
-    if (!contract_stopped && !completion_grace && !run_aborted(r) && !(fail_aborted && r->last_model_error[0]) &&
+    if (!contract_stopped && !completion_grace && !r->ssh_auth.retry_error &&
+        !run_aborted(r) && !(fail_aborted && r->last_model_error[0]) &&
         !final_text && r->round_log_len > 0 && r->llm) {
         r->prog_tool[0] = 0;
         progress_emit(r, "summarizing");
@@ -6350,7 +6365,7 @@ restart_planning:
     int timed_out = !cancelled && run_aborted(r);
     if(!cancelled&&!timed_out&&!contract_stopped&&!r->gate_mode&&
        (r->file_equalities||r->acceptance||r->acceptance_invalid||r->report_format))verify_completion_files(r,NULL);
-    if(stalled || synthesized || fail_aborted || r->tool_fail_aborted ||
+    if(stalled || synthesized || fail_aborted || r->tool_fail_aborted || r->ssh_auth.retry_error ||
        r->file_checks_failed || r->acceptance_invalid ||
        (!r->gate_mode && required_pending_reads(r)) ||
        blocking_failed_tools(r)>0 || (r->unresolved_failed_tools_overflow && !r->gate_mode))unfinished=1;
@@ -6412,7 +6427,13 @@ restart_planning:
             strbuf_append(&out,"\n原因：模型连续达到输出 token 上限，已尝试续写但答复仍不完整；保留部分内容，请恢复任务继续生成。");
             explained=1;
         }
-        if (r->tool_fail_aborted) { strbuf_append(&out,"\n原因：相同工具连续失败3次；请查看最后一次失败的工具结果，修正参数或环境后恢复任务。"); explained=1; }
+        if (r->ssh_auth.retry_error) {
+            strbuf_appendf(&out, "\n%s", r->ssh_auth.retry_error);
+            explained=1;
+        } else if (r->tool_fail_aborted) {
+            strbuf_append(&out,"\n原因：相同工具连续失败3次；请查看最后一次失败的工具结果，修正参数或环境后恢复任务。");
+            explained=1;
+        }
         if (blocking_failed_tools(r) > 0 || (r->unresolved_failed_tools_overflow && !r->gate_mode)) {
             strbuf_append(&out, "\n原因：以下失败工具之后没有成功重试核实，不能将任务标记为完成：");
             for (int i = 0; i < r->unresolved_failed_tool_count; ++i) {

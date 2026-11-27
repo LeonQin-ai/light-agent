@@ -4,6 +4,7 @@
  * snapshot engine can roll them back. */
 #pragma once
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -37,6 +38,16 @@ typedef struct tool {
 
 struct skill_registry; /* skill.h (avoid a typedef collision across TUs) */
 
+/* SSH rejections are scoped to one run. Keys identify the configured endpoint
+ * and credential source, and contain no credential bytes. */
+typedef struct ssh_run_auth {
+    uint64_t rejected[32];
+    size_t count;
+    char endpoint[1024];
+    char retry_endpoint[1024];
+    const char *retry_error;
+} ssh_run_auth;
+
 /* Execution context handed to every tool call. */
 typedef struct tool_ctx {
     tool_registry *reg;
@@ -54,6 +65,7 @@ typedef struct tool_ctx {
     struct skill_registry *skills; /* for the skill tool (may be NULL) */
     struct mcp_manager *mcp;       /* for MCP tools (may be NULL) */
     int credential_strict;
+    ssh_run_auth *ssh_auth;        /* optional run-local rejection cache */
 } tool_ctx;
 
 tool_registry *tool_registry_new(void);
