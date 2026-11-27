@@ -49,7 +49,8 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
    }
    if(u.pathname==='/v1/tasks/8')obj={id:8,status:'RUNNING',flow_nodes:batchEpisodes.flatMap((ep,i)=>{
     const prefix=`ep${String(ep.episode).padStart(2,'0')}`;
-    return [{id:`${prefix}-step3`,status:i===0?'ok':'running'}, {id:ep.compose_node,status:i===0?'ok':'queued'}];
+    return [{id:`${prefix}-step1`,status:'ok',director_stage:'X-05',llm_calls:4},
+      {id:`${prefix}-step3`,status:i===0?'ok':'running'}, {id:ep.compose_node,status:i===0?'ok':'queued'}];
    })};
    if(u.pathname==='/v1/manju/import'&&r.method()==='POST'){
     imports++;
@@ -225,6 +226,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   await page.getByRole('button',{name:'查看制作进度'}).click();
   await page.waitForFunction(()=>document.querySelector('[data-flow-task-id="8"] .flow-record-progress')?.textContent.includes('多集进度 1/2 集已完成'));
   assert.match(await progress.innerText(),/第 2 集 · 制作中（配音）/);
+  assert.match(await progress.innerText(),/铜铃 · 合成导演稿 · 模型请求 4/);
 
   await scope.selectOption('single');
   await novelFiles.setInputFiles(txtFile('全集.md','# 第1集 开头\n你好。\n# 第2集 下雨\n回家。\n# 第3集 见面\n开门。'));

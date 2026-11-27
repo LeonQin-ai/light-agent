@@ -46,12 +46,27 @@ static const char *field(const cJSON *object, const char *key) {
     return cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(object, key));
 }
 
+static void append_character_anchors(strbuf *prompt, const cJSON *character) {
+    const cJSON *anchors = cJSON_GetObjectItemCaseSensitive(character, "visual_anchors");
+    const char *costume = field(anchors, "costume"), *prop = field(anchors, "prop"), *face = field(anchors, "face");
+    if (costume && prop && face)
+        strbuf_appendf(prompt, "\n固定辨识特征：服饰 %s，道具 %s，面部 %s。", costume, prop, face);
+}
+
 void manju_append_cast(strbuf *prompt, const cJSON *board, const cJSON *shot) {
     const char *mode = field(board, "audio_mode");
     if (shot && mode && !strcmp(mode, "dialogue")) {
         const char *scene = field(shot, "scene"), *background = field(shot, "background");
         const char *action = field(shot, "action"), *emotion = field(shot, "emotion");
+        const char *framing = field(shot, "framing");
+        const cJSON *production = cJSON_GetObjectItemCaseSensitive(board, "production");
+        const cJSON *brief = cJSON_GetObjectItemCaseSensitive(production, "director_brief");
+        const char *camera = field(brief, "camera_language");
+        const char *prohibitions = field(brief, "prohibitions");
+        if (camera && *camera) strbuf_appendf(prompt, "\n统一镜头语言：%s", camera);
+        if (prohibitions && *prohibitions) strbuf_appendf(prompt, "\n全片画面限制：%s", prohibitions);
         if (scene && *scene) strbuf_appendf(prompt, "\n地点：%s", scene);
+        if (framing && *framing) strbuf_appendf(prompt, "\n景别与构图：%s", framing);
         if (background && *background) strbuf_appendf(prompt, "\n场景背景与光线：%s", background);
         if (action && *action) strbuf_appendf(prompt, "\n画面中的动作：%s", action);
         if (emotion && *emotion) strbuf_appendf(prompt, "\n人物表情：%s", emotion);
@@ -69,6 +84,7 @@ void manju_append_cast(strbuf *prompt, const cJSON *board, const cJSON *shot) {
             if (!key || !visual || strcmp(key, wanted)) continue;
             const char *name = field(character, "name");
             strbuf_appendf(prompt, "\n保持角色 %s 的外观：%s", name ? name : key, visual);
+            append_character_anchors(prompt, character);
             break;
         }
     }
@@ -242,7 +258,8 @@ static int panel_add(cJSON *entries, const char *file, const char *kind, int ind
     }
     cJSON *out = cJSON_CreateObject();
     if (!out) return 0;
-    int ok = cJSON_AddStringToObject(out, "file", file) && cJSON_AddStringToObject(out, "role", role) &&
+    int ok = (file ? cJSON_AddStringToObject(out, "file", file) : cJSON_AddNullToObject(out, "file")) &&
+             cJSON_AddStringToObject(out, "role", role) &&
              cJSON_AddStringToObject(out, "kind", kind) && cJSON_AddNumberToObject(out, "z0", z0) &&
              cJSON_AddNumberToObject(out, "z1", z1) && cJSON_AddNumberToObject(out, "cx", .50) &&
              cJSON_AddNumberToObject(out, "cy", cy) && cJSON_AddNumberToObject(out, "px", px) &&
@@ -335,6 +352,7 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
             strbuf_appendf(&prompt, "横版中文漫剧角色设定图。浅灰纯色背景，三栏从左到右：同一个角色的正面、侧面、背面全身。"
                            "三栏都为自然站姿，全身入镜，保持完全相同的发型、身高、服装、色彩和道具，使用正交视角。"
                            "无字幕、标签、水印、边框或任何文字。角色：%s。造型：%s", name, visual);
+            append_character_anchors(&prompt, character);
             if (direction && *direction) strbuf_appendf(&prompt, "\n统一画风：%s", direction);
             run.panels[i].prompt = strbuf_detach(&prompt);
             if (!run.panels[i].prompt) goto done;
@@ -351,8 +369,11 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
         if (!run.panels[count + 1].prompt) goto done;
         expected++;
     }
+    int first_visual = 0, last_visual = 0;
     for (int i = 0; !characters && i < count; i++) {
         cJSON *shot = cJSON_GetArrayItem(shots, i);
+        const char *kind = field(shot, "kind");
+        if (audio_mode && !strcmp(audio_mode, "dialogue") && kind && !strcmp(kind, "card")) continue;
         if (!valid_shot(shot)) {
             strbuf_appendf(&report, "镜头 %d 的类型、台词或绘图说明无效", i + 1);
             goto done;
@@ -360,7 +381,13 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
         run.panels[i + 1].prompt = visual_prompt(direction, field(shot, "image_prompt"),
                                                 field(shot, "text"), board, shot);
         if (!run.panels[i + 1].prompt) goto done;
+        if (!first_visual) first_visual = i + 1;
+        last_visual = i + 1;
         expected++;
+    }
+    if (!characters && !first_visual) {
+        error = "分镜至少需要一个画面镜头。";
+        goto done;
     }
     if (expected && router_select_image(routes, route_name, &run.model) != 0) {
         error = "没有匹配的文生图路由，请在 Model routes 配置出图或补充缺失角色的参考图";
@@ -375,7 +402,7 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
         goto done;
     }
     run.directory = canonical_directory;
-    run.covered = characters ? run.total - expected : 0;
+    run.covered = run.total - expected;
     if (mutex_init(&run.progress_lock) != 0) goto done;
     if (progress) progress(run.covered, run.total, 0, context);
     thread_t *threads[PAINT_WORKERS] = {0};
@@ -436,18 +463,19 @@ static int paint_episode(router *routes, const char *route_name, const char *wor
         rc = 0;
         goto done;
     }
-    if (!run.panels[0].prompt) strcpy(run.panels[0].file, run.panels[1].file);
-    if (!run.panels[count + 1].prompt) strcpy(run.panels[count + 1].file, run.panels[count].file);
+    if (!run.panels[0].prompt) strcpy(run.panels[0].file, run.panels[first_visual].file);
+    if (!run.panels[count + 1].prompt) strcpy(run.panels[count + 1].file, run.panels[last_visual].file);
     doc = cJSON_CreateObject();
     cJSON *entries = doc ? cJSON_AddArrayToObject(doc, "panels") : NULL;
-    const char *poster = run.panels[run.panels[0].prompt ? 0 : 1].file;
+    const char *poster = run.panels[run.panels[0].prompt ? 0 : first_visual].file;
     if (!entries || !cJSON_AddNumberToObject(doc, "ep", episode) || !cJSON_AddStringToObject(doc, "title", title) ||
         !cJSON_AddStringToObject(doc, "poster", poster) || !cJSON_AddStringToObject(doc, "image_model", run.model.model) ||
         !cJSON_AddNumberToObject(doc, "generated_assets", expected)) goto done;
     for (int i = 0; i < run.total; i++) {
         int last = i == count + 1;
         const char *kind = i == 0 ? "title" : last ? "end" : field(cJSON_GetArrayItem(shots, i - 1), "kind");
-        if (!panel_add(entries, run.panels[i].file, kind, i, last)) goto done;
+        const char *file = strcmp(kind, "card") ? run.panels[i].file : NULL;
+        if (!panel_add(entries, file, kind, i, last)) goto done;
     }
     manifest = cJSON_PrintUnformatted(doc);
     path_join(path, sizeof path, directory, "panels.json");

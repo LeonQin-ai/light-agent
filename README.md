@@ -28,13 +28,13 @@ The core is written in C11 and embeds its web console. Prebuilt packages do not 
 
 These demos were produced with the light-agent comic workflow and include Chinese audio and subtitles.
 
-#### The Bell Beyond the Mountain · Dragon-Slayer · Dialogue cut
+#### The Bell Beyond the Mountain · Dragon-Slayer · Continuity cut
 
-A boy who fears thunder carries his grandmother’s cracked brass bell into the mountains. After his first defeat, the sound of the bell guides him back to face the dragon threatening his village.
+A-Ling fears thunder and retreats from his first encounter with the dragon. After spotting a gap in its scales, he uses the mountain wind and his grandmother's cracked bell to turn the dragon's fire. His mother's voice at the bridge brings the story back to its opening.
 
-DeepSeek wrote the original story in light-agent. A-Ling speaks first and his mother answers off screen. Two voices perform 15 lines of dialogue, while 38 shots carry the story through action, wind, and the sound of the bell. Comic Workshop reuses 43 HappyHorse clips generated from Qwen first frames and retimes ten shots to make 53 four-second shots. [Download 720p MP4 · 3:32](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/copper-bell-crossing.mp4) · [Dialogue storyboard](docs/demo/copper-bell-dialogue-storyboard.json) · [Original storyboard](docs/demo/copper-bell-storyboard.json)
+The revised storyboard uses four seconds per shot. The cut combines 29 original HappyHorse clips with ten new clips produced using Qwen first frames and HappyHorse. A-Ling speaks first and his mother answers off screen. The film includes 19 lines of dialogue and two locally rendered closing cards. [Download 720p MP4 · 2:44](https://github.com/LeonQin-ai/light-agent/raw/refs/heads/main/docs/demo/copper-bell-crossing.mp4) · [Revised continuity storyboard](docs/demo/copper-bell-continuity-storyboard.json)
 
-https://github.com/user-attachments/assets/3b2dce7c-44cc-4336-9681-7c10cb04b271
+https://github.com/user-attachments/assets/e9a5582a-8e31-45a2-bcf2-90a7ad7e91be
 
 #### The Lighthouse Keeper
 
@@ -198,6 +198,8 @@ The selected image route can draw a first frame and front, side, and back charac
 The **文生视频** (Text-to-video) option also supports single-route production with Alibaba Cloud Kling or Volcano Engine Seedance.
 
 Novel imports default to **角色对白** (Character dialogue). Storyboards specify spoken lines, on-screen action, and scene backgrounds. Shots without lines can use ambience and cues such as wind, fire, footsteps, or a bell. The video flow checks that each line fits its three- or four-second shot before requesting video. Imported storyboards default to their authored audio mode.
+
+For dialogue novels, the production team processes story structure, shot design, art direction, and sound in order. The controller compiles a nine-part director brief in `shots.json`, and the workshop shows the current stage. Authored storyboards can go straight to production, with text cards rendered by the editor. [Copyable prompts and an API example](backend/docs/manju-director-agents.md)
 
 Use **角色档案** (Character profiles) to save a character's role, appearance notes, version IDs, voice, pace, and pitch for a workspace. Subsequent episodes can reuse the same character design and voice, along with uploaded character references.
 

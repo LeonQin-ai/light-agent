@@ -807,6 +807,30 @@ static reasoning *flow_reasoning_new(runtime_ctx *ctx,const char *workspace,cons
 
 static int flow_abort_requested(void *parent) { return parent && task_should_abort((task *)parent); }
 
+static int flow_story_abort(void *context) {
+    flow_job *job = context;
+    return flow_abort_requested(job->parent);
+}
+
+static void flow_story_progress(const char *stage, int requests, void *context) {
+    flow_job *job = context;
+    mutex_lock(&flow_prog_mtx);
+    flow_prog *flow = flow_prog_slot(job->task_id);
+    for (int i = 0; flow && i < flow->n; i++) {
+        flow_prog_node *progress = &flow->nodes[i];
+        if (strcmp(progress->id, job->nd->id)) continue;
+        cJSON *diagnostics = cJSON_CreateObject();
+        if (diagnostics) {
+            cJSON_AddStringToObject(diagnostics, "director_stage", stage);
+            cJSON_AddNumberToObject(diagnostics, "llm_calls", requests);
+            cJSON_Delete(progress->diagnostics);
+            progress->diagnostics = diagnostics;
+        }
+        break;
+    }
+    mutex_unlock(&flow_prog_mtx);
+}
+
 static void flow_manju_story(flow_job *j) {
     runtime_ctx *ctx = j->ctx;
     const flow_node *node = j->nd;
@@ -831,7 +855,7 @@ static void flow_manju_story(flow_job *j) {
                                node->manju_clip_seconds, node->manju_story_video_mode,
                                node->manju_reference_set, router_has_image(ctx->router), node->manju_prior_episode,
                                node->manju_dialogue, node->manju_cast_json,
-                               flow_abort_requested, j->parent, &requests, &j->out);
+                               flow_story_progress, flow_story_abort, j, &requests, &j->out);
     long long input = 0, output = 0;
     llm_usage_totals(client, &input, &output);
     long long thought = llm_usage_reason_total(client);
@@ -845,6 +869,8 @@ static void flow_manju_story(flow_job *j) {
         if (strcmp(progress->id, node->id)) continue;
         cJSON *diagnostics = cJSON_CreateObject();
         if (diagnostics) {
+            const char *stage = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(progress->diagnostics, "director_stage"));
+            if (stage) cJSON_AddStringToObject(diagnostics, "director_stage", stage);
             cJSON_AddStringToObject(diagnostics, "model", client->model ? client->model : "");
             cJSON_AddNumberToObject(diagnostics, "llm_calls", requests);
             cJSON_AddBoolToObject(diagnostics, "usage_available", input > 0 || output > 0);

@@ -67,6 +67,19 @@ class Provider(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path == "/v1/chat/completions" and self.headers.get("Authorization") == TOKEN:
+            messages = body.get("messages", [])
+            stage = messages[0]["content"].split()[0] if len(messages) == 2 else ""
+            with self.server.lock:
+                self.server.director_calls.append((stage, messages[-1]["content"] if messages else ""))
+                output = self.server.director_steps.get(stage)
+            if output is None:
+                self.reply({"error": {"message": "Unexpected director request"}}, 400)
+                return
+            self.reply({"choices": [{"finish_reason": "stop", "message": {
+                "role": "assistant", "content": json.dumps(output, ensure_ascii=False),
+            }}], "usage": {"prompt_tokens": 20, "completion_tokens": 20}})
+            return
         params = body.get("parameters", {})
         model = body.get("model")
         ark = model == SEEDANCE
@@ -349,13 +362,17 @@ def check_dialogue_import(base, provider, work):
                  "action": "举起铜铃看向山口", "image_prompt": "青衣少年背对镜头", "character_ids": ["hero"]}
     board = {"title": "铜铃", "badge": "Fixture", "characters": [{**hero, "visual": "旧设定"}],
              "shots": [{**direction, "kind": "dialogue", "speaker": "hero", "text": "娘，你快看！"},
-                       {**direction, "kind": "action", "ambience": "wind", "sound_effect": "bell"}]}
+                       {**direction, "kind": "action", "ambience": "wind", "sound_effect": "bell",
+                        "duration_seconds": 3, "sound_bridge": "prelap"},
+                       {"kind": "card", "subtitle": "回家", "ambience": "none", "duration_seconds": 4}]}
     payload = {"workspace": str(project), "audio_mode": "dialogue", "character_roster": roster,
                "storyboard": board, "video_route": "fixture-video", "clip_seconds": 4}
     with provider.lock:
         before = len(provider.submissions)
     invalid = {**board, "shots": [{**direction, "kind": "narration", "text": "旁白"}]}
     assert request(base, "/v1/manju/import", {**payload, "storyboard": invalid})[0] == 400
+    overlong = {**board, "shots": [{**board["shots"][1], "duration_seconds": 5}, board["shots"][2]]}
+    assert request(base, "/v1/manju/import", {**payload, "storyboard": overlong})[0] == 400
     assert not (episode / "shots.json").exists()
 
     # Fail preflight deterministically, without requiring a real TTS provider.
@@ -365,6 +382,7 @@ def check_dialogue_import(base, provider, work):
     saved = json.loads((episode / "shots.json").read_text(encoding="utf-8"))
     assert saved["characters"] == [hero] and saved["voice_cast"] == {"hero": voice}, saved
     assert saved["shots"][1]["kind"] == "action" and "text" not in saved["shots"][1]
+    assert saved["shots"][2] == board["shots"][2]
     history = request(base, "/v1/flows/list")[1]
     dag = json.loads(next(item["dag"] for item in history["records"] if item["id"] == started["id"]))
     assert {"from": "step3", "to": "step2"} in dag["edges"], dag
@@ -372,7 +390,111 @@ def check_dialogue_import(base, provider, work):
     assert wait_task(base, started["id"])["status"] == "FAILED"
     with provider.lock:
         assert len(provider.submissions) == before
-    print("PASS: workspace cast persists, dialogue boards are validated, and failed speech preflight prevents video requests")
+        counts = provider.durations.copy()
+    # Exercise the visual node independently of the intentional audio failure.
+    task = terminal(base, {"workspace": str(project), "nodes": [{
+        "id": "visual", "agent": "manju-artist", "task": "Generate the motion shots",
+        "manju_video_episode": 1, "manju_clip_seconds": 4, "manju_video_route": "fixture-video",
+    }], "edges": []})
+    assert task["status"] == "DONE", task
+    clips = json.loads((episode / "clips" / "clips.json").read_text(encoding="utf-8"))["clips"]
+    assert [(entry["kind"], entry["duration_seconds"]) for entry in clips[1:-1]] == [
+        ("dialogue", 4), ("action", 3), ("card", 4)]
+    assert clips[3]["file"] is None and clips[-1]["file"] == clips[2]["file"]
+    with provider.lock:
+        assert len(provider.submissions) == before + 2
+        assert provider.durations[MODEL, 4] == counts[MODEL, 4] + 1
+        assert provider.durations[MODEL, 3] == counts[MODEL, 3] + 1
+    print("PASS: dialogue validates before rendering, mixes 3s/4s shots and skips provider jobs for authored cards")
+
+
+def check_director_pipeline(base, provider, work):
+    model = {"name": "fixture-director", "provider": "openai", "model": "fixture-chat",
+             "base_url": f"http://127.0.0.1:{provider.server_port}/v1", "api_key": "video-test"}
+    assert request(base, "/v1/routes", model)[0] == 200
+    project = work / "director-workspace"
+    episode = project / "manju" / "ep01"
+    episode.mkdir(parents=True)
+    assert request(base, "/v1/workspaces", {"path": str(project)})[0] == 200
+    (episode / "audio").write_text("stop after storyboarding", encoding="utf-8")
+
+    hero = {"id": "hero", "name": "阿铃", "role": "protagonist", "visual": "眉疤、布衣与铜铃"}
+    mother = {"id": "mother", "name": "母亲", "role": "supporting"}
+    direction = {"scene": "石桥", "background": "青雾掠过桥栏", "action": "少年握住铜铃",
+                 "image_prompt": "竖屏墨青石桥，少年侧脸与手中缺口铜铃入镜",
+                 "framing": "侧面近景", "character_ids": ["hero"], "transition": "铃声先入后硬切"}
+    source_marker = "原稿只在陈默阶段出现"
+    ready = {"status": "ready"}
+    with provider.lock:
+        provider.director_steps = {
+            "X-03": {**ready, "summary": "守桥与怕雷的矛盾经铃声回收。", "narrative": {
+                "logline": "怕雷的阿铃循铃声回到石桥。", "core_conflict": "阿铃需要顶住雷声守桥",
+                "protagonist_flaw": "怕雷", "closure": "桥头听见铜铃，回到桥头再摇铃",
+                "acts": [{"id": "act1", "title": "回桥", "beats": ["阿铃说出害怕，然后摇响铜铃"]}],
+                "characters": [{**hero, "want": "守桥", "fear": "打雷", "flaw": "遇雷退缩", "growth": "留在桥头"},
+                               {**mother, "want": "等儿子回家", "fear": "桥上打雷", "flaw": "着急",
+                                "growth": "给孩子留出时间"}],
+                "causal_chain": ["雷声使阿铃后退，铜铃使他回身"], "fill_ins": [], "removed": [],
+            }},
+            "X-01": {**ready, "summary": "对白接铜铃特写。", "title": "第1集 铜铃", "badge": "国风",
+                     "title_image_prompt": "石桥起雾的竖屏全景", "end_image_prompt": "石桥边铜铃的独立特写",
+                     "characters": [{"id": hero["id"], "name": "少年", "visual": hero["visual"],
+                                     "voice_profile": "young_man"}, {**mother, "visual": "待定"}],
+                     "shots": [{**direction, "id": "s01", "beat": "说出害怕", "kind": "dialogue",
+                                "dialogue": {"speaker": "少年", "text": "我听见了。"}, "duration_seconds": 3},
+                               {**direction, "id": "s02", "beat": "摇响铜铃", "kind": "action",
+                                "action": "阿铃摇响铜铃", "duration_seconds": 4},
+                               {**direction, "id": "s03", "beat": "安静落点", "kind": "action",
+                                "action": "把铃放回手心", "duration_seconds": 3}],
+                     "storyboard": {"tone": "克制奇幻", "camera_language": "从中景切向铜铃特写",
+                                    "pacing_transitions": "响铃硬切", "emotion_curve": "0s 迟疑，3s 安定",
+                                    "prohibitions": "禁止慢镜与叠化",
+                                    "acts": [{"id": "act1", "last_shot_id": "s03", "audience_feeling": "安心"}]}},
+            "X-02": {**ready, "summary": "墨青石桥，土红围巾定视觉重心。", "art": {
+                "palette": ["墨青", "雾灰"], "warm_accent": "土红围巾", "materials": "细笔刻石纹",
+                "lighting": "左侧云缝斜光", "composition": "桥栏斜向引出纵深", "prohibited_colors": "高饱和红",
+                "character_consistency": "阿铃沿用靛青布衣、缺口铜铃和左眉伤疤",
+                "scenes": [{"scene": "石桥", "anchor": "带裂口的桥栏", "light": "左侧云缝斜光"}],
+                "characters": [{"id": "hero", "costume": "靛青布衣", "prop": "缺口铜铃", "face": "左眉疤"},
+                               {"id": "mother", "pending:true": True}],
+            }},
+            "X-04": {**ready, "summary": "铜铃先入再升音量。", "sound": {
+                "motifs": ["缺口铜铃"], "progression": "铜铃由轻到实", "environment": "石桥山风",
+                "delivery": "压低说话", "hooks": "铃声提前衔接", "silence": "未使用",
+            }, "shots": [{"id": "s01", "ambience": "wind", "sound_effect": "none", "sound_gain": 1,
+                          "delivery": "低声", "delivery_mode": "low"},
+                         {"id": "s02", "sound_effect": "bell", "sound_bridge": "prelap", "sound_gain": 1.2},
+                         {"id": "s03", "silence": True, "ambience": "rain",
+                          "sound_effect": "thunder", "sound_bridge": "prelap", "sound_gain": 1.6}]},
+        }
+    payload = {"workspace": str(project), "title": "石桥", "audio_mode": "dialogue", "text_route": model["name"],
+               "video_route": "fixture-video", "text": f"{source_marker}。怕雷的阿铃听见铜铃，回到石桥守桥。"}
+    task = terminal(base, payload, "/v1/manju/import")
+    nodes = {node["id"]: node for node in task["flow_nodes"]}
+    assert nodes["step1"]["status"] == "ok" and nodes["step1"]["llm_calls"] == 4, task
+    assert nodes["step1"]["director_stage"] == "X-05", nodes
+    board = json.loads((episode / "shots.json").read_text(encoding="utf-8"))
+    production = board["production"]
+    assert [item["id"] for item in production["stages"]] == ["X-03", "X-01", "X-02", "X-04"]
+    assert len(production["director_brief"]) == 9 and len(production["director_prompt"]) <= 1200
+    assert "裂口的桥栏" in board["shots"][0]["image_prompt"]
+    assert board["shots"][1]["sound_bridge"] == "prelap" and board["shots"][0]["text"] == "我听见了。"
+    assert board["shots"][0]["speaker"] == "hero" and "dialogue" not in board["shots"][0]
+    assert board["characters"][0]["name"] == hero["name"] and board["characters"][0]["role"] == hero["role"]
+    assert production["art"]["characters"][1] == {"id": "mother", "pending": True}
+    assert "sound_gain" not in board["shots"][0] and board["shots"][2]["silence"] is True
+    assert not {"ambience", "sound_effect", "sound_bridge", "sound_gain"} & board["shots"][2].keys()
+    with provider.lock:
+        calls = provider.director_calls[:]
+        provider.director_steps["X-03"] = {"status": "needs_input", "missing": ["请补充故事结尾"]}
+    assert [stage for stage, _ in calls] == ["X-03", "X-01", "X-02", "X-04"]
+    assert source_marker in calls[0][1] and all(source_marker not in prompt for _, prompt in calls[1:])
+    unresolved = terminal(base, {**payload, "episode": 2, "text": "他站在石桥上。"}, "/v1/manju/import")
+    assert unresolved["status"] == "FAILED" and "请补充故事结尾" in unresolved["output"], unresolved
+    assert not (project / "manju" / "ep02" / "shots.json").exists()
+    with provider.lock:
+        assert [stage for stage, _ in provider.director_calls[len(calls):]] == ["X-03"]
+    print("PASS: four staged model requests, nine-part brief, locked shot handoffs, and early fallback for missing story")
 
 
 def main():
@@ -385,6 +507,8 @@ def main():
         provider.lock = threading.Lock()
         provider.submissions = []
         provider.reference_inputs = []
+        provider.director_calls = []
+        provider.director_steps = {}
         provider.durations = collections.Counter()
         provider.polls = collections.Counter()
         provider.defer_completion = True
@@ -436,6 +560,7 @@ def main():
             check_character_references(base, provider, pathlib.Path(tmp))
             check_episode_batch(base, provider, pathlib.Path(tmp))
             check_dialogue_import(base, provider, pathlib.Path(tmp))
+            check_director_pipeline(base, provider, pathlib.Path(tmp))
         finally:
             process.terminate()
             process.wait(timeout=10)

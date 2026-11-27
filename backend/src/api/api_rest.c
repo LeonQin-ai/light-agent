@@ -1540,6 +1540,31 @@ static int manju_audio_mode(const cJSON *object) {
     return -1;
 }
 
+static int manju_valid_sound(const cJSON *shot, const char *kind, int card) {
+    const cJSON *ambience_field = cJSON_GetObjectItemCaseSensitive(shot, "ambience");
+    const cJSON *effect_field = cJSON_GetObjectItemCaseSensitive(shot, "sound_effect");
+    const cJSON *bridge_field = cJSON_GetObjectItemCaseSensitive(shot, "sound_bridge");
+    const cJSON *delivery_field = cJSON_GetObjectItemCaseSensitive(shot, "delivery_mode");
+    const cJSON *gain = cJSON_GetObjectItemCaseSensitive(shot, "sound_gain");
+    const cJSON *silence = cJSON_GetObjectItemCaseSensitive(shot, "silence");
+    const char *ambience = cJSON_GetStringValue(ambience_field), *effect = cJSON_GetStringValue(effect_field);
+    const char *bridge = cJSON_GetStringValue(bridge_field), *delivery = cJSON_GetStringValue(delivery_field);
+    if (ambience_field && (!ambience || (strcmp(ambience, "none") && strcmp(ambience, "room") &&
+        strcmp(ambience, "wind") && strcmp(ambience, "rain") && strcmp(ambience, "fire")))) return 0;
+    if (effect_field && (!effect || (strcmp(effect, "none") && strcmp(effect, "bell") &&
+        strcmp(effect, "steps") && strcmp(effect, "thunder") && strcmp(effect, "fire_crackle")))) return 0;
+    int ambient_sound = ambience && strcmp(ambience, "none");
+    int cue_sound = effect && strcmp(effect, "none");
+    if (bridge_field && (!bridge || (strcmp(bridge, "prelap") && strcmp(bridge, "carry")) ||
+                         (!ambient_sound && !cue_sound))) return 0;
+    if (delivery_field && (strcmp(kind, "dialogue") || !delivery ||
+        (strcmp(delivery, "soft") && strcmp(delivery, "low") && strcmp(delivery, "urgent")))) return 0;
+    if (gain && (!cJSON_IsNumber(gain) || !(gain->valuedouble >= .25 && gain->valuedouble <= 2))) return 0;
+    if (silence && !cJSON_IsBool(silence)) return 0;
+    if (cJSON_IsTrue(silence) && ((!card && strcmp(kind, "action")) || bridge || ambient_sound || cue_sound)) return 0;
+    return 1;
+}
+
 static int manju_valid_imported_board(const cJSON *board) {
     const char *title = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(board, "title"));
     const char *badge = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(board, "badge"));
@@ -1552,6 +1577,7 @@ static int manju_valid_imported_board(const cJSON *board) {
         !cJSON_IsArray(shots) || count < 1 || count > 180 || dialogue < 0 ||
         (dialogue && (!manju_valid_cast(board, 0) || (cards && !cJSON_IsBool(cards))))) return 0;
     const cJSON *shot;
+    int visual_shots = 0;
     cJSON_ArrayForEach(shot, shots) {
         const char *line = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(shot, "text"));
         const char *kind = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(shot, "kind"));
@@ -1563,32 +1589,41 @@ static int manju_valid_imported_board(const cJSON *board) {
         if (!dialogue) {
             if (!line || !*line || strlen(line) > 12000 ||
                 (strcmp(kind,"dialogue") && strcmp(kind,"narration") && strcmp(kind,"sys"))) return 0;
+            visual_shots++;
             continue;
         }
+        int card = !strcmp(kind, "card");
         const cJSON *speaker_field = cJSON_GetObjectItemCaseSensitive(shot, "speaker");
         const cJSON *text_field = cJSON_GetObjectItemCaseSensitive(shot, "text");
         const char *speaker = cJSON_GetStringValue(speaker_field);
         if (!strcmp(kind, "dialogue")) {
             if (!manju_text(line, 420) || !manju_character(characters, speaker)) return 0;
+        } else if (card) {
+            const cJSON *subtitle_field = cJSON_GetObjectItemCaseSensitive(shot, "subtitle");
+            const char *caption = subtitle_field ? cJSON_GetStringValue(subtitle_field) : line;
+            if (!manju_text(caption, 420) || mode_field || (speaker_field && (!speaker || *speaker))) return 0;
         } else if (strcmp(kind, "action") || (text_field && (!line || *line)) ||
                    (speaker_field && (!speaker || *speaker))) return 0;
         const cJSON *ids = cJSON_GetObjectItemCaseSensitive(shot, "character_ids");
-        if (!cJSON_IsArray(ids) || !manju_text(manju_field(shot, "scene"), 560) ||
+        if (card) {
+            if (ids && (!cJSON_IsArray(ids) || cJSON_GetArraySize(ids))) return 0;
+        } else if (!cJSON_IsArray(ids) || !manju_text(manju_field(shot, "scene"), 560) ||
             !manju_text(manju_field(shot, "background"), 660) || !manju_text(manju_field(shot, "action"), 660) ||
             !manju_text(manju_field(shot, "image_prompt"), 1200)) return 0;
         const cJSON *id;
         cJSON_ArrayForEach(id, ids) if (!manju_character(characters, cJSON_GetStringValue(id))) return 0;
-        const char *ambience = manju_field(shot, "ambience"), *effect = manju_field(shot, "sound_effect");
-        if ((cJSON_GetObjectItemCaseSensitive(shot, "ambience") &&
-             (!ambience || (strcmp(ambience, "room") && strcmp(ambience, "wind") &&
-                           strcmp(ambience, "rain") && strcmp(ambience, "fire")))) ||
-            (cJSON_GetObjectItemCaseSensitive(shot, "sound_effect") &&
-             (!effect || (strcmp(effect, "bell") && strcmp(effect, "steps") && strcmp(effect, "thunder"))))) return 0;
+        if (!manju_valid_sound(shot, kind, card)) return 0;
+        const char *fields[] = {"beat", "framing", "transition"};
+        for (size_t i = 0; i < sizeof fields / sizeof *fields; i++) {
+            const cJSON *value = cJSON_GetObjectItemCaseSensitive(shot, fields[i]);
+            if (value && !manju_text(cJSON_GetStringValue(value), 360)) return 0;
+        }
         const cJSON *duration = cJSON_GetObjectItemCaseSensitive(shot, "duration_seconds");
         if (duration && (!cJSON_IsNumber(duration) || !(duration->valuedouble >= 1 && duration->valuedouble <= 30)))
             return 0;
+        visual_shots += !card;
     }
-    return 1;
+    return visual_shots > 0;
 }
 
 static char **manju_uploaded_chapters(const cJSON *files, int *count) {
@@ -1654,10 +1689,17 @@ static const cJSON *manju_source_board(const cJSON *board, const cJSON *boards, 
 
 /* Check every supplied episode before writing any of its storyboards. */
 static int manju_check_boards(const cJSON *board, const cJSON *boards, const cJSON *references,
-                              int first, int last) {
+                              int first, int last, int video_mode) {
     for (int episode = first; episode <= last; episode++) {
         const cJSON *current = manju_source_board(board, boards, episode);
         if (!manju_valid_imported_board(current) || !manju_references_resolve(references, current)) return 0;
+        if (video_mode && manju_audio_mode(current) == 1) {
+            const cJSON *shot;
+            cJSON_ArrayForEach(shot, cJSON_GetObjectItemCaseSensitive(current, "shots")) {
+                const cJSON *duration = cJSON_GetObjectItemCaseSensitive(shot, "duration_seconds");
+                if (duration && duration->valuedouble != 3 && duration->valuedouble != 4) return 0;
+            }
+        }
     }
     const cJSON *reference;
     cJSON_ArrayForEach(reference, references) {
@@ -1885,7 +1927,7 @@ static int manju_append_episode(cJSON *nodes, cJSON *edges, cJSON *episodes,
         cJSON_AddStringToObject(node, "id", ids[i]);
         cJSON_AddStringToObject(node, "agent", manju_agents[i == 4 ? 1 : i]);
         const char *task = tasks[i];
-        if (dialogue && i == 0) task = "统筹剧情与人物，编写角色对白、动作和场景分镜。";
+        if (dialogue && i == 0) task = "按剧本医生、分镜导演、美术总监、声音设计师和总控的顺序制作导演稿。";
         if (dialogue && i == 2) task = "用各角色的音色配对白，核对台词是否适合镜头时长。";
         if (dialogue && i == 3) task = "同步演员对白、环境声、音效和画面，合成并校验成片。";
         cJSON_AddStringToObject(node, "task", task);
@@ -2170,8 +2212,8 @@ static int h_manju_import(const http_request *req, http_response *resp, void *ud
                 goto done;
             }
         }
-        if (!manju_check_boards(board, boards, reference_input, episode, last)) {
-            problem = "请检查各集分镜、角色与人物参考图，角色对白模式需要对白或无声动作、场景和背景";
+        if (!manju_check_boards(board, boards, reference_input, episode, last, video_mode)) {
+            problem = "请检查分镜、角色和人物参考图。对白视频的每个镜头应为 3 或 4 秒，字幕卡仅填写显示文字";
             goto done;
         }
     }

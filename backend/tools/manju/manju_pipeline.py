@@ -33,6 +33,7 @@ import argparse
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import NamedTuple, Optional
 
 import numpy as np
 import cv2
@@ -64,7 +65,34 @@ VOICE = {
 }
 LEGACY_RATE = "+10%"
 AMBIENCE = ("room", "wind", "rain", "fire")
-SOUND_EFFECTS = ("bell", "steps", "thunder")
+SOUND_EFFECTS = ("bell", "steps", "thunder", "fire_crackle")
+BRIDGE_SAMPLES = SR // 4
+DELIVERY = {
+    # Pitch (Hz), rate (percentage points), gain. The role's voice stays fixed.
+    "soft": (-4, -5, 0.72),
+    "low": (-7, -3, 0.88),
+    "urgent": (4, 12, 1.0),
+}
+
+
+class ShotAudio(NamedTuple):
+    duration: Optional[float] = None
+    ambience: Optional[str] = None
+    effect: Optional[str] = None
+    bridge: Optional[str] = None
+    gain: float = 1.0
+    silence: bool = False
+    delivery: Optional[str] = None
+
+    def frames(self, kind):
+        duration = self.duration if self.duration is not None else 3 if kind in ("action", "card") else 0
+        return math.ceil(duration * FPS)
+
+    def clip_seconds(self, default, index):
+        seconds = self.duration if self.duration is not None else default
+        if seconds not in (3, 4):
+            raise ValueError("第 %d 镜视频时长必须为 3 或 4 秒" % index)
+        return int(seconds)
 
 
 def get_font(size, bold=False):
@@ -544,6 +572,22 @@ def dialogue_subtitle(text):
     return _pack(overlay)
 
 
+def card_frame(text):
+    frame = Image.new("RGB", (W, H), (8, 11, 15))
+    draw = ImageDraw.Draw(frame)
+    text = " ".join(text.split())
+    for size in (50, 42, 34, 26, 18):
+        font = get_font(size, True)
+        spacing = size // 4
+        caption = wrap_cjk(text, font, W - 160)
+        left, top, right, bottom = draw.multiline_textbbox((0, 0), caption, font=font, spacing=spacing, align="center")
+        if bottom - top <= H - 200:
+            break
+    position = ((W - right - left) // 2, (H - top - bottom) // 2)
+    draw.multiline_text(position, caption, font=font, spacing=spacing, align="center", fill=(243, 241, 231))
+    return np.asarray(frame)
+
+
 def end_overlay(text, p):
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(ov)
@@ -630,19 +674,14 @@ def voice_of(text, voice, pitch, rate, cache_dir):
     raise RuntimeError(str(last_error) or type(last_error).__name__) from last_error
 
 
-def pad_to(data, n):
-    if len(data) >= n:
-        return data[:n]
-    out = np.zeros(n, dtype=np.float32)
-    out[:len(data)] = data
-    return out
-
-
-def mix_shot_audio(data, n, ambience, sound_effect, seed):
-    voice = pad_to(data, n)
-    if not ambience and not sound_effect:
-        return voice
-
+def render_sound_bed(n, options, seed, preroll, tail):
+    ambience, sound_effect = options.ambience, options.effect
+    cue_shift = -0.10 if preroll else 0.0
+    if tail:
+        # Place the last onset close to the cut so its decay is the sound hook.
+        cue_offset = {"bell": 0.15, "steps": 0.79, "thunder": 0.25, "fire_crackle": 0.15}.get(sound_effect, 0)
+        cue_shift = n / SR - cue_offset - 0.08
+    n += preroll + tail
     rng = np.random.default_rng(seed)
     t = np.arange(n, dtype=np.float32) / SR
     sound = np.zeros(n, dtype=np.float32)
@@ -662,25 +701,63 @@ def mix_shot_audio(data, n, ambience, sound_effect, seed):
         impulses = rng.uniform(-0.08, 0.08, n).astype(np.float32) * sparks
         sound += np.convolve(impulses, np.exp(-np.arange(18, dtype=np.float32) / 4), mode="same")
 
+    gain = options.gain
     if sound_effect == "bell":
-        hit = np.maximum(t - 0.15, 0)
-        sound += 0.12 * (np.sin(2 * np.pi * 587 * hit) + 0.3 * np.sin(2 * np.pi * 1193 * hit)) * np.exp(-3.3 * hit)
+        hit = np.maximum(t - (0.15 + cue_shift), 0)
+        decay = 3.3 / math.sqrt(gain)
+        sound += gain * 0.12 * (np.sin(2 * np.pi * 587 * hit) + 0.3 * np.sin(2 * np.pi * 1193 * hit)) * np.exp(-decay * hit)
     elif sound_effect == "steps":
         for moment in (0.25, 0.79):
-            hit = np.maximum(t - moment, 0)
-            sound += 0.10 * np.sin(2 * np.pi * 92 * hit) * np.exp(-28 * hit)
+            hit = np.maximum(t - (moment + cue_shift), 0)
+            sound += gain * 0.10 * np.sin(2 * np.pi * 92 * hit) * np.exp(-28 * hit)
     elif sound_effect == "thunder":
-        hit = np.maximum(t - 0.25, 0)
-        sound += 0.19 * (np.sin(2 * np.pi * 46 * hit) + 0.28 * np.sin(2 * np.pi * 83 * hit)) * (
+        hit = np.maximum(t - (0.25 + cue_shift), 0)
+        sound += gain * 0.19 * (np.sin(2 * np.pi * 46 * hit) + 0.28 * np.sin(2 * np.pi * 83 * hit)) * (
             1 - np.exp(-18 * hit)) * np.exp(-2.1 * hit)
+    elif sound_effect == "fire_crackle":
+        hit = t - (0.15 + cue_shift)
+        sparks = (rng.random(n, dtype=np.float32) > 0.991) * (hit >= 0)
+        impulses = rng.uniform(-0.18, 0.18, n).astype(np.float32) * sparks
+        sound += gain * np.convolve(impulses, np.exp(-np.arange(24, dtype=np.float32) / 5), mode="same") * (
+            np.exp(-1.8 * np.maximum(hit, 0)))
 
     fade = min(SR // 10, n // 2)
     if fade:
         ramp = np.linspace(0, 1, fade, dtype=np.float32)
         sound[:fade] *= ramp
         sound[-fade:] *= ramp[::-1]
-    sound[:len(data)] *= 0.55
-    return np.clip(voice + sound, -0.97, 0.97)
+    return sound
+
+
+def mix_timeline_audio(plan):
+    # Build the bed on the full timeline so only effects and ambience cross
+    # a picture edit. Voice and the cut's frame count stay in the source shot.
+    boundaries = [0]
+    total_frames = 0
+    for shot in plan:
+        total_frames += shot["n"]
+        boundaries.append(round(total_frames * SR / FPS))
+    mixed = np.zeros(boundaries[-1], dtype=np.float32)
+    for index, shot in enumerate(plan):
+        start, end = boundaries[index:index + 2]
+        options = shot["sound"]
+        if not (options.ambience or options.effect):
+            continue
+        preroll = (min(BRIDGE_SAMPLES, start - boundaries[index - 1])
+                   if options.bridge == "prelap" and index > 0 and not plan[index - 1]["sound"].silence else 0)
+        tail = (min(BRIDGE_SAMPLES, boundaries[index + 2] - end)
+                if options.bridge == "carry" and index + 1 < len(plan) and not plan[index + 1]["sound"].silence else 0)
+        mixed[start - preroll:end + tail] += render_sound_bed(end - start, options, shot["seed"], preroll, tail)
+
+    for index, shot in enumerate(plan):
+        start, end = boundaries[index:index + 2]
+        voice = shot["audio"][:end - start]
+        if len(voice):
+            if shot["sound"].delivery is not None:
+                voice = voice * DELIVERY[shot["sound"].delivery][2]
+            mixed[start:start + len(voice)] *= 0.55
+            mixed[start:start + len(voice)] += voice
+    return np.clip(mixed, -0.97, 0.97, out=mixed)
 
 
 # ---------------------------------------------------------------- 编码
@@ -839,7 +916,7 @@ def build_overlays(doc, ep, p, show_cards=True):
     dialogue_mode = doc.get("audio_mode") == "dialogue"
     ovls = [title_overlay(title, p, "第 %d 话 · %s" % (ep, badge)) if show_cards else None]
     for shot in doc["shots"]:
-        if shot["kind"] == "action":
+        if shot["kind"] in ("action", "card"):
             ovls.append(None)
         elif dialogue_mode:
             ovls.append(dialogue_subtitle(shot["text"]))
@@ -871,6 +948,10 @@ def cmd_panels(args):
 
     files, panels = [], []
     for i, e in enumerate(entries):
+        if e["kind"] == "card":
+            files.append(None)
+            panels.append(None)
+            continue
         panel = make_panel(p, e["seed"], e["pk"], e["cx"])
         name = "panel_%03d.png" % i
         cv2.imwrite(os.path.join(args.out, name), cv2.cvtColor(panel, cv2.COLOR_RGB2BGR))
@@ -881,7 +962,11 @@ def cmd_panels(args):
     # 封面：与 manju_av 相同取 plan[min(2, len-1)]
     pi = min(2, len(entries) - 1)
     e = entries[pi]
-    post = composite(crop_zoom(panels[pi], 1.03, e["cx"], e["cy"]), ovls[pi], 1.0)
+    if e["kind"] == "card":
+        card = doc["shots"][pi - 1]
+        post = card_frame(card.get("subtitle", card.get("text")))
+    else:
+        post = composite(crop_zoom(panels[pi], 1.03, e["cx"], e["cy"]), ovls[pi], 1.0)
     cv2.imwrite(os.path.join(args.out, "poster.png"), cv2.cvtColor(post, cv2.COLOR_RGB2BGR))
 
     listing = []
@@ -903,29 +988,50 @@ def story_audio_options(doc):
     if dialogue_mode and not doc["shots"]:
         raise ValueError("对白模式至少需要一个镜头")
 
-    shots = [(0, None, None)]  # 标题卡和片尾卡保留清单位置。
+    shots = [ShotAudio()]  # 标题卡和片尾卡保留清单位置。
     for index, shot in enumerate(doc["shots"], start=1):
         kind = shot["kind"]
         text = shot.get("text")
-        if dialogue_mode and kind not in ("dialogue", "action"):
-            raise ValueError("对白模式第 %d 镜仅支持 dialogue 或 action" % index)
+        if dialogue_mode and kind not in ("dialogue", "action", "card"):
+            raise ValueError("对白模式第 %d 镜仅支持 dialogue、action 或 card" % index)
+        if not dialogue_mode and kind == "card":
+            raise ValueError("第 %d 镜的字幕卡仅支持对白模式" % index)
         if kind == "action" and text is not None and (not isinstance(text, str) or text.strip()):
             raise ValueError("动作镜头 %d 不能包含台词，画面描述请放入 action" % index)
         speaker = shot.get("speaker")
+        if kind in ("action", "card") and speaker not in (None, ""):
+            raise ValueError("第 %d 镜不能为动作或字幕卡指定说话角色" % index)
+        if kind == "card":
+            caption = shot.get("subtitle", text)
+            if not isinstance(caption, str) or not caption.strip() or len(caption.encode("utf-8")) > 420:
+                raise ValueError("第 %d 镜的字幕卡需要不超过 420 个 UTF-8 字节的 subtitle 或 text" % index)
         if dialogue_mode and kind == "dialogue":
             if not isinstance(speaker, str) or not speaker.strip():
                 raise ValueError("对白镜头 %d 缺少说话角色" % index)
             if not isinstance(text, str) or not text.strip():
                 raise ValueError("对白镜头 %d 缺少台词" % index)
-        duration = shot.get("duration_seconds", 3 if kind == "action" else None)
+        duration = shot.get("duration_seconds")
         if duration is not None and (type(duration) not in (int, float) or not 1 <= duration <= 30):
             raise ValueError("第 %d 镜的 duration_seconds 必须为 1 到 30 秒" % index)
         ambience, effect = shot.get("ambience"), shot.get("sound_effect")
-        ambience, effect = ambience if ambience != "" else None, effect if effect != "" else None
+        ambience = None if ambience in ("", "none") else ambience
+        effect = None if effect in ("", "none") else effect
         if (ambience is not None and ambience not in AMBIENCE) or (effect is not None and effect not in SOUND_EFFECTS):
             raise ValueError("第 %d 镜的环境声或音效无效" % index)
-        shots.append((math.ceil(duration * FPS) if duration else 0, ambience, effect))
-    shots.append((0, None, None))
+        bridge = shot.get("sound_bridge") if dialogue_mode else None
+        gain = shot.get("sound_gain", 1.0) if dialogue_mode else 1.0
+        silence = shot.get("silence", False) if dialogue_mode else False
+        delivery = shot.get("delivery_mode") if dialogue_mode else None
+        if bridge is not None and (bridge not in ("prelap", "carry") or not (ambience or effect)):
+            raise ValueError("第 %d 镜的声音转场需要有效环境声或音效" % index)
+        if type(gain) not in (int, float) or not 0.25 <= gain <= 2.0:
+            raise ValueError("第 %d 镜的 sound_gain 必须为 0.25 到 2.0" % index)
+        if type(silence) is not bool or (silence and (kind == "dialogue" or ambience or effect or bridge)):
+            raise ValueError("第 %d 镜的静默不能与台词、环境声或音效同时使用" % index)
+        if delivery is not None and (kind != "dialogue" or not isinstance(delivery, str) or delivery not in DELIVERY):
+            raise ValueError("第 %d 镜的 delivery_mode 仅支持对白中的 soft、low 或 urgent" % index)
+        shots.append(ShotAudio(duration, ambience, effect, bridge, gain, silence, delivery))
+    shots.append(ShotAudio())
     return dialogue_mode, show_cards, shots
 
 
@@ -949,12 +1055,14 @@ def cmd_tts(args):
     cast = doc.get("voice_cast", {})
     if not isinstance(cast, dict):
         raise ValueError("voice_cast 必须是角色与音色设置的映射")
-    clip_frames = args.clip_seconds * FPS if dialogue_mode and args.clip_seconds else 0
+    video_seconds = args.clip_seconds if dialogue_mode else None
+    durations = [shot.clip_seconds(video_seconds, index) if video_seconds else 0
+                 for index, shot in enumerate(shots)]
     grouped = {}
     entries = [None] * len(lines)
     for index, (kind, text, speaker) in enumerate(lines):
-        if kind == "action" or (dialogue_mode and kind in ("title", "end")):
-            frames = clip_frames or shots[index][0] or (34 if kind == "title" else 28)
+        if kind in ("action", "card") or (dialogue_mode and kind in ("title", "end")):
+            frames = durations[index] * FPS or shots[index].frames(kind) or (34 if kind == "title" else 28)
             entries[index] = dict(kind=kind, samples=0, frames=frames)
             continue
         if kind not in VOICE or not isinstance(text, str) or not text.strip():
@@ -970,7 +1078,12 @@ def cmd_tts(args):
         if (not isinstance(rate, str) or not re.fullmatch(r"[+-][0-9]{1,2}%", rate)
                 or abs(int(rate[:-1])) > 50):
             raise ValueError("配音角色 %s 的 rate 必须在 -50%% 到 +50%% 之间" % speaker)
-        rate = "%+d%%" % int(rate[:-1])
+        rate_percent = int(rate[:-1])
+        if shots[index].delivery is not None:
+            pitch_delta, rate_delta, _ = DELIVERY[shots[index].delivery]
+            pitch = "%+dHz" % min(99, max(-99, int(pitch[:-2]) + pitch_delta))
+            rate_percent = min(50, max(-50, rate_percent + rate_delta))
+        rate = "%+d%%" % rate_percent
         grouped.setdefault((text, voice, pitch, rate), []).append(index)
 
     failures = []
@@ -990,11 +1103,11 @@ def cmd_tts(args):
             key = voice_cache_key(text, voice, pitch, rate)
             for index in indexes:
                 kind, _, speaker = lines[index]
-                if clip_frames:
-                    check_clip_speech(samples, args.clip_seconds, index, speaker)
-                    frames = clip_frames
+                if durations[index]:
+                    check_clip_speech(samples, durations[index], index, speaker)
+                    frames = durations[index] * FPS
                 elif dialogue_mode:
-                    frames = max(shots[index][0], math.ceil(samples * FPS / SR) + 4)
+                    frames = max(shots[index].frames(kind), math.ceil(samples * FPS / SR) + 4)
                 else:
                     minimum = 34 if kind == "title" else 28
                     padding = 8 if kind == "end" else 10
@@ -1027,7 +1140,6 @@ def cmd_compose(args):
         pj, clip_seconds = clip_manifest(args.clips, args.shots)
         visual_dir = args.clips
         entries = pj["clips"]
-        clip_frames = clip_seconds * FPS
     else:
         pj = load_json(manifest_asset(args.panels, "panels.json"))
         visual_dir = args.panels
@@ -1058,8 +1170,8 @@ def cmd_compose(args):
     active_entries = range(len(entries)) if show_cards else range(1, len(entries) - 1)
     for i in active_entries:
         e, ae = entries[i], audio_entries[i]
-        visual_path = manifest_asset(visual_dir, e["file"])
-        if ae["kind"] == "action" or (dialogue_mode and ae["kind"] in ("title", "end")):
+        is_card = ae["kind"] == "card"
+        if ae["kind"] in ("action", "card") or (dialogue_mode and ae["kind"] in ("title", "end")):
             data = np.empty(0, dtype=np.float32)
         else:
             wav_path = manifest_asset(args.audio, ae["file"])
@@ -1073,16 +1185,25 @@ def cmd_compose(args):
                 idx = np.linspace(0, len(data) - 1, n, dtype=np.float32)
                 data = np.interp(idx, np.arange(len(data), dtype=np.float32), data).astype(np.float32)
         n = ae["frames"]
-        _, ambience, effect = shot_audio[i]
+        clip_frames = 0
         if video_mode:
             if dialogue_mode:
-                check_clip_speech(len(data), clip_seconds, i, ae.get("speaker"))
-                n = clip_frames
+                seconds = shot_audio[i].clip_seconds(clip_seconds, i)
+                if e.get("duration_seconds", seconds) != seconds:
+                    raise ValueError("第 %d 镜视频清单的时长与分镜不一致" % i)
+                check_clip_speech(len(data), seconds, i, ae.get("speaker"))
+                clip_frames = n = seconds * FPS
             else:
                 # Preserve the full narration in legacy storyboards.
+                clip_frames = clip_seconds * FPS
                 n = max(n, clip_frames, math.ceil(len(data) * FPS / SR))
-            visual = dict(clip=visual_path)
+        if is_card:
+            card = shots[i - 1]
+            visual = dict(card=card_frame(card.get("subtitle", card.get("text"))))
+        elif video_mode:
+            visual = dict(clip=manifest_asset(visual_dir, e["file"]), clip_frames=clip_frames)
         else:
+            visual_path = manifest_asset(visual_dir, e["file"])
             bgr = cv2.imdecode(np.fromfile(visual_path, dtype=np.uint8), cv2.IMREAD_COLOR)
             if bgr is None:
                 raise ValueError("缺少面板 %s" % e["file"])
@@ -1095,30 +1216,32 @@ def cmd_compose(args):
             panel = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             visual = dict(panel=panel, z0=e["z0"], z1=e["z1"], cx=e["cx"], cy=e["cy"],
                           px=e.get("px", 0.0), py=e.get("py", 0.0), ph=e.get("ph", 0.0))
-        plan.append(dict(**visual, ovl=ovls[i], n=n, audio=data, ambience=ambience, effect=effect, seed=ep * 997 + i))
+        plan.append(dict(**visual, ovl=ovls[i], n=n, audio=data, sound=shot_audio[i], seed=ep * 997 + i))
 
     total_frames = sum(s["n"] for s in plan)
     dur = total_frames / float(FPS)
 
-    # 语音轨：每句按该镜时长补零，逐句拼接 → 音画严格对齐（manju_av）
-    chunks = []
-    for s in plan:
-        need = int(round(s["n"] / float(FPS) * SR))
-        chunks.append(mix_shot_audio(s["audio"], need, s["ambience"], s["effect"], s["seed"]))
-    voice = np.concatenate(chunks) if chunks else np.zeros(1, dtype=np.float32)
+    voice = mix_timeline_audio(plan)
 
     # 逐帧：视频与图片使用同一套字幕淡入，图片另加运镜与颗粒。
     def frames(pending_poster):
         fi = 0
         for index, s in enumerate(plan):
             n = s["n"]
+            if "card" in s:
+                if index == 0 and pending_poster:
+                    Image.fromarray(s["card"]).save(pending_poster)
+                for _ in range(n):
+                    yield s["card"]
+                fi += n
+                continue
             if video_mode:
-                for k, fr in enumerate(decode_clip(s["clip"], clip_frames)):
+                for k, fr in enumerate(decode_clip(s["clip"], s["clip_frames"])):
                     if index == 0 and k == 0 and pending_poster:
                         Image.fromarray(fr).save(pending_poster)
                     with_subtitle = fast_composite(fr.copy(), s["ovl"], min(1.0, (k + 1) / 4.0))
                     yield with_subtitle
-                for _ in range(clip_frames, n):
+                for _ in range(s["clip_frames"], n):
                     yield with_subtitle
                 continue
             for k in range(n):

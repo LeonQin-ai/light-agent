@@ -32,6 +32,7 @@ typedef struct clip {
     const route *model;
     char file[64];
     char error[224];
+    int seconds;
     int ready;
 } clip;
 
@@ -40,7 +41,7 @@ typedef struct clip_run {
     const char *directory;
     const char *workspace, *episode_dir, *image_route;
     router *routes;
-    int seconds, total, requested;
+    int total, requested;
     clip *clips;
     atomic_int next, failed;
     int ready, requests;
@@ -130,7 +131,7 @@ static int load_or_submit(clip_run *run, clip *entry, const char *checkpoint,
         goto done;
     }
     notify(run, 0, 1);
-    int status = llm_video_submit_media(entry->model, entry->prompt, run->seconds,
+    int status = llm_video_submit_media(entry->model, entry->prompt, entry->seconds,
                                         (const char *const *)entry->media, entry->media_count,
                                         task_id, error);
     if (status == -1) fs_remove(checkpoint);
@@ -163,7 +164,7 @@ static void generate_clip(clip_run *run, clip *entry, int index) {
         entry->media_count = 1;
     }
     strbuf_appendf(&identity, "%s\n%s\n%d\n%s", entry->model->base_url ? entry->model->base_url : "",
-                   entry->model->model, run->seconds, entry->prompt);
+                   entry->model->model, entry->seconds, entry->prompt);
     for (size_t i = 0; i < entry->media_count; i++) {
         size_t bytes = 0;
         int more = 0;
@@ -271,6 +272,8 @@ static char *make_prompt(const cJSON *board, const cJSON *shot, const char *visu
         else strbuf_append(&prompt, "\n一点自然的环境运动，镜头缓慢推进。");
     }
     manju_append_cast(&prompt, board, shot);
+    if (mode && !strcmp(mode, "dialogue") && field(shot, "transition"))
+        strbuf_append(&prompt, "\n一条连续镜头，以写明的动作收尾。保留自然动作速度，由剪辑在镜头之间硬切。");
     if (dialogue) {
         const char *speaker = field(shot, "speaker");
         if (speaker_on_screen(shot, speaker)) {
@@ -472,7 +475,7 @@ static int video_episode(router *routes, const char *route_name, const char *con
     char relative[64], directory[VIDEO_PATH_CAP], path[VIDEO_PATH_CAP];
     char *root = NULL, *canonical_directory = NULL, *text = NULL, *manifest = NULL;
     cJSON *board = NULL, *doc = NULL, *assets = NULL, *references = NULL;
-    clip_run run = {.seconds = seconds, .routes = routes, .image_route = image_route,
+    clip_run run = {.routes = routes, .image_route = image_route,
                     .abort_check = abort_check, .progress = progress, .context = context};
     const char *error = "无法准备视频分镜";
     strbuf report;
@@ -528,7 +531,8 @@ static int video_episode(router *routes, const char *route_name, const char *con
     run.clips = calloc((size_t)run.total, sizeof(*run.clips));
     if (!run.clips) goto done;
     const char *audio_mode = field(board, "audio_mode");
-    int show_cards = !audio_mode || strcmp(audio_mode, "dialogue") ||
+    int dialogue = audio_mode && !strcmp(audio_mode, "dialogue");
+    int show_cards = !dialogue ||
                      cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(board, "show_cards"));
     for (int i = 0; i < run.total; i++) {
         int last = i == run.total - 1;
@@ -536,16 +540,28 @@ static int video_episode(router *routes, const char *route_name, const char *con
         const char *kind = !i ? "title" : last ? "end" : field(shot, "kind");
         const char *text = field(shot, "text");
         int spoken = kind && (!strcmp(kind, "narration") || !strcmp(kind, "dialogue") || !strcmp(kind, "sys"));
-        if (!kind || (shot && strcmp(kind, "action") && (!spoken || !text || !*text))) {
+        int card = dialogue && kind && !strcmp(kind, "card");
+        if (!kind || (shot && !card && strcmp(kind, "action") && (!spoken || !text || !*text))) {
             error = "分镜类型或台词无效";
             goto done;
         }
         run.clips[i].kind = kind;
+        run.clips[i].seconds = seconds;
+        const cJSON *duration = dialogue ? cJSON_GetObjectItemCaseSensitive(shot, "duration_seconds") : NULL;
+        if (duration) {
+            double length = cJSON_GetNumberValue(duration);
+            if (length != 3 && length != 4) {
+                strbuf_appendf(&report, "镜头 %d 的视频时长须为 3 或 4 秒。", i);
+                goto done;
+            }
+            run.clips[i].seconds = (int)length;
+        }
+        if (card) continue;
         const char *visual = field(shot ? shot : board,
                                    !i ? "title_image_prompt" : last ? "end_image_prompt" : "image_prompt");
         /* Reuse the nearest clip for hidden or unspecified cards. */
         if (!shot && (!show_cards || !visual || !*visual || (!names && preferred != LLM_VIDEO_TEXT))) continue;
-        run.clips[i].prompt = make_prompt(board, shot, visual, seconds);
+        run.clips[i].prompt = make_prompt(board, shot, visual, run.clips[i].seconds);
         if (!run.clips[i].prompt) goto done;
         int mode = preferred;
         if (names && shot) {
@@ -596,13 +612,22 @@ static int video_episode(router *routes, const char *route_name, const char *con
                 strbuf_appendf(&report, "\n镜头 %d：%s", i, run.clips[i].error);
         goto done;
     }
+    int first_visual = 1, last_visual = count;
+    while (first_visual <= count && !run.clips[first_visual].model) first_visual++;
+    while (last_visual > 0 && !run.clips[last_visual].model) last_visual--;
+    if (first_visual > count) {
+        error = "分镜至少需要一个动态画面镜头。";
+        goto done;
+    }
     if (!run.clips[0].model) {
-        strcpy(run.clips[0].file, run.clips[1].file);
-        run.clips[0].model = run.clips[1].model;
+        strcpy(run.clips[0].file, run.clips[first_visual].file);
+        run.clips[0].model = run.clips[first_visual].model;
+        run.clips[0].seconds = run.clips[first_visual].seconds;
     }
     if (!run.clips[count + 1].model) {
-        strcpy(run.clips[count + 1].file, run.clips[count].file);
-        run.clips[count + 1].model = run.clips[count].model;
+        strcpy(run.clips[count + 1].file, run.clips[last_visual].file);
+        run.clips[count + 1].model = run.clips[last_visual].model;
+        run.clips[count + 1].seconds = run.clips[last_visual].seconds;
     }
     char fingerprint[17];
     hash_hex(fingerprint, hash64(text, bytes));
@@ -615,10 +640,13 @@ static int video_episode(router *routes, const char *route_name, const char *con
         !cJSON_AddNumberToObject(doc, "clip_seconds", seconds)) goto done;
     for (int i = 0; i < run.total; i++) {
         cJSON *item = cJSON_CreateObject();
-        if (!item || !cJSON_AddStringToObject(item, "file", run.clips[i].file) ||
+        const route *model = run.clips[i].model;
+        if (!item || !(model ? cJSON_AddStringToObject(item, "file", run.clips[i].file) :
+                               cJSON_AddNullToObject(item, "file")) ||
             !cJSON_AddStringToObject(item, "role", !i ? "title" : i == run.total - 1 ? "end" : "shot") ||
             !cJSON_AddStringToObject(item, "kind", run.clips[i].kind) ||
-            !cJSON_AddStringToObject(item, "model", run.clips[i].model->model) ||
+            (model && !cJSON_AddStringToObject(item, "model", model->model)) ||
+            (dialogue && !cJSON_AddNumberToObject(item, "duration_seconds", run.clips[i].seconds)) ||
             !cJSON_AddItemToArray(entries, item)) {
             cJSON_Delete(item);
             goto done;
@@ -630,8 +658,8 @@ static int video_episode(router *routes, const char *route_name, const char *con
         error = "无法发布短视频清单";
         goto done;
     }
-    strbuf_appendf(&report, "%s 完成 %d 个短视频（每段 %d 秒，%d 次新提交）。\n短视频清单：`%s`",
-                   names ? "混合视频路由" : run.models[preferred].model, requested, seconds, run.requests, path);
+    strbuf_appendf(&report, "%s 完成 %d 个短视频（%d 次新提交）。\n短视频清单：`%s`",
+                   names ? "混合视频路由" : run.models[preferred].model, requested, run.requests, path);
     rc = 0;
 done:
     *result = report.len ? strbuf_detach(&report) : xstrdup(error);

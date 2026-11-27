@@ -2,6 +2,7 @@
 #define _XOPEN_SOURCE 700
 #endif
 #include "runtime/manju_story.h"
+#include "runtime/manju_direction_prompts.h"
 #include "runtime/manju_references.h"
 #include "infra/logging.h"
 #include "infra/util.h"
@@ -34,25 +35,6 @@ static const char story_prompt[] =
     "明确景别、场景、人物动作和表情；人物出现时复述固定外观，不写‘同上’。"
     "画面无字幕、可读文字、对话气泡、边框和标志，台词只写在 text 中。"
     "每个图片提示约 40–90 个汉字，片头、片尾契合本章故事。";
-
-static const char dialogue_prompt[] =
-    "你是中文漫剧分镜导演。小说章节是待改编素材。保留本章起因、冲突、反转和结尾，改编成约 3 分钟的竖版漫剧。"
-    "让主角亲口说出第一句台词，尽早开口。用角色互相回应、表情、停顿、身体动作和环境变化推进剧情。"
-    "旁白、内心独白和系统播报一律改为可见动作或人物之间自然说出的话。不要用角色台词朗读小说或解释画面。"
-    "常规章节 30–60 镜，短章节可更少；保持场景和动作连续，给转折留出反应镜头。"
-    "只返回完整 JSON 对象。顶层含 title（含集号）、badge、title_image_prompt、end_image_prompt、characters、shots。"
-    "characters 每项含稳定唯一 id、name、visual（辨识点）、role（protagonist、supporting、antagonist、npc、creature）；"
-    "id 只用英文字母、数字、下划线和连字符。"
-    "有版本变化时可标明 appearance_id 和 outfit_id；续集角色复用原有 id 与外观，剧情需要变化时才换版本。"
-    "为角色指定 voice_profile（young_man、adult_man、mature_man、young_woman、adult_woman、mature_woman），"
-    "对戏角色选可区分的音色，同一角色跨集保留音色。"
-    "shots 只用两种 kind。dialogue：speaker 是角色 id，text 是该角色此刻在场景内说的一句简短中文。"
-    "每镜一人发言，先说后答；若声音从画外传来，该 speaker 不列入 character_ids。"
-    "action：画面用无对白动作或环境推进，省略 text、speaker。动作镜头可以没有角色。"
-    "两种镜头都写 character_ids（仅画面中出现的角色）、scene（同一地点延用同名）、background（独立场景背景和光线）、"
-    "action（具体可见动作和反应）、image_prompt（独立 9:16 镜头、明确景别、构图、动作、表情，约 40–90 字）。"
-    "可写 emotion（表情），delivery（对白的语气），ambience（room、wind、rain、fire），"
-    "sound_effect（bell、steps、thunder）。只有剧情需要时才加音效。禁止出现在画面中的可读文字、字幕和对话气泡。";
 
 static const struct { const char *profile, *voice, *pitch, *rate; } voice_presets[] = {
     {"young_man", "zh-CN-YunxiNeural", "+0Hz", "+4%"},
@@ -186,9 +168,10 @@ static const char *story_problem(const cJSON *board, int dialogue_mode) {
                 return "对白与动作镜头都需要简短的场景背景、人物动作和独立画面提示";
             if ((!ambience && cJSON_GetObjectItemCaseSensitive(entry, "ambience")) ||
                 (ambience && strcmp(ambience, "room") && strcmp(ambience, "wind") &&
-                 strcmp(ambience, "rain") && strcmp(ambience, "fire")) ||
+                 strcmp(ambience, "rain") && strcmp(ambience, "fire") && strcmp(ambience, "none")) ||
                 (!effect && cJSON_GetObjectItemCaseSensitive(entry, "sound_effect")) ||
-                (effect && strcmp(effect, "bell") && strcmp(effect, "steps") && strcmp(effect, "thunder")))
+                (effect && strcmp(effect, "bell") && strcmp(effect, "steps") && strcmp(effect, "thunder") &&
+                 strcmp(effect, "fire_crackle") && strcmp(effect, "none")))
                 return "镜头环境声或音效不在支持的取值内";
             const cJSON *duration = cJSON_GetObjectItemCaseSensitive(entry, "duration_seconds");
             if (duration && (!cJSON_IsNumber(duration) || !(duration->valuedouble >= 1 && duration->valuedouble <= 30)))
@@ -207,8 +190,7 @@ static const char *skip_space(const char *s) {
     return s;
 }
 
-static cJSON *parse_story(const char *text, size_t bytes, int dialogue_mode, const char **problem) {
-    *problem = "缺少完整 JSON 对象";
+static cJSON *parse_object(const char *text, size_t bytes) {
     if (!text || !bytes || bytes > STORY_BOARD_MAX || strlen(text) != bytes ||
         !str_utf8_valid_n(text, (long long)bytes)) return NULL;
     const char *start = skip_space(text);
@@ -221,14 +203,19 @@ static cJSON *parse_story(const char *text, size_t bytes, int dialogue_mode, con
         if (*start++ != '\n') return NULL;
     }
     const char *end = NULL;
-    cJSON *board = cJSON_ParseWithOpts(start, &end, !fenced);
-    if (!board) return NULL;
-    if (!fenced || (!strncmp(skip_space(end), "```", 3) && !*skip_space(skip_space(end) + 3)))
-        *problem = story_problem(board, dialogue_mode || dialogue_board(board));
-    if (*problem) {
-        cJSON_Delete(board);
+    cJSON *object = cJSON_ParseWithOpts(start, &end, !fenced);
+    if (!cJSON_IsObject(object) ||
+        (fenced && (strncmp(skip_space(end), "```", 3) || *skip_space(skip_space(end) + 3)))) {
+        cJSON_Delete(object);
         return NULL;
     }
+    return object;
+}
+
+static cJSON *parse_story(const char *text, size_t bytes, int dialogue_mode, const char **problem) {
+    cJSON *board = parse_object(text, bytes);
+    *problem = board ? story_problem(board, dialogue_mode || dialogue_board(board)) : "缺少完整 JSON 对象";
+    if (*problem) { cJSON_Delete(board); return NULL; }
     return board;
 }
 
@@ -418,16 +405,695 @@ static int append_reference_cast(strbuf *prompt, const cJSON *references) {
     return prompt->len > length ? 0 : -1;
 }
 
+static size_t utf8_length(const char *text) {
+    size_t count = 0;
+    for (const unsigned char *p = (const unsigned char *)text; *p; ++p)
+        count += (*p & 0xc0) != 0x80;
+    return count;
+}
+
+static int short_text(const char *text, size_t max_chars) {
+    return nonblank(text, max_chars * 4) && utf8_length(text) <= max_chars;
+}
+
+static int text_fields(const cJSON *object, const char *const *keys, size_t count, size_t max_chars) {
+    for (size_t i = 0; i < count; ++i)
+        if (!short_text(field(object, keys[i]), max_chars)) return 0;
+    return 1;
+}
+
+static int string_array(const cJSON *array, int min, int max, size_t width) {
+    int count = cJSON_GetArraySize(array);
+    if (!cJSON_IsArray(array) || count < min || count > max) return 0;
+    const cJSON *item;
+    cJSON_ArrayForEach(item, array)
+        if (!short_text(cJSON_GetStringValue(item), width)) return 0;
+    return 1;
+}
+
+static int choice(const char *value, const char *options) {
+    if (!value || !*value) return 0;
+    size_t length = strlen(value);
+    for (const char *start = options; *start; ) {
+        size_t size = strcspn(start, "|");
+        if (size == length && !strncmp(start, value, size)) return 1;
+        start += size;
+        if (*start) start++;
+    }
+    return 0;
+}
+
+static const cJSON *item_by(const cJSON *array, const char *key, const char *value) {
+    if (!value) return NULL;
+    const cJSON *item;
+    cJSON_ArrayForEach(item, array) {
+        const char *candidate = field(item, key);
+        if (candidate && !strcmp(candidate, value)) return item;
+    }
+    return NULL;
+}
+
+static const char *narrative_problem(const cJSON *output, const cJSON *input) {
+    (void)input;
+    const cJSON *narrative = cJSON_GetObjectItemCaseSensitive(output, "narrative");
+    const cJSON *acts = cJSON_GetObjectItemCaseSensitive(narrative, "acts");
+    const cJSON *characters = cJSON_GetObjectItemCaseSensitive(narrative, "characters");
+    const char *core[] = {"logline", "core_conflict", "protagonist_flaw", "closure"};
+    if (!text_fields(narrative, core, 4, 160) || !cJSON_IsArray(acts) ||
+        !cJSON_GetArraySize(acts) || cJSON_GetArraySize(acts) > 12 ||
+        !cJSON_IsArray(characters) || !cJSON_GetArraySize(characters) || cJSON_GetArraySize(characters) > 24 ||
+        !string_array(cJSON_GetObjectItemCaseSensitive(narrative, "causal_chain"), 1, 24, 180) ||
+        !string_array(cJSON_GetObjectItemCaseSensitive(narrative, "fill_ins"), 0, 16, 140) ||
+        !string_array(cJSON_GetObjectItemCaseSensitive(narrative, "removed"), 0, 16, 140))
+        return "需要分幕、动机和首尾闭环，以及因果链、补镜与删除清单";
+    const cJSON *entry;
+    cJSON_ArrayForEach(entry, acts) {
+        const char *id = field(entry, "id");
+        if (!valid_id(id) || item_by(acts, "id", id) != entry || !short_text(field(entry, "title"), 65) ||
+            !string_array(cJSON_GetObjectItemCaseSensitive(entry, "beats"), 1, 20, 180))
+            return "各幕需要不同的 id、片名和事件顺序";
+    }
+    const char *motives[] = {"name", "want", "fear", "flaw", "growth"};
+    int protagonists = 0;
+    cJSON_ArrayForEach(entry, characters) {
+        const char *id = field(entry, "id"), *role = field(entry, "role");
+        if (!valid_id(id) || item_by(characters, "id", id) != entry ||
+            !text_fields(entry, motives, 5, 100) || !optional_string(entry, "visual", 1200) ||
+            !choice(role, "protagonist|supporting|antagonist|npc|creature"))
+            return "角色需要唯一 id、有效角色类型和完整动机信息";
+        protagonists += !strcmp(role, "protagonist");
+    }
+    return protagonists ? NULL : "至少需要一位主角";
+}
+
+static int rename_string(cJSON *object, const char *key, const char *value) {
+    cJSON *replacement = cJSON_CreateString(value);
+    if (!replacement) return 0;
+    cJSON_DeleteItemFromObjectCaseSensitive(object, key);
+    if (cJSON_AddItemToObject(object, key, replacement)) return 1;
+    cJSON_Delete(replacement);
+    return 0;
+}
+
+static int no_spoken_value(const cJSON *object, const char *key) {
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, key);
+    return !item || cJSON_IsNull(item) || (cJSON_IsString(item) && !nonblank(item->valuestring, 420) &&
+                                           strlen(item->valuestring) <= 420);
+}
+
+/* Only canonicalize explicitly supplied lines or roles. A one-person shot
+ * can still have off-screen dialogue, so never infer a speaker from the frame. */
+static const char *normalize_board_direction(cJSON *output, char *diagnostic, size_t capacity) {
+    const cJSON *characters = cJSON_GetObjectItemCaseSensitive(output, "characters");
+    cJSON *shot;
+    int index = 0;
+    cJSON_ArrayForEach(shot, cJSON_GetObjectItemCaseSensitive(output, "shots")) {
+        ++index;
+        const char *kind = field(shot, "kind"), *id = field(shot, "id"), *problem = NULL;
+        if (choice(kind, "dialogue|对白|Dialogue")) {
+            const cJSON *dialogue = cJSON_GetObjectItemCaseSensitive(shot, "dialogue");
+            const char *line = field(shot, "text"), *speaker = field(shot, "speaker");
+            if (no_spoken_value(shot, "text")) {
+                const char *alias = cJSON_GetStringValue(dialogue);
+                if (!alias) alias = field(dialogue, "text");
+                if (!alias) alias = field(shot, "dialogue_text");
+                if (alias && !rename_string(shot, "text", alias)) return "无法保存对白文本";
+                line = field(shot, "text");
+            }
+            if (no_spoken_value(shot, "speaker")) {
+                speaker = field(shot, "speaker_id");
+                if (!speaker) speaker = field(dialogue, "speaker");
+                if (!speaker) speaker = field(dialogue, "speaker_id");
+            }
+            if (speaker && !character_exists(characters, speaker)) {
+                const cJSON *match = NULL, *character;
+                cJSON_ArrayForEach(character, characters) {
+                    const char *name = field(character, "name");
+                    if (!name || strcmp(name, speaker)) continue;
+                    if (match) { match = NULL; break; }
+                    match = character;
+                }
+                speaker = field(match, "id");
+            }
+            if (!nonblank(line, 420)) problem = "dialogue.text 必须是实际要说的短句";
+            else if (!character_exists(characters, speaker)) problem = "dialogue.speaker 必须是 characters 中明确发言者的 id";
+            else if (!rename_string(shot, "speaker", speaker) || !rename_string(shot, "kind", "dialogue"))
+                return "无法保存对白角色与镜头类型";
+            else {
+                cJSON_DeleteItemFromObjectCaseSensitive(shot, "dialogue");
+                cJSON_DeleteItemFromObjectCaseSensitive(shot, "dialogue_text");
+                cJSON_DeleteItemFromObjectCaseSensitive(shot, "speaker_id");
+            }
+        } else if (choice(kind, "action|动作|Action")) {
+            if (!no_spoken_value(shot, "text") || !no_spoken_value(shot, "speaker") ||
+                !no_spoken_value(shot, "dialogue") || !no_spoken_value(shot, "dialogue_text") ||
+                !no_spoken_value(shot, "speaker_id"))
+                problem = "action 不能填写 text 或 speaker，有实际发言时选择 dialogue";
+            else {
+                cJSON_DeleteItemFromObjectCaseSensitive(shot, "speaker");
+                cJSON_DeleteItemFromObjectCaseSensitive(shot, "text");
+                if (!rename_string(shot, "kind", "action")) return "无法保存动作镜头类型";
+            }
+        } else {
+            problem = "kind 只可填写 dialogue（有发言）或 action（无发言）";
+        }
+        if (problem) {
+            snprintf(diagnostic, capacity, "第 %d 镜%s%s%s：%s。",
+                     index, valid_id(id) ? "（" : "", valid_id(id) ? id : "", valid_id(id) ? "）" : "", problem);
+            return diagnostic;
+        }
+    }
+    return NULL;
+}
+
+/* Character names and roles belong to the narrative handoff. Storyboarding
+ * may attach a visual description and a voice preset to each locked ID. */
+static const char *apply_locked_cast(cJSON *board, const cJSON *narrative) {
+    cJSON *characters = cJSON_GetObjectItemCaseSensitive(board, "characters");
+    const cJSON *source_cast = cJSON_GetObjectItemCaseSensitive(narrative, "characters");
+    if (!cJSON_IsArray(characters) || cJSON_GetArraySize(characters) != cJSON_GetArraySize(source_cast))
+        return "分镜必须沿用陈默锁定的角色";
+    cJSON *character;
+    cJSON_ArrayForEach(character, characters) {
+        const cJSON *identity = item_by(source_cast, "id", field(character, "id"));
+        if (!identity) return "分镜 characters 含未在陈默阶段登记的角色 id";
+        if (!copy_field(character, identity, "name") || !copy_field(character, identity, "role"))
+            return "无法应用陈默锁定的角色姓名和类型";
+    }
+    return NULL;
+}
+
+static const char *mark_undetermined_art(cJSON *output, const cJSON *input) {
+    const cJSON *source_cast = cJSON_GetObjectItemCaseSensitive(input, "characters");
+    cJSON *art = cJSON_GetObjectItemCaseSensitive(output, "art"), *anchor;
+    cJSON_ArrayForEach(anchor, cJSON_GetObjectItemCaseSensitive(art, "characters")) {
+        const cJSON *source = item_by(source_cast, "id", field(anchor, "id"));
+        if (!source || nonblank(field(source, "visual"), 1200)) continue;
+        cJSON_DeleteItemFromObjectCaseSensitive(anchor, "pending");
+        cJSON_DeleteItemFromObjectCaseSensitive(anchor, "pending:true");
+        cJSON_DeleteItemFromObjectCaseSensitive(anchor, "costume");
+        cJSON_DeleteItemFromObjectCaseSensitive(anchor, "prop");
+        cJSON_DeleteItemFromObjectCaseSensitive(anchor, "face");
+        if (!cJSON_AddBoolToObject(anchor, "pending", 1)) return "无法标记缺少外观参考的角色";
+    }
+    return NULL;
+}
+
+static void normalize_sound_direction(cJSON *output) {
+    cJSON *cue;
+    cJSON_ArrayForEach(cue, cJSON_GetObjectItemCaseSensitive(output, "shots")) {
+        if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(cue, "silence"))) {
+            cJSON_DeleteItemFromObjectCaseSensitive(cue, "ambience");
+            cJSON_DeleteItemFromObjectCaseSensitive(cue, "sound_effect");
+            cJSON_DeleteItemFromObjectCaseSensitive(cue, "sound_bridge");
+            cJSON_DeleteItemFromObjectCaseSensitive(cue, "sound_gain");
+        } else {
+            const char *effect = field(cue, "sound_effect"), *ambience = field(cue, "ambience");
+            if (!effect || !strcmp(effect, "none")) {
+                cJSON_DeleteItemFromObjectCaseSensitive(cue, "sound_gain");
+                if (!ambience || !strcmp(ambience, "none"))
+                    cJSON_DeleteItemFromObjectCaseSensitive(cue, "sound_bridge");
+            }
+        }
+    }
+}
+
+static const char *board_direction_problem(const cJSON *output, const cJSON *narrative) {
+    const char *problem = story_problem(output, 1);
+    if (problem) return problem;
+    const cJSON *plan = cJSON_GetObjectItemCaseSensitive(output, "storyboard");
+    const cJSON *acts = cJSON_GetObjectItemCaseSensitive(plan, "acts");
+    const cJSON *source_acts = cJSON_GetObjectItemCaseSensitive(narrative, "acts");
+    const cJSON *shots = cJSON_GetObjectItemCaseSensitive(output, "shots");
+    const char *directions[] = {"tone", "camera_language", "pacing_transitions", "emotion_curve", "prohibitions"};
+    if (!text_fields(plan, directions, 5, 80) || !strpbrk(field(plan, "emotion_curve"), "0123456789") ||
+        !cJSON_IsArray(acts) || cJSON_GetArraySize(acts) != cJSON_GetArraySize(source_acts))
+        return "需要五项导演方向、带秒点情绪曲线和幕末观众感受";
+    const cJSON *entry;
+    const char *shot_fields[] = {"framing", "beat", "transition"};
+    cJSON_ArrayForEach(entry, shots) {
+        const char *id = field(entry, "id");
+        double duration = cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(entry, "duration_seconds"));
+        if (!valid_id(id) || item_by(shots, "id", id) != entry || (duration != 3 && duration != 4) ||
+            !text_fields(entry, shot_fields, 3, 80) || !short_text(field(entry, "image_prompt"), 190))
+            return "每镜需要唯一 id、景别、信息点、转场和 3 或 4 秒时长";
+    }
+    const cJSON *shot = shots->child, *source_act = source_acts->child;
+    cJSON_ArrayForEach(entry, acts) {
+        const char *id = field(entry, "id"), *last = field(entry, "last_shot_id");
+        if (!id || strcmp(id, field(source_act, "id")) || !last ||
+            !short_text(field(entry, "audience_feeling"), 80))
+            return "每幕应标记原分幕 id、结尾镜号和观众感受";
+        while (shot && strcmp(last, field(shot, "id"))) shot = shot->next;
+        if (!shot) return "幕末镜号须按镜头顺序出现";
+        shot = shot->next;
+        source_act = source_act->next;
+    }
+    return shot ? "最后一幕须覆盖全片最后一镜" : NULL;
+}
+
+static const char *art_direction_problem(const cJSON *output, const cJSON *board) {
+    const cJSON *art = cJSON_GetObjectItemCaseSensitive(output, "art");
+    const cJSON *scenes = cJSON_GetObjectItemCaseSensitive(art, "scenes");
+    const cJSON *anchors = cJSON_GetObjectItemCaseSensitive(art, "characters");
+    const cJSON *shots = cJSON_GetObjectItemCaseSensitive(board, "shots");
+    const cJSON *characters = cJSON_GetObjectItemCaseSensitive(board, "characters");
+    const char *global[] = {"warm_accent", "materials", "lighting", "composition", "prohibited_colors"};
+    if (!string_array(cJSON_GetObjectItemCaseSensitive(art, "palette"), 1, 3, 20) ||
+        !text_fields(art, global, 5, 65) || !short_text(field(art, "character_consistency"), 80) ||
+        !cJSON_IsArray(scenes) || !cJSON_IsArray(anchors) ||
+        cJSON_GetArraySize(anchors) != cJSON_GetArraySize(characters))
+        return "需要三色以内的主调、唯一暖色、光影、构图、场景与角色记录";
+    const cJSON *entry;
+    const char *scene_fields[] = {"anchor", "light"};
+    cJSON_ArrayForEach(entry, scenes) {
+        const char *name = field(entry, "scene");
+        if (!item_by(shots, "scene", name) || item_by(scenes, "scene", name) != entry ||
+            !text_fields(entry, scene_fields, 2, 40))
+            return "场景记录须引用分镜，并给出记忆点与光源";
+    }
+    cJSON_ArrayForEach(entry, shots)
+        if (!item_by(scenes, "scene", field(entry, "scene"))) return "分镜场景缺少美术资料";
+    const char *role_fields[] = {"costume", "prop", "face"};
+    cJSON_ArrayForEach(entry, anchors) {
+        const char *id = field(entry, "id");
+        const cJSON *character = item_by(characters, "id", id);
+        int pending = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(entry, "pending"));
+        if (!character || item_by(anchors, "id", id) != entry ||
+            (!pending && (!field(character, "visual") || !text_fields(entry, role_fields, 3, 35))))
+            return "每个角色需要三件套，素材不足时标为待定";
+    }
+    return NULL;
+}
+
+static const char *sound_direction_problem(const cJSON *output, const cJSON *board) {
+    const cJSON *sound = cJSON_GetObjectItemCaseSensitive(output, "sound");
+    const cJSON *cues = cJSON_GetObjectItemCaseSensitive(output, "shots");
+    const cJSON *shots = cJSON_GetObjectItemCaseSensitive(board, "shots");
+    const char *sound_fields[] = {"progression", "environment", "delivery", "hooks", "silence"};
+    if (!string_array(cJSON_GetObjectItemCaseSensitive(sound, "motifs"), 1, 2, 30) ||
+        !text_fields(sound, sound_fields, 5, 65) || !cJSON_IsArray(cues) ||
+        cJSON_GetArraySize(cues) != cJSON_GetArraySize(shots))
+        return "需要一至两个记忆点、音量递进、环境、发声、转场和静默说明，并逐镜标声音";
+    const cJSON *cue, *shot = shots->child;
+    cJSON_ArrayForEach(cue, cues) {
+        const char *id = field(cue, "id");
+        const char *ambience = field(cue, "ambience"), *effect = field(cue, "sound_effect");
+        const char *bridge = field(cue, "sound_bridge"), *delivery_mode = field(cue, "delivery_mode");
+        const cJSON *gain = cJSON_GetObjectItemCaseSensitive(cue, "sound_gain");
+        const cJSON *silence = cJSON_GetObjectItemCaseSensitive(cue, "silence");
+        int dialogue = !strcmp(field(shot, "kind"), "dialogue");
+        int ambient_sound = ambience && strcmp(ambience, "none"), cue_sound = effect && strcmp(effect, "none");
+        if (!id || strcmp(id, field(shot, "id")) ||
+            (cJSON_GetObjectItemCaseSensitive(cue, "ambience") && !choice(ambience, "room|wind|rain|fire|none")) ||
+            (cJSON_GetObjectItemCaseSensitive(cue, "sound_effect") && !choice(effect, "bell|steps|thunder|fire_crackle|none")) ||
+            (cJSON_GetObjectItemCaseSensitive(cue, "sound_bridge") &&
+             (!choice(bridge, "prelap|carry") || (!ambient_sound && !cue_sound))) ||
+            (gain && (!cue_sound || !cJSON_IsNumber(gain) || !(gain->valuedouble >= .25 && gain->valuedouble <= 2))) ||
+            (silence && (!cJSON_IsBool(silence) ||
+             (cJSON_IsTrue(silence) && (dialogue || ambient_sound || cue_sound || bridge)))) ||
+            (dialogue && (!short_text(field(cue, "delivery"), 60) || !choice(delivery_mode, "soft|low|urgent"))) ||
+            (!dialogue && (cJSON_GetObjectItemCaseSensitive(cue, "delivery") ||
+                           cJSON_GetObjectItemCaseSensitive(cue, "delivery_mode"))))
+            return "声音记录须与镜号顺序一致，使用受支持的声音、递进和对白发声字段";
+        shot = shot->next;
+    }
+    return NULL;
+}
+
+enum { DOCTOR, STORYBOARD, ART, SOUND, CONTROLLER, PRODUCTION_STAGES };
+static const struct {
+    const char *id, *name, *prompt;
+    int output_cap;
+    const char *(*validate)(const cJSON *output, const cJSON *input);
+} production_stages[PRODUCTION_STAGES] = {
+    {"X-03", "剧本医生陈默", manju_doctor_prompt, 5000, narrative_problem},
+    {"X-01", "分镜导演老周", manju_board_prompt, 16384, board_direction_problem},
+    {"X-02", "美术总监墨青", manju_art_prompt, 6500, art_direction_problem},
+    {"X-04", "声音设计师阿聆", manju_sound_prompt, 9000, sound_direction_problem},
+    {"X-05", "总控铜铃", manju_controller_prompt, 0, NULL}
+};
+
+typedef struct production_run {
+    llm *client;
+    void (*progress)(const char *stage, int requests, void *context);
+    int (*abort_check)(void *);
+    void *context;
+    int *requests;
+    char *error;
+} production_run;
+
+static void production_error(production_run *run, int stage, const char *reason, const cJSON *missing) {
+    strbuf message;
+    strbuf_init(&message);
+    strbuf_appendf(&message, "%s（%s）暂停制作。%s",
+                   production_stages[stage].name, production_stages[stage].id, reason);
+    const cJSON *item;
+    cJSON_ArrayForEach(item, missing)
+        strbuf_appendf(&message, "\n- %s", cJSON_GetStringValue(item));
+    free(run->error);
+    run->error = strbuf_detach(&message);
+}
+
+static cJSON *production_request(production_run *run, int stage, const strbuf *user, const cJSON *input) {
+    const char *prompt = production_stages[stage].prompt;
+    const char *problem = "模型没有返回有效的 JSON 对象";
+    char diagnostic[420];
+    if (!user->buf) return NULL;
+    int budget = budget_for(run->client, user->len + strlen(prompt));
+    if (!budget) {
+        production_error(run, stage, "交接材料无法完整放入所选模型的上下文。", NULL);
+        return NULL;
+    }
+    if (budget > production_stages[stage].output_cap) budget = production_stages[stage].output_cap;
+    strbuf system;
+    strbuf_init(&system);
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (run->abort_check && run->abort_check(run->context)) {
+            problem = "任务已取消。";
+            break;
+        }
+        strbuf_free(&system);
+        strbuf_append(&system, prompt);
+        if (attempt) {
+            strbuf_appendf(&system, "\n上次校验失败：%s。仅更正该问题，保持数据完整。", problem);
+            if (stage == STORYBOARD)
+                strbuf_append(&system, "压缩重复的画面描述，省略无新增信息的可选字段，保留关键因果镜头并闭合 JSON。");
+        }
+        if (!system.buf) break;
+        llm_message messages[] = {{.role = "system", .content = system.buf},
+                                  {.role = "user", .content = user->buf}};
+        llm_request request = {.messages = messages, .num_messages = 2, .temperature = 0.3,
+                               .max_tokens = budget, .reasoning_effort = "none", .timeout_ms = 180000};
+        llm_response response = {0};
+        ++*run->requests;
+        if (run->progress) run->progress(production_stages[stage].id, *run->requests, run->context);
+        int status = llm_chat(run->client, &request, &response);
+        cJSON *output = NULL;
+        if (!status && !response.truncated && response.content && !response.tool_call_count)
+            output = parse_object(response.content, strlen(response.content));
+        int retryable = !status || response.truncated;
+        problem = response.truncated ? "响应达到输出上限" : "模型没有返回有效的 JSON 对象";
+        free(response.content);
+        free(response.error);
+        free(response.tool_actions_json);
+        const char *state = field(output, "status");
+        const cJSON *missing = cJSON_GetObjectItemCaseSensitive(output, "missing");
+        if (state && !strcmp(state, "needs_input") && string_array(missing, 1, 12, 140)) {
+            production_error(run, stage, "需要补充以下信息。", missing);
+            cJSON_Delete(output);
+            strbuf_free(&system);
+            return NULL;
+        }
+        if (output) {
+            if (state && !strcmp(state, "ready") && short_text(field(output, "summary"), 300)) {
+                problem = NULL;
+                if (stage == STORYBOARD) {
+                    problem = normalize_board_direction(output, diagnostic, sizeof diagnostic);
+                    if (!problem) problem = apply_locked_cast(output, input);
+                } else if (stage == ART) problem = mark_undetermined_art(output, input);
+                else if (stage == SOUND) normalize_sound_direction(output);
+                if (!problem) problem = production_stages[stage].validate(output, input);
+            } else {
+                problem = "需要 ready 状态及不超过 300 字的执行摘要";
+            }
+            if (!problem) {
+                strbuf_free(&system);
+                return output;
+            }
+            cJSON_Delete(output);
+        }
+        if (!retryable) {
+            problem = "分镜模型请求失败，请检查模型路由和服务状态。";
+            break;
+        }
+        log_info("manju %s: response rejected (%s), request=%d", production_stages[stage].id, problem, *run->requests);
+    }
+    strbuf_free(&system);
+    production_error(run, stage, problem, NULL);
+    return NULL;
+}
+
+static int append_json(strbuf *user, const char *label, const cJSON *data) {
+    char *serialized = cJSON_PrintUnformatted(data);
+    if (!serialized) return 0;
+    size_t before = user->len;
+    strbuf_appendf(user, "\n%s（JSON 数据）：%s\n", label, serialized);
+    free(serialized);
+    return user->len > before;
+}
+
+static cJSON *art_input(const cJSON *board, const cJSON *narrative, const cJSON *prior, const cJSON *roster) {
+    cJSON *input = cJSON_CreateObject();
+    cJSON *characters = cJSON_AddArrayToObject(input, "characters");
+    cJSON *scenes = cJSON_AddArrayToObject(input, "shots");
+    int ok = characters && scenes;
+    const cJSON *character;
+    cJSON_ArrayForEach(character, cJSON_GetObjectItemCaseSensitive(narrative, "characters")) {
+        if (!ok) break;
+        cJSON *item = cJSON_CreateObject();
+        if (!item || !cJSON_AddItemToArray(characters, item)) {
+            cJSON_Delete(item);
+            ok = 0;
+            break;
+        }
+        const char *id = field(character, "id");
+        const cJSON *configured = item_by(cJSON_GetObjectItemCaseSensitive(roster, "characters"), "id", id);
+        const cJSON *previous = item_by(cJSON_GetObjectItemCaseSensitive(prior, "characters"), "id", id);
+        const cJSON *source = field(configured, "visual") ? configured : field(previous, "visual") ? previous : character;
+        ok = copy_field(item, character, "id") && copy_field(item, character, "name") &&
+             copy_field(item, source, "visual");
+    }
+    const cJSON *shot;
+    cJSON_ArrayForEach(shot, cJSON_GetObjectItemCaseSensitive(board, "shots")) {
+        if (!ok) break;
+        const char *name = field(shot, "scene");
+        if (item_by(scenes, "scene", name)) continue;
+        cJSON *scene = cJSON_CreateObject();
+        if (!scene || !cJSON_AddItemToArray(scenes, scene)) {
+            cJSON_Delete(scene);
+            ok = 0;
+            break;
+        }
+        ok = copy_field(scene, shot, "scene") && copy_field(scene, shot, "background");
+    }
+    if (ok) return input;
+    cJSON_Delete(input);
+    return NULL;
+}
+
+static int append_sound_input(strbuf *user, const cJSON *board, const cJSON *art) {
+    cJSON *shots = cJSON_CreateArray();
+    if (!shots) return 0;
+    const char *fields[] = {"id", "kind", "beat", "scene", "action", "speaker", "text", "duration_seconds", "transition"};
+    int ok = 1;
+    const cJSON *shot;
+    cJSON_ArrayForEach(shot, cJSON_GetObjectItemCaseSensitive(board, "shots")) {
+        cJSON *item = cJSON_CreateObject();
+        if (!item || !cJSON_AddItemToArray(shots, item)) {
+            cJSON_Delete(item);
+            ok = 0;
+            break;
+        }
+        for (size_t i = 0; ok && i < sizeof fields / sizeof *fields; ++i)
+            ok = copy_field(item, shot, fields[i]);
+        if (!ok) break;
+    }
+    if (ok) strbuf_appendf(user, "墨青已定调：%s\n", field(art, "summary"));
+    ok = ok && append_json(user, "角色表", cJSON_GetObjectItemCaseSensitive(board, "characters")) &&
+              append_json(user, "锁定分镜", shots);
+    cJSON_Delete(shots);
+    return ok;
+}
+
+static void join_values(strbuf *result, const cJSON *array) {
+    const cJSON *item;
+    cJSON_ArrayForEach(item, array) {
+        if (item != array->child) strbuf_append(result, "、");
+        strbuf_append(result, cJSON_GetStringValue(item));
+    }
+}
+
+static int apply_art_direction(cJSON *board, const cJSON *art, strbuf *color_lighting) {
+    strbuf direction;
+    strbuf_init(&direction);
+    join_values(color_lighting, cJSON_GetObjectItemCaseSensitive(art, "palette"));
+    strbuf_appendf(color_lighting, "。唯一暖色锚点：%s。光源：%s",
+                   field(art, "warm_accent"), field(art, "lighting"));
+    strbuf_appendf(&direction, "%s。材质与笔触：%s。竖幅构图：%s。禁止色：%s",
+                   color_lighting->buf ? color_lighting->buf : "", field(art, "materials"),
+                   field(art, "composition"), field(art, "prohibited_colors"));
+    int ok = color_lighting->buf && direction.buf && cJSON_AddStringToObject(board, "art_direction", direction.buf);
+    strbuf_free(&direction);
+    if (!ok) return 0;
+    const cJSON *scenes = cJSON_GetObjectItemCaseSensitive(art, "scenes");
+    cJSON *shot;
+    cJSON_ArrayForEach(shot, cJSON_GetObjectItemCaseSensitive(board, "shots")) {
+        const cJSON *scene = item_by(scenes, "scene", field(shot, "scene"));
+        const char *original = field(shot, "image_prompt");
+        strbuf image;
+        strbuf_init(&image);
+        strbuf_appendf(&image, "%s。场景记忆点：%s。画面光源：%s。",
+                       original, field(scene, "anchor"), field(scene, "light"));
+        cJSON_DeleteItemFromObjectCaseSensitive(shot, "image_prompt");
+        ok = image.buf && image.len <= 1200 && cJSON_AddStringToObject(shot, "image_prompt", image.buf);
+        strbuf_free(&image);
+        if (!ok) return 0;
+    }
+    const cJSON *anchors = cJSON_GetObjectItemCaseSensitive(art, "characters");
+    cJSON *character;
+    cJSON_ArrayForEach(character, cJSON_GetObjectItemCaseSensitive(board, "characters")) {
+        const cJSON *anchor = item_by(anchors, "id", field(character, "id"));
+        if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(anchor, "pending"))) continue;
+        cJSON *identity = cJSON_AddObjectToObject(character, "visual_anchors");
+        if (!identity || !copy_field(identity, anchor, "costume") || !copy_field(identity, anchor, "face") ||
+            !copy_field(identity, anchor, "prop")) return 0;
+    }
+    return 1;
+}
+
+static int apply_sound_direction(cJSON *board, const cJSON *output) {
+    const char *keys[] = {"ambience", "sound_effect", "delivery", "sound_bridge", "sound_gain", "silence", "delivery_mode"};
+    cJSON *shot = cJSON_GetObjectItemCaseSensitive(board, "shots")->child;
+    const cJSON *cue;
+    cJSON_ArrayForEach(cue, cJSON_GetObjectItemCaseSensitive(output, "shots")) {
+        for (size_t i = 0; i < sizeof keys / sizeof *keys; ++i) {
+            cJSON_DeleteItemFromObjectCaseSensitive(shot, keys[i]);
+            if (!copy_field(shot, cue, keys[i])) return 0;
+        }
+        shot = shot->next;
+    }
+    return 1;
+}
+
+static int finalize_direction(cJSON *board, cJSON *const output[CONTROLLER]) {
+    const cJSON *narrative = cJSON_GetObjectItemCaseSensitive(output[DOCTOR], "narrative");
+    const cJSON *storyboard = cJSON_GetObjectItemCaseSensitive(board, "storyboard");
+    const cJSON *art = cJSON_GetObjectItemCaseSensitive(output[ART], "art");
+    const cJSON *sound = cJSON_GetObjectItemCaseSensitive(output[SOUND], "sound");
+    cJSON_DeleteItemFromObjectCaseSensitive(board, "art_direction");
+    cJSON_DeleteItemFromObjectCaseSensitive(board, "production");
+    cJSON *production = cJSON_AddObjectToObject(board, "production");
+    cJSON *stages = cJSON_AddArrayToObject(production, "stages");
+    cJSON *brief = cJSON_AddObjectToObject(production, "director_brief");
+    if (!stages || !brief || !copy_field(board, narrative, "logline") ||
+        !copy_field(production, output[DOCTOR], "narrative") ||
+        !copy_field(production, board, "storyboard") ||
+        !copy_field(production, output[ART], "art") || !copy_field(production, output[SOUND], "sound")) return 0;
+    for (int i = 0; i < CONTROLLER; ++i) {
+        cJSON *entry = cJSON_CreateObject();
+        if (!entry || !cJSON_AddItemToArray(stages, entry)) {
+            cJSON_Delete(entry);
+            return 0;
+        }
+        if (!cJSON_AddStringToObject(entry, "id", production_stages[i].id) ||
+            !cJSON_AddStringToObject(entry, "name", production_stages[i].name) ||
+            !copy_field(entry, output[i], "summary")) return 0;
+    }
+    cJSON *controller = cJSON_AddObjectToObject(production, "controller");
+    if (!controller || !cJSON_AddStringToObject(controller, "id", production_stages[CONTROLLER].id) ||
+        !cJSON_AddStringToObject(controller, "name", production_stages[CONTROLLER].name) ||
+        !cJSON_AddStringToObject(controller, "summary", "按工序权限合并九项导演提示，锁定原故事与镜头。")) return 0;
+    strbuf color_lighting, sound_design, art_description, prohibitions, prompt;
+    strbuf_init(&color_lighting);
+    strbuf_init(&sound_design);
+    strbuf_init(&art_description);
+    strbuf_init(&prohibitions);
+    strbuf_init(&prompt);
+    int ok = apply_art_direction(board, art, &color_lighting) && apply_sound_direction(board, output[SOUND]);
+    join_values(&sound_design, cJSON_GetObjectItemCaseSensitive(sound, "motifs"));
+    strbuf_appendf(&sound_design, "。递进：%s。转场：%s",
+                   field(sound, "progression"), field(sound, "hooks"));
+    strbuf_appendf(&art_description, "%s。%s", field(art, "materials"), field(art, "composition"));
+    strbuf_appendf(&prohibitions, "%s。禁止色：%s", field(storyboard, "prohibitions"), field(art, "prohibited_colors"));
+    const struct { const char *key, *label, *value; } sections[] = {
+        {"tone", "整体调性", field(storyboard, "tone")},
+        {"art_direction", "美术方向", art_description.buf},
+        {"camera_language", "镜头语言", field(storyboard, "camera_language")},
+        {"color_lighting", "色彩光影", color_lighting.buf},
+        {"character_anchors", "角色一致性锚点", field(art, "character_consistency")},
+        {"pacing_transitions", "节奏转场", field(storyboard, "pacing_transitions")},
+        {"sound_design", "声音设计", sound_design.buf},
+        {"emotion_curve", "情绪曲线", field(storyboard, "emotion_curve")},
+        {"prohibitions", "禁止项", prohibitions.buf}
+    };
+    for (size_t i = 0; ok && i < sizeof sections / sizeof *sections; ++i) {
+        ok = sections[i].value && cJSON_AddStringToObject(brief, sections[i].key, sections[i].value);
+        if (ok) {
+            size_t before = prompt.len;
+            strbuf_appendf(&prompt, "%s：%s\n", sections[i].label, sections[i].value);
+            ok = prompt.len > before;
+        }
+    }
+    ok = ok && prompt.buf && utf8_length(prompt.buf) <= 1200 &&
+         cJSON_AddStringToObject(production, "director_prompt", prompt.buf);
+    strbuf_free(&prompt);
+    strbuf_free(&art_description);
+    strbuf_free(&prohibitions);
+    strbuf_free(&sound_design);
+    strbuf_free(&color_lighting);
+    cJSON_DeleteItemFromObjectCaseSensitive(board, "status");
+    cJSON_DeleteItemFromObjectCaseSensitive(board, "summary");
+    cJSON_DeleteItemFromObjectCaseSensitive(board, "storyboard");
+    return ok;
+}
+
+static cJSON *produce_dialogue(production_run *run, const strbuf *chapter, size_t context_bytes,
+                               const cJSON *prior, const cJSON *roster, const cJSON *references) {
+    strbuf user;
+    strbuf_init(&user);
+    cJSON *outputs[CONTROLLER] = {0};
+    cJSON *result = NULL, *visual_input = NULL;
+    outputs[DOCTOR] = production_request(run, DOCTOR, chapter, NULL);
+    if (!outputs[DOCTOR]) goto done;
+    const cJSON *narrative = cJSON_GetObjectItemCaseSensitive(outputs[DOCTOR], "narrative");
+    strbuf_append_n(&user, chapter->buf, context_bytes);
+    if (!append_json(&user, "陈默锁定的分幕、人物动机和因果链", narrative)) goto done;
+    outputs[STORYBOARD] = production_request(run, STORYBOARD, &user, narrative);
+    if (!outputs[STORYBOARD]) goto done;
+    cJSON *board = outputs[STORYBOARD];
+    const char *continuity_problem = apply_character_continuity(board, prior, roster);
+    if (continuity_problem || (references && !manju_references_resolve(references, board))) {
+        production_error(run, STORYBOARD, continuity_problem ? continuity_problem :
+                         "人物参考图的角色名称不得对应多名角色。", NULL);
+        goto done;
+    }
+    strbuf_free(&user);
+    visual_input = art_input(board, narrative, prior, roster);
+    if (!visual_input ||
+        !append_json(&user, "本集角色和已有可见特征", cJSON_GetObjectItemCaseSensitive(visual_input, "characters")) ||
+        !append_json(&user, "锁定的场景及背景", cJSON_GetObjectItemCaseSensitive(visual_input, "shots"))) goto done;
+    outputs[ART] = production_request(run, ART, &user, visual_input);
+    if (!outputs[ART]) goto done;
+    strbuf_free(&user);
+    if (!append_sound_input(&user, board, outputs[ART])) goto done;
+    outputs[SOUND] = production_request(run, SOUND, &user, board);
+    if (!outputs[SOUND]) goto done;
+    if (run->progress) run->progress(production_stages[CONTROLLER].id, *run->requests, run->context);
+    if (!finalize_direction(board, outputs)) {
+        production_error(run, CONTROLLER, "合并导演提示失败，请检查字段有效性和 1200 字预算。", NULL);
+        goto done;
+    }
+    result = board;
+    outputs[STORYBOARD] = NULL;
+done:
+    for (int i = 0; i < CONTROLLER; ++i) cJSON_Delete(outputs[i]);
+    cJSON_Delete(visual_input);
+    strbuf_free(&user);
+    return result;
+}
+
 int manju_story_episode(llm *client, const char *workspace, const char *chapter_path, int episode,
                         int clip_seconds, manju_story_video_mode video_mode,
                         const char *reference_set, int can_generate_first_frame, int prior_episode,
                         int dialogue_mode, const char *cast_json,
+                        void (*stage_progress)(const char *stage, int requests, void *context),
                         int (*abort_check)(void *), void *context, int *requests, char **result) {
     char path[STORY_PATH_CAP], dir[STORY_PATH_CAP], key[17], relative[64];
     char *root = NULL, *chapter_file = NULL, *chapter = NULL, *saved = NULL, *serialized = NULL;
     cJSON *board = NULL, *references = NULL, *prior = NULL, *roster = NULL;
     char *continuity = NULL;
-    const char *system_prompt = dialogue_mode ? dialogue_prompt : story_prompt;
+    production_run direction = {client, stage_progress, abort_check, context, requests, NULL};
     strbuf user, signature;
     strbuf_init(&user);
     strbuf_init(&signature);
@@ -503,7 +1169,12 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
     }
     strbuf_appendf(&signature, "%d\n%s\n%s\n%s\n%s\n",
                    episode, client->provider ? client->provider : "", client->model,
-                   client->base_url ? client->base_url : "", system_prompt);
+                   client->base_url ? client->base_url : "", story_prompt);
+    if (dialogue_mode) {
+        strbuf_append(&signature, "manju-direction-v1\n");
+        for (int i = 0; i < PRODUCTION_STAGES; ++i)
+            strbuf_appendf(&signature, "%s\n%s\n", production_stages[i].id, production_stages[i].prompt);
+    }
     size_t identity_prefix = signature.len;
     strbuf_append_n(&signature, chapter, n);
     if (!identity_prefix || signature.len != identity_prefix + n) goto done;
@@ -538,15 +1209,15 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
     }
     if (references && append_reference_cast(&user, references) != 0) goto done;
     if (clip_seconds) {
-        strbuf_appendf(&user,
-            "本集为短视频漫剧，每个镜头用同一个连续动作填满 %d 秒。"
-            "每镜补充 video_prompt，描述起始姿态、动作及镜头运动。"
-            "使上一镜结尾自然衔接下一镜开头；对白太长时分成连续镜头。\n",
-            clip_seconds);
-        if (dialogue_mode)
-            strbuf_appendf(&user, "常规章节约 %d 镜。每句最多约 %d 个汉字，情绪停顿多时更短。"
-                                 "在对话镜头描述说话者和听者的反应，用独立动作镜承接上一句，镜头间不要重复解释。\n",
-                           (180 + clip_seconds - 1) / clip_seconds, clip_seconds * 4);
+        if (dialogue_mode) {
+            strbuf_appendf(&user, "本集为短视频漫剧，每镜选 3 或 4 秒，默认 %d 秒。"
+                                 "用单一动作填满所选时长，说明起始姿态与衔接。"
+                                 "每句台词不超过所选秒数的 4 倍汉字，情绪停顿多时更短。\n", clip_seconds);
+        } else {
+            strbuf_appendf(&user, "本集为短视频漫剧，每个镜头用同一个连续动作填满 %d 秒。"
+                                 "每镜补充 video_prompt，描述起始姿态、动作及镜头运动。"
+                                 "使上一镜结尾自然衔接下一镜开头；对白太长时分成连续镜头。\n", clip_seconds);
+        }
         if (video_mode != MANJU_STORY_VIDEO_SINGLE) {
             strbuf_append(&user, "可用 video_mode 指明生成方式：无角色空镜或大范围特效用 text。");
             if (!references || can_generate_first_frame)
@@ -556,10 +1227,19 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
             strbuf_append(&user, "不要填写本地路径。\n");
         }
     }
+    size_t context_bytes = user.len;
     strbuf_append(&user, "以下为完整的小说章正文：\n");
     size_t prefix = user.len;
     strbuf_append_n(&user, chapter, n);
     if (!prefix || user.len != prefix + n) goto done;
+    if (dialogue_mode) {
+        board = produce_dialogue(&direction, &user, context_bytes, prior, roster, references);
+        if (!board) {
+            error = direction.error ? direction.error : "无法准备导演工序的交接资料";
+            goto done;
+        }
+        goto board_ready;
+    }
     int budget = budget_for(client, user.len);
     if (!budget) {
         error = "章节和角色衔接信息无法完整放入所选模型上下文";
@@ -568,15 +1248,13 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
     const char retry[] =
         " 上一次结果未通过校验：%s。严格遵循字段格式和角色 ID，"
         "压缩画面提示，控制镜头数在 30–36（短章节可更少），完整闭合 JSON，不要输出代码块。";
-    const char dialogue_retry[] =
-        " 上一次结果未通过校验：%s。保留角色、对白和关键动作，缩短重复的描述，完整闭合 JSON，不要输出代码块。";
-    char retry_system[sizeof dialogue_prompt + sizeof story_prompt + sizeof retry + 300];
+    char retry_system[sizeof story_prompt + sizeof retry + 300];
     for (int attempt = 0; attempt < 2; attempt++) {
         if (abort_check && abort_check(context)) {
             error = "分镜任务已取消";
             goto done;
         }
-        llm_message messages[] = {{.role = "system", .content = attempt ? retry_system : system_prompt},
+        llm_message messages[] = {{.role = "system", .content = attempt ? retry_system : story_prompt},
                                   {.role = "user", .content = user.buf}};
         llm_request request = {.messages = messages, .num_messages = 2, .temperature = 0.3,
                                .max_tokens = budget, .reasoning_effort = "none", .timeout_ms = 180000};
@@ -585,11 +1263,7 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
         int status = llm_chat(client, &request, &response);
         const char *problem = response.truncated ? "响应达到输出上限" : "没有可用的分镜内容";
         if (status == 0 && !response.truncated && response.content && !response.tool_call_count)
-            board = parse_story(response.content, strlen(response.content), dialogue_mode, &problem);
-        if (board && dialogue_mode && (problem = apply_character_continuity(board, prior, roster))) {
-            cJSON_Delete(board);
-            board = NULL;
-        }
+            board = parse_story(response.content, strlen(response.content), 0, &problem);
         if (board && references && !manju_references_resolve(references, board)) {
             cJSON_Delete(board);
             board = NULL;
@@ -605,15 +1279,15 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
             goto done;
         }
         log_info("manju storyboard: response rejected (%s), request=%d", problem, *requests);
-        snprintf(retry_system, sizeof retry_system, "%s", system_prompt);
+        snprintf(retry_system, sizeof retry_system, "%s", story_prompt);
         size_t prefix_length = strlen(retry_system);
-        snprintf(retry_system + prefix_length, sizeof retry_system - prefix_length,
-                 dialogue_mode ? dialogue_retry : retry, problem);
+        snprintf(retry_system + prefix_length, sizeof retry_system - prefix_length, retry, problem);
     }
     if (!board) {
         error = "模型未返回完整有效的分镜 JSON，已停止生产";
         goto done;
     }
+board_ready:
     if (abort_check && abort_check(context)) {
         error = "分镜任务已取消";
         goto done;
@@ -647,6 +1321,16 @@ done:
         strbuf_init(&report);
         strbuf_appendf(&report, "分镜%s，%d 个正片镜头。分镜文件：`%s`。",
                        *requests ? "完成" : "已复用", count, path);
+        const cJSON *stage;
+        cJSON_ArrayForEach(stage, cJSON_GetObjectItemCaseSensitive(
+                              cJSON_GetObjectItemCaseSensitive(board, "production"), "stages")) {
+            const char *name = field(stage, "name"), *summary = field(stage, "summary");
+            if (name && summary) strbuf_appendf(&report, "\n- %s · %s", name, summary);
+        }
+        const cJSON *controller = cJSON_GetObjectItemCaseSensitive(
+            cJSON_GetObjectItemCaseSensitive(board, "production"), "controller");
+        const char *name = field(controller, "name"), *summary = field(controller, "summary");
+        if (name && summary) strbuf_appendf(&report, "\n- %s · %s", name, summary);
         *result = strbuf_detach(&report);
     } else {
         *result = xstrdup(error);
@@ -655,6 +1339,7 @@ done:
     cJSON_Delete(references);
     cJSON_Delete(prior);
     cJSON_Delete(roster);
+    free(direction.error);
     free(continuity);
     free(serialized);
     free(saved);

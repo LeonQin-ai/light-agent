@@ -15,4 +15,5 @@ int manju_story_episode(llm *client, const char *workspace, const char *chapter_
                         int clip_seconds, manju_story_video_mode video_mode,
                         const char *reference_set, int can_generate_first_frame, int prior_episode,
                         int dialogue_mode, const char *cast_json,
+                        void (*stage_progress)(const char *stage, int requests, void *context),
                         int (*abort_check)(void *), void *context, int *requests, char **result);
