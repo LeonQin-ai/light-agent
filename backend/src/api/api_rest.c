@@ -1761,6 +1761,14 @@ static int manju_copy_field(cJSON *object, const char *key, const cJSON *value) 
     return 0;
 }
 
+static int manju_save_roster(runtime_ctx *ctx, const char *workspace, const char *serialized) {
+    char path[2048];
+    size_t bytes = strlen(serialized);
+    if (bytes > 64 * 1024) return 413;
+    if (!manju_roster_path(ctx, workspace, path) || manju_publish_file(path, serialized, bytes)) return 500;
+    return 200;
+}
+
 static int h_manju_characters(const http_request *req, http_response *resp, void *ud) {
     runtime_ctx *ctx = ud;
     if (!authz_ok(ctx, req, resp)) return 0;
@@ -1793,21 +1801,121 @@ static int h_manju_characters(const http_request *req, http_response *resp, void
     }
     if (ok) ok = cJSON_AddStringToObject(roster, "workspace", workspace) != NULL;
     char *serialized = ok ? cJSON_PrintUnformatted(roster) : NULL;
-    if (write && serialized) {
-        char path[2048];
-        size_t bytes = strlen(serialized);
-        if (bytes > 64 * 1024) resp->status = 413;
-        else ok = manju_roster_path(ctx, workspace, path) && manju_publish_file(path, serialized, bytes) == 0;
-    }
-    if (ok && serialized && resp->status != 413) http_resp_json(resp, serialized);
-    else {
-        if (resp->status != 413) resp->status = 500;
+    resp->status = !serialized ? 500 : write ? manju_save_roster(ctx, workspace, serialized) : 200;
+    if (resp->status == 200) http_resp_json(resp, serialized);
+    else
         http_resp_json(resp, "{\"error\":\"无法读取或保存角色档案\"}");
-    }
     free(serialized);
     free(workspace);
     cJSON_Delete(input);
     cJSON_Delete(roster);
+    return 0;
+}
+
+static int manju_merge_roster(cJSON *roster, const cJSON *input, int overwrite, cJSON *result) {
+    cJSON *characters = cJSON_GetObjectItemCaseSensitive(roster, "characters");
+    const cJSON *incoming = cJSON_GetObjectItemCaseSensitive(input, "characters");
+    const cJSON *entries = cJSON_GetObjectItemCaseSensitive(input, "voice_cast");
+    cJSON *voices = cJSON_GetObjectItemCaseSensitive(roster, "voice_cast");
+    cJSON *conflicts = cJSON_AddArrayToObject(result, "conflicts");
+    if (!conflicts) return 500;
+
+    int updated = 0;
+    const cJSON *entry;
+    cJSON_ArrayForEach(entry, incoming) {
+        const char *id = manju_field(entry, "id");
+        if (!manju_character(characters, id)) continue;
+        updated++;
+        if (!overwrite) {
+            cJSON *conflict = cJSON_CreateString(id);
+            if (!conflict || !cJSON_AddItemToArray(conflicts, conflict)) {
+                cJSON_Delete(conflict);
+                return 500;
+            }
+        }
+    }
+    if (updated && !overwrite) return 409;
+    int imported = cJSON_GetArraySize(incoming) - updated;
+    if (cJSON_GetArraySize(characters) + imported > 24) return 422;
+    cJSON_DeleteItemFromObjectCaseSensitive(result, "conflicts");
+
+    if (!voices) voices = cJSON_AddObjectToObject(roster, "voice_cast");
+    if (!voices) return 500;
+    cJSON_ArrayForEach(entry, incoming) {
+        const char *id = manju_field(entry, "id");
+        const cJSON *voice = cJSON_GetObjectItemCaseSensitive(entries, id);
+        cJSON *previous = (cJSON *)manju_character(characters, id);
+        cJSON *copy = cJSON_Duplicate(entry, 1);
+        if (!copy || !(previous ? cJSON_ReplaceItemViaPointer(characters, previous, copy)
+                                : cJSON_AddItemToArray(characters, copy))) {
+            cJSON_Delete(copy);
+            return 500;
+        }
+        if (voice && !manju_copy_field(voices, id, voice)) return 500;
+    }
+    if (!cJSON_AddNumberToObject(result, "imported", imported) ||
+        !cJSON_AddNumberToObject(result, "updated", updated)) return 500;
+    return 200;
+}
+
+/* Like the roster setter, this route uses serialized HTTP dispatch. Read,
+ * merge, and publish together so concurrent imports cannot lose additions. */
+static int h_manju_character_import(const http_request *req, http_response *resp, void *ud) {
+    runtime_ctx *ctx = ud;
+    if (!authz_ok(ctx, req, resp)) return 0;
+    char *data = body_str(req);
+    cJSON *input = data ? cJSON_ParseWithOpts(data, NULL, 1) : NULL;
+    free(data);
+    const cJSON *overwrite = cJSON_GetObjectItemCaseSensitive(input, "overwrite");
+    char *workspace = NULL, *serialized = NULL, *response = NULL;
+    cJSON *roster = NULL, *result = NULL;
+    int status = 500;
+    const char *error = "{\"error\":\"无法读取或保存角色档案\"}";
+
+    if (!manju_valid_cast(input, 1) || !cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(input, "characters")) ||
+        (overwrite && !cJSON_IsBool(overwrite))) {
+        status = 400;
+        error = "{\"error\":\"请导入有效且不重复的角色档案，并检查类型、设定和音色\"}";
+        goto done;
+    }
+    workspace = workspace_pick(ctx, input, NULL);
+    if (!workspace) {
+        status = 400;
+        error = "{\"error\":\"工作区未注册或不可用\"}";
+        goto done;
+    }
+    roster = manju_load_roster(ctx, workspace);
+    result = cJSON_CreateObject();
+    if (!roster || !result) goto done;
+    status = manju_merge_roster(roster, input, cJSON_IsTrue(overwrite), result);
+    if (status == 409) {
+        if (cJSON_AddStringToObject(result, "error", "角色 ID 已存在。若要更新，请启用覆盖同 ID 角色后重试。"))
+            response = cJSON_PrintUnformatted(result);
+        if (!response) status = 500;
+        goto done;
+    }
+    if (status == 422) error = "{\"error\":\"每个工作区最多保存 24 个角色。本次没有保存。\"}";
+    if (status != 200) goto done;
+
+    status = 500;
+    if (!cJSON_AddStringToObject(roster, "workspace", workspace) ||
+        !cJSON_AddStringToObject(result, "workspace", workspace) ||
+        !manju_copy_field(result, "characters", cJSON_GetObjectItemCaseSensitive(roster, "characters")) ||
+        !manju_copy_field(result, "voice_cast", cJSON_GetObjectItemCaseSensitive(roster, "voice_cast"))) goto done;
+    serialized = cJSON_PrintUnformatted(roster);
+    response = cJSON_PrintUnformatted(result);
+    if (serialized && response) status = manju_save_roster(ctx, workspace, serialized);
+    if (status == 413) error = "{\"error\":\"合并后的角色档案过大，请精简角色描述后重试。\"}";
+
+done:
+    resp->status = status;
+    http_resp_json(resp, (status == 200 || status == 409) && response ? response : error);
+    free(serialized);
+    free(response);
+    free(workspace);
+    cJSON_Delete(result);
+    cJSON_Delete(roster);
+    cJSON_Delete(input);
     return 0;
 }
 
@@ -7353,6 +7461,7 @@ int api_attach(runtime_ctx *ctx) {
     http_server_route(ctx->http, "POST", "/v1/manju/import", h_manju_import, ctx);
     http_server_route(ctx->http, "GET", "/v1/manju/characters", h_manju_characters, ctx);
     http_server_route(ctx->http, "POST", "/v1/manju/characters", h_manju_characters, ctx);
+    http_server_route(ctx->http, "POST", "/v1/manju/characters/import", h_manju_character_import, ctx);
     http_server_route(ctx->http, "GET", "/v1/desktop/startup-animation", h_desktop_animation, ctx);
     http_server_route(ctx->http, "PUT", "/v1/desktop/startup-animation", h_desktop_animation, ctx);
     http_server_route(ctx->http, "GET", "/v1/flows/list", h_flow_list, ctx);

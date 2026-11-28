@@ -14,6 +14,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   let importBody=null,imports=0,agentsGets=0,flowLists=0,rejectImport=false,batchEpisodes=[];
   const agents=[{name:'coder',role:'开发'}];
   const castByWorkspace=new Map();
+  const castImports=[];
   await page.route('http://ui.test/**',async route=>{
    const r=route.request(),u=new URL(r.url());let obj=[];
    if(u.pathname==='/')return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(__dirname,'../apps/web/index.html'),'utf8')});
@@ -35,6 +36,20 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
     }else{
      obj=castByWorkspace.get(u.searchParams.get('workspace') || 'D:/default') || {characters:[],voice_cast:{}};
     }
+   }
+   if(u.pathname==='/v1/manju/characters/import'&&r.method()==='POST'){
+    const body=r.postDataJSON();
+    castImports.push(body);
+    const workspace=body.workspace||'D:/default';
+    const current=castByWorkspace.get(workspace)||{characters:[],voice_cast:{}};
+    const characters=new Map(current.characters.map(character=>[character.id,character]));
+    const conflicts=body.characters.filter(character=>characters.has(character.id)).map(character=>character.id);
+    if(conflicts.length&&!body.overwrite)return route.fulfill({status:409,contentType:'application/json',
+      body:JSON.stringify({error:'角色 ID 已存在。',conflicts})});
+    for(const character of body.characters)characters.set(character.id,character);
+    const saved={characters:[...characters.values()],voice_cast:{...current.voice_cast,...body.voice_cast}};
+    castByWorkspace.set(workspace,saved);
+    obj={...saved,workspace,imported:body.characters.length-conflicts.length,updated:conflicts.length};
    }
    if(u.pathname==='/v1/agents'){
     if(r.method()==='POST'){const b=r.postDataJSON();agents.push({name:b.name,role:b.role});obj={ok:true,index:agents.length-1};}
@@ -346,7 +361,76 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
   assert.deepEqual(Object.keys(importBody.character_roster.voice_cast),['yan','mother']);
   assert.ok(!('audio_mode' in importBody));
 
+  const batchCast=cast.locator('#manju-cast-batch');
+  await batchCast.locator('summary').click();
+  const castFiles=batchCast.getByLabel('角色档案 JSON');
+  const batchSubmit=batchCast.getByRole('button',{name:'导入所选档案'});
+  const castImportStatus=batchCast.getByRole('status');
+  const [castExample]=await Promise.all([page.waitForEvent('download'),batchCast.getByRole('button',{name:'下载 JSON 示例'}).click()]);
+  assert.equal(castExample.suggestedFilename(),'character-roster.json');
+  const example=JSON.parse(fs.readFileSync(await castExample.path(),'utf8'));
+  assert.equal(example.characters.length,2);
+  assert.ok(example.voice_cast[example.characters[0].id].voice);
+
+  const makeProfile=(id,name,role='supporting')=>({id,name,role,visual:'亚麻披肩和圆框眼镜'});
+  const zhou={...makeProfile('zhou','小周'),appearance_id:'zhou_v2',outfit_id:'raincoat'};
+  const ke=makeProfile('ke','阿珂','protagonist');
+  const li=makeProfile('li','李叔','npc');
+  const selectedProfiles=[
+   jsonFile('cast.json',{characters:[zhou],voice_cast:{zhou:{voice:'zh-CN-XiaoyiNeural',pitch:'-3Hz'}}}),
+   jsonFile('team.json',[ke]),
+   jsonFile('li.json',li)
+  ];
+  await castFiles.setInputFiles(txtFile('broken.json','{broken'));
+  await batchSubmit.click();
+  await castImportStatus.filter({hasText:/broken\.json.*不是有效/}).waitFor();
+  await castFiles.setInputFiles([jsonFile('one.json',zhou),jsonFile('two.json',[zhou])]);
+  await batchSubmit.click();
+  await castImportStatus.filter({hasText:/重复角色 ID.*zhou/}).waitFor();
+  assert.equal(castImports.length,0,'bad files and duplicate IDs must be rejected before sending');
+
+  await castFiles.setInputFiles(selectedProfiles);
+  await cast.getByLabel('角色姓名').fill('手工草稿');
+  await batchSubmit.click();
+  await castImportStatus.filter({hasText:/请先保存正在编辑的角色/}).waitFor();
+  assert.equal(await cast.getByLabel('角色姓名').inputValue(),'手工草稿');
+  assert.equal(castImports.length,0);
+  await cast.getByRole('button',{name:'清空表单'}).click();
+  await batchSubmit.click();
+  await castImportStatus.filter({hasText:'已导入 3 个新角色。'}).waitFor();
+  assert.deepEqual(castImports[0],{workspace:'D:/film',characters:[zhou,ke,li],
+   voice_cast:{zhou:{voice:'zh-CN-XiaoyiNeural',pitch:'-3Hz'}},overwrite:false});
+  assert.equal(await cast.locator('#manju-cast-count').textContent(),'（5 人）');
+  assert.equal(await castFiles.evaluate(input=>input.files.length),0,'successful imports clear the selected files');
+
+  const newZhou={...zhou,name:'周老师'};
+  const yu=makeProfile('yu','阿雨');
+  await castFiles.setInputFiles(jsonFile('update.json',[newZhou,yu]));
+  await batchSubmit.click();
+  await castImportStatus.filter({hasText:/zhou.*已存在/}).waitFor();
+  assert.equal(await cast.getByRole('button',{name:'编辑角色 阿雨'}).count(),0,'conflict must not import the rest of the file');
+  assert.equal(await castFiles.evaluate(input=>input.files.length),1,'retain the selected file on conflict');
+  await batchCast.getByLabel('更新同 ID 角色').check();
+  await batchSubmit.click();
+  await castImportStatus.filter({hasText:'已导入 1 个新角色，已更新 1 个角色。'}).waitFor();
+  assert.equal(castImports[2].overwrite,true);
+  assert.equal(await batchCast.getByLabel('更新同 ID 角色').isChecked(),false);
+
+  await workspace.selectOption('');
+  await page.waitForFunction(()=>!document.getElementById('manju-cast-list').children.length);
+  await workspace.selectOption('D:/film');
+  await cast.getByRole('button',{name:'编辑角色 周老师'}).click();
+  assert.equal(await cast.getByLabel('角色音色').inputValue(),'zh-CN-XiaoyiNeural','a profile update may omit the existing voice');
+  assert.equal(await cast.getByLabel('音高调整').inputValue(),'-3');
+  await cast.getByRole('button',{name:'清空表单'}).click();
+  await novelFiles.setInputFiles(txtFile('cast-story.md','周老师和阿珂翻找铜铃。'));
+  await submit.click();
+  await page.waitForFunction(()=>document.getElementById('manju-stat').textContent.includes('已切 2 章'));
+  assert.equal(imports,14);
+  assert.deepEqual(importBody.character_roster.characters.slice(-4),[newZhou,ke,li,yu]);
+  assert.deepEqual(importBody.character_roster.voice_cast.zhou,{voice:'zh-CN-XiaoyiNeural',pitch:'-3Hz'});
+
   assert.deepEqual(errors,[]);
-  console.log('PASS: manju imports, reference photos, workspace cast, dialogue mode, and batch episode progress');
+  console.log('PASS: manju imports, reference photos, workspace cast and batch character import, dialogue mode, and batch episode progress');
  }finally{await browser.close();fs.rmSync(tmp,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

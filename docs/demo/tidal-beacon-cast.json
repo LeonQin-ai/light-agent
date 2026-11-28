@@ -1,0 +1,48 @@
+{
+  "characters": [
+    {
+      "id": "cen-che",
+      "name": "岑澈",
+      "role": "protagonist",
+      "visual": "二十六岁的成年东亚男性领航员，浓密黑色短卷发，深靛蓝色航海短外套，米白编织围巾，灰色靴子，左手掌握一枚小圆铜罗盘。清晰沉着的年轻脸部轮廓。",
+      "appearance_id": "cen-che-v1",
+      "outfit_id": "indigo-navigator",
+      "voice_id": "cen-che-voice"
+    },
+    {
+      "id": "ming-zheng",
+      "name": "明筝",
+      "role": "supporting",
+      "visual": "二十九岁的成年东亚女性工程师，黑褐短发齐耳、一个不对称蓝色发夹，陶红色背带工作服罩在浅灰衬衣外，头顶戴深灰圆形护目镜，腰侧挂一把小套筒扳手。神情专注敏捷。",
+      "appearance_id": "ming-zheng-v1",
+      "outfit_id": "terracotta-mechanic",
+      "voice_id": "ming-zheng-voice"
+    },
+    {
+      "id": "bai-yan",
+      "name": "白砚",
+      "role": "supporting",
+      "visual": "白发梳到耳后的成年东亚男性守灯人，短银白胡须，圆眼镜，苔绿色及膝雨衣，深棕皮靴，手提一只带蜂巢纹路的小黄铜灯笼。修长的五十岁脸廓。",
+      "appearance_id": "bai-yan-v1",
+      "outfit_id": "moss-lantern-keeper",
+      "voice_id": "bai-yan-voice"
+    }
+  ],
+  "voice_cast": {
+    "cen-che": {
+      "voice": "zh-CN-YunxiNeural",
+      "pitch": "+0Hz",
+      "rate": "-2%"
+    },
+    "ming-zheng": {
+      "voice": "zh-CN-XiaoyiNeural",
+      "pitch": "+2Hz",
+      "rate": "+4%"
+    },
+    "bai-yan": {
+      "voice": "zh-CN-YunyangNeural",
+      "pitch": "-5Hz",
+      "rate": "-8%"
+    }
+  }
+}

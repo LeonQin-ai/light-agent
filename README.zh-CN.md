@@ -28,6 +28,12 @@
 
 以下作品由 light-agent 漫剧流程生成，带有中文配音和字幕。
 
+#### 《潮汐灯站》· 三人同框
+
+浓雾封住航道，领航员岑澈、工程师明筝和守灯人白砚点亮灯塔，引渔船返航。四个动态镜头均由 HappyHorse R2V 生成，共用同一套三人参考图。三位角色使用各自的音色。[下载 MP4 · 16 秒](docs/demo/tidal-beacon-motion.mp4) · [分镜、角色档案和参考图](docs/demo/tidal-beacon-project.zip)
+
+https://github.com/user-attachments/assets/c0e9fb7d-0b85-4fae-804b-07d754cbb60a
+
 #### 《铜铃过山》· 少年屠龙 · 连贯修正版
 
 怕雷的阿铃第一次上山败退。看见龙的缺鳞后，他借山风和铜铃引动龙火。片尾回到石桥，母亲的声音回应了开场。
@@ -79,6 +85,12 @@ https://github.com/user-attachments/assets/8a635a60-4224-406e-9ab2-674dcd1a0ed4
 ![沿用首帧补跑第二镜，视频下载中断后继续原任务并完成合成](docs/demo/manju-continuity-preview.gif)
 
 [主角衔接补跑全程录像 · 5 分 57 秒](docs/demo/manju-continuity.mp4)
+
+**一次导入三个人物**
+
+实录展示多选两份 JSON、重新打开后核对档案和音色，以及按角色 ID 添加三张参考图。[下载演示 · 19 秒](docs/demo/manju-cast-import.mp4) · [三人档案示例 JSON](docs/demo/tidal-beacon-cast.json)
+
+https://github.com/user-attachments/assets/49945f05-7dfe-434c-8591-669aecdd2482
 
 ## 你可以用它做什么？
 
@@ -199,7 +211,7 @@ CLI 部署可以显式指定执行目录和状态存储位置：
 
 对白小说依次经过陈默梳理因果、老周拆分镜、墨青定美术、阿聆设计声音，再由总控铜铃合成九段式导演提示词。作品的 `shots.json` 保存导演稿与分镜，制作进度可查看当前工序。已编写的分镜可直接导入，片中字幕卡由剪辑本地生成。 [五个角色的可复制提示词及调用示例](backend/docs/manju-director-agents.md)
 
-在 **角色档案** 中可按工作区保存角色类型、外观说明、版本 ID、音色、语速和音高。续集分镜可复用同一角色的造型与音色，画面制作继续使用导入的人物参考图。
+在 **角色档案 → 批量导入角色** 中可多选 UTF-8 JSON，一次把多个人物的外观、版本和音色保存到当前工作区。导入表单提供示例 JSON。同 ID 默认整批不写入，勾选 **更新同 ID 角色** 才会更新已有档案。后续各集可复用档案和音色，制作时可在 **参考人物图** 中按角色 ID 添加参考图。
 
 《拾光守灯人》在 Windows 桌面端用三个已配置的 HappyHorse 模型完成首次制作，用时 4 分 45 秒。样片采用预写分镜和 `qwen-image-3.0-pro` 生成的 R2V 角色参考图。第二镜锁定首帧后只新增了 1 次视频生成请求，下载中断时沿用原任务 ID 恢复。成片分辨率为 720 × 1280。[成片与实录](#桌面端演示)
 

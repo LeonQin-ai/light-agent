@@ -1600,6 +1600,22 @@ panels.agents = `
     <details id="manju-cast" class="manju-settings" ontoggle="if(this.open)showManjuCast()">
       <summary>角色档案 <span id="manju-cast-count" class="muted"></span></summary>
       <p class="hint">同一工作区的各集共用角色 ID、外观和音色。分镜中的 speaker 可填写角色 ID。</p>
+      <details id="manju-cast-batch" class="manju-settings">
+        <summary>批量导入角色</summary>
+        <p class="hint">可多选 JSON 文件。支持角色列表、单个角色，或带 characters 和 voice_cast 的档案。</p>
+        <form id="manju-cast-import-form" onsubmit="event.preventDefault();importManjuCast(this)">
+          <div class="row">
+            <label for="manju-cast-import-files">角色档案 JSON</label>
+            <input id="manju-cast-import-files" name="files" type="file" accept=".json,application/json" multiple required onchange="$('manju-cast-import-status').textContent=''">
+            <button type="button" class="sec sm" onclick="downloadManjuCastExample()">下载 JSON 示例</button>
+          </div>
+          <div class="row">
+            <label><input id="manju-cast-import-overwrite" name="overwrite" type="checkbox"> 更新同 ID 角色</label>
+            <button id="manju-cast-import-submit" type="submit" class="sec">导入所选档案</button>
+            <span id="manju-cast-import-status" class="hint" role="status"></span>
+          </div>
+        </form>
+      </details>
       <ul id="manju-cast-list" class="manju-cast-list" aria-label="制作角色"></ul>
       <form id="manju-cast-form" oninput="this.dataset.dirty='1'" onsubmit="event.preventDefault();saveManjuCharacter(this)">
         <div class="manju-cast-fields">
@@ -2899,6 +2915,7 @@ function loadManjuPromo(){
 }
 
 const MANJU_CAST_VERSIONS = ['appearance_id','outfit_id','expression_id','voice_id','motion_id'];
+const MANJU_CAST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const MANJU_CAST_REQUESTS = new Map();
 const MANJU_CAST_WRITES = new Map();
 
@@ -2988,6 +3005,8 @@ async function showManjuCast(){
 
 function manjuCastWorkspaceChanged(){
   resetManjuCastForm($('manju-cast-form'));
+  $('manju-cast-import-form').reset();
+  $('manju-cast-import-status').textContent = '';
   renderManjuCast({characters:[],voice_cast:{}});
   $('manju-reference-name').value = '';
   $('manju-reference-files').value = '';
@@ -3002,7 +3021,9 @@ async function writeManjuCast(form, id, character, voice){
   if(MANJU_CAST_WRITES.has(workspace) || $('manju-submit').disabled) return;
   const status = $('manju-cast-status');
   const editing = form.elements.namedItem('id').readOnly;
+  const batchForm = $('manju-cast-import-form');
   form.inert = select.disabled = true;
+  batchForm.inert = true;
   status.textContent = '正在保存角色档案…';
   const request = (async () => {
     const cast = await readManjuCast(workspace);
@@ -3034,6 +3055,41 @@ async function writeManjuCast(form, id, character, voice){
   } finally {
     MANJU_CAST_WRITES.delete(workspace);
     form.inert = select.disabled = false;
+    batchForm.inert = false;
+  }
+}
+
+function manjuCastObject(value){
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validateManjuCastCharacter(character){
+  const validId = value => typeof value === 'string' && MANJU_CAST_ID.test(value);
+  if(!manjuCastObject(character) || !validId(character.id) ||
+     MANJU_CAST_VERSIONS.some(field => Object.hasOwn(character, field) && !validId(character[field])))
+    throw new Error('角色和版本 ID 需由 1–64 位字母、数字、下划线或连字符组成。');
+  if(['narrator','system'].includes(character.id))
+    throw new Error('此角色 ID 已保留给旁白或系统声，请选择其他 ID。');
+  if(!['protagonist','supporting','antagonist','npc','creature'].includes(character.role))
+    throw new Error('请填写有效的角色类型，例如 protagonist 或 supporting。');
+  const encoder = new TextEncoder();
+  for(const [field,limit] of [['name',160],['visual',1200]]){
+    const value = character[field];
+    if(typeof value !== 'string' || !value.trim() || value.includes('\0') || encoder.encode(value).length > limit)
+      throw new Error('请填写角色姓名和外观描述，长度上限分别为 160 和 1200 UTF-8 字节。');
+  }
+}
+
+function validateManjuCastVoice(voice){
+  if(!manjuCastObject(voice)) throw new Error('音色设置必须为对象。');
+  if(Object.hasOwn(voice, 'voice') && (typeof voice.voice !== 'string' ||
+     voice.voice.length > 64 || !/^[A-Za-z]+-[A-Za-z0-9-]+Neural$/.test(voice.voice)))
+    throw new Error('请填写有效的音色名称，例如 zh-CN-XiaoxiaoNeural。');
+  for(const [field,pattern,unit] of [['pitch',/^[+-]\d{1,2}Hz$/,'Hz'],['rate',/^[+-]\d{1,2}%$/,'%']]){
+    const setting = voice[field];
+    if(Object.hasOwn(voice, field) && (typeof setting !== 'string' || !pattern.test(setting) ||
+       Math.abs(Number(setting.slice(0,-unit.length))) > 50))
+      throw new Error('音高和语速应在 -50 到 +50 之间，并带 Hz 或 % 单位。');
   }
 }
 
@@ -3042,37 +3098,119 @@ function saveManjuCharacter(form){
   const value = field => fields.get(field).trim();
   const character = Object.fromEntries(['id','name','role','visual',...MANJU_CAST_VERSIONS]
     .map(field => [field, value(field)]).filter(([, text]) => text));
-  const idPattern = /^[A-Za-z0-9_-]{1,64}$/;
-  const status = $('manju-cast-status');
-  if(!idPattern.test(character.id || '') ||
-     MANJU_CAST_VERSIONS.some(field => character[field] && !idPattern.test(character[field]))){
-    status.textContent = '角色和版本 ID 需由 1–64 位字母、数字、下划线或连字符组成。';
-    return;
-  }
-  if(['narrator','system'].includes(character.id)){
-    status.textContent = '此角色 ID 已保留给旁白或系统声，请选择其他 ID。';
-    return;
-  }
-  const encoder = new TextEncoder();
-  if(!character.name || !character.visual ||
-     encoder.encode(character.name).length > 160 || encoder.encode(character.visual).length > 1200){
-    status.textContent = '请填写角色姓名和外观描述，长度上限分别为 160 和 1200 UTF-8 字节。';
-    return;
-  }
   const voice = {};
   const voiceName = value('voice');
-  if(voiceName){
-    if(!/^[A-Za-z]+-[A-Za-z0-9-]+Neural$/.test(voiceName)){
-      status.textContent = '请填写有效的音色名称，例如 zh-CN-XiaoxiaoNeural。';
-      return;
-    }
-    voice.voice = voiceName;
-  }
+  if(voiceName) voice.voice = voiceName;
   for(const [field,unit] of [['pitch','Hz'],['rate','%']]){
     const setting = value(field);
     if(setting !== '') voice[field] = (Number(setting) < 0 ? '' : '+') + Number(setting) + unit;
   }
+  try{
+    validateManjuCastCharacter(character);
+    validateManjuCastVoice(voice);
+  } catch(error){
+    $('manju-cast-status').textContent = error.message;
+    return;
+  }
   void writeManjuCast(form, character.id, character, voice);
+}
+
+function downloadManjuCastExample(){
+  const example = {
+    characters:[
+      {id:'a_yan',name:'阿砚',role:'protagonist',visual:'短发，深蓝外套，肩上系着铜铃',appearance_id:'yan_01'},
+      {id:'jianing',name:'嘉宁',role:'supporting',visual:'棕色短发，浅灰风衣，手拿笔记本'}
+    ],
+    voice_cast:{a_yan:{voice:'zh-CN-YunxiNeural',rate:'-5%'},jianing:{voice:'zh-CN-XiaoxiaoNeural'}}
+  };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(example, null, 2) + '\n'], {type:'application/json'}));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'character-roster.json';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function readManjuCastFiles(files){
+  if(files.length > 24) throw new Error('每个工作区最多保存 24 个角色。');
+  const characters = new Map(), voices = new Map();
+  const decoder = new TextDecoder('utf-8', {fatal:true});
+  for(const file of files){
+    let data;
+    try{ data = JSON.parse(decoder.decode(await file.arrayBuffer())); }
+    catch{ throw new Error(`「${file.name}」不是有效的 UTF-8 JSON 文件。`); }
+    const roster = manjuCastObject(data) && Object.hasOwn(data, 'characters');
+    const profiles = roster ? data.characters : Array.isArray(data) ? data :
+      manjuCastObject(data) && Object.hasOwn(data, 'id') ? [data] : null;
+    if(!Array.isArray(profiles) || !profiles.length)
+      throw new Error(`「${file.name}」需要至少一个角色档案。`);
+    const fileIds = new Set();
+    for(const [index,character] of profiles.entries()){
+      try{ validateManjuCastCharacter(character); }
+      catch(error){ throw new Error(`「${file.name}」第 ${index + 1} 个角色：${error.message}`); }
+      if(characters.has(character.id))
+        throw new Error(`所选文件中有重复角色 ID「${character.id}」（${file.name}）。`);
+      if(characters.size === 24) throw new Error('每个工作区最多保存 24 个角色。');
+      characters.set(character.id, character);
+      fileIds.add(character.id);
+    }
+    const voiceCast = roster && Object.hasOwn(data,'voice_cast') ? data.voice_cast : {};
+    if(!manjuCastObject(voiceCast)) throw new Error(`「${file.name}」的 voice_cast 必须为对象。`);
+    for(const [id,voice] of Object.entries(voiceCast)){
+      if(!fileIds.has(id)) throw new Error(`「${file.name}」中音色设置对应的角色 ID「${id}」不存在。`);
+      try{ validateManjuCastVoice(voice); }
+      catch(error){ throw new Error(`「${file.name}」角色「${id}」：${error.message}`); }
+      voices.set(id, voice);
+    }
+  }
+  return {characters:[...characters.values()],voice_cast:Object.fromEntries(voices)};
+}
+
+async function importManjuCast(form){
+  const select = $('manju-workspace'), editForm = $('manju-cast-form');
+  const status = $('manju-cast-import-status'), workspace = select.value;
+  if(MANJU_CAST_WRITES.has(workspace) || $('manju-submit').disabled) return;
+  if(editForm.dataset.dirty){
+    status.textContent = '请先保存正在编辑的角色或清空角色表单。';
+    return;
+  }
+  const files = [...form.elements.namedItem('files').files];
+  if(!files.length) return;
+  const overwrite = form.elements.namedItem('overwrite').checked;
+  form.inert = editForm.inert = select.disabled = true;
+  status.textContent = '正在读取所选角色档案…';
+  const request = (async () => {
+    const body = {...await readManjuCastFiles(files),overwrite};
+    if(workspace) body.workspace = workspace;
+    const pendingRead = MANJU_CAST_REQUESTS.get(workspace);
+    if(pendingRead) await pendingRead.catch(() => {});
+    status.textContent = '正在导入角色档案…';
+    const result = await call('POST', '/v1/manju/characters/import', body);
+    if(result.status === 409 && Array.isArray(result.obj?.conflicts) && result.obj.conflicts.length){
+      const ids = result.obj.conflicts.map(id => `「${id}」`).join('、');
+      throw new Error(`角色 ID ${ids} 已存在。勾选「更新同 ID 角色」后可重试。`);
+    }
+    if(result.status !== 200) throw manjuCastError(result, '角色档案导入失败，请重试。');
+    return result.obj;
+  })();
+  MANJU_CAST_WRITES.set(workspace, request);
+  try{
+    const cast = await request;
+    if(form.isConnected && select.value === workspace){
+      resetManjuCastForm(editForm);
+      renderManjuCast(cast);
+      form.reset();
+      status.textContent = [
+        cast.imported ? `已导入 ${cast.imported} 个新角色` : '',
+        cast.updated ? `已更新 ${cast.updated} 个角色` : ''
+      ].filter(Boolean).join('，') + '。';
+    }
+  } catch(error){
+    if(form.isConnected && select.value === workspace) status.textContent = error.message;
+  } finally{
+    MANJU_CAST_WRITES.delete(workspace);
+    form.inert = editForm.inert = select.disabled = false;
+  }
 }
 
 const MANJU_REFERENCE_DRAFTS = new Map();

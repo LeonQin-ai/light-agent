@@ -3,6 +3,7 @@
 import argparse
 import base64
 import collections
+import concurrent.futures
 import http.server
 import json
 import pathlib
@@ -342,6 +343,62 @@ def check_episode_batch(base, provider, work):
     print("PASS: a five-episode import returns one JSON receipt and sends the same uploaded role to each episode")
 
 
+def check_character_batch_import(base, work):
+    workspace = work / "character-batch-workspace"
+    workspace.mkdir()
+    assert request(base, "/v1/workspaces", {"path": str(workspace)})[0] == 200
+    url = "/v1/manju/characters"
+    workspace_query = url + "?" + urllib.parse.urlencode({"workspace": str(workspace)})
+
+    def profile(identifier, name=None):
+        return {"id": identifier, "name": name or identifier, "role": "supporting",
+                "visual": "深蓝围巾", "outfit_id": "blue-scarf"}
+
+    def batch(profiles, **fields):
+        return request(base, url + "/import", {"workspace": str(workspace), "characters": profiles, **fields})
+
+    hero = profile("hero", "阿铃")
+    voice = {"voice": "zh-CN-YunxiNeural", "rate": "-5%"}
+    roster = {"characters": [hero], "voice_cast": {"hero": voice}}
+    assert request(base, url, {"workspace": str(workspace), **roster})[0] == 200
+    mother, friend = profile("mother", "阿娘"), profile("friend", "小孟")
+    status, added = batch([mother, friend], voice_cast={"mother": {"pitch": "-5Hz"}})
+    assert status == 200 and (added["imported"], added["updated"]) == (2, 0), added
+    assert added["characters"] == [hero, mother, friend]
+    assert added["voice_cast"] == {"hero": voice, "mother": {"pitch": "-5Hz"}}
+
+    baseline = request(base, workspace_query)[1]
+    assert baseline["characters"] == added["characters"] and baseline["voice_cast"] == added["voice_cast"]
+    assert "imported" not in baseline and "updated" not in baseline
+    stranger, replacement = profile("stranger", "旅人"), {**hero, "visual": "灰蓝围巾"}
+    status, conflict = batch([stranger, replacement])
+    assert status == 409 and conflict["conflicts"] == ["hero"], conflict
+    assert request(base, workspace_query)[1] == baseline
+    assert batch([stranger, stranger], overwrite=True)[0] == 400
+    assert batch([stranger], voice_cast={"hero": voice})[0] == 400
+    assert batch([stranger], overwrite="true")[0] == 400
+    assert batch([])[0] == 400
+    assert request(base, workspace_query)[1] == baseline
+
+    status, merged = batch([stranger, replacement], voice_cast={"stranger": {"rate": "+3%"}}, overwrite=True)
+    assert status == 200 and (merged["imported"], merged["updated"]) == (1, 1), merged
+    assert merged["characters"] == [replacement, mother, friend, stranger]
+    assert merged["voice_cast"] == {**baseline["voice_cast"], "stranger": {"rate": "+3%"}}
+    assert request(base, url)[1]["characters"] == []
+
+    from_left = [profile(f"left-{index}") for index in range(10)]
+    from_right = [profile(f"right-{index}") for index in range(10)]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        concurrent_status = [status for status, _ in pool.map(batch, (from_left, from_right))]
+    assert concurrent_status == [200, 200]
+    full = request(base, workspace_query)[1]
+    assert {entry["id"] for entry in full["characters"]} == {
+        entry["id"] for entry in merged["characters"] + from_left + from_right}
+    assert batch([profile("extra")])[0] == 422
+    assert request(base, workspace_query)[1] == full
+    print("PASS: atomic character imports add several profiles, preserve existing voices, and respect workspace capacity")
+
+
 def check_dialogue_import(base, provider, work):
     project = work / "dialogue-workspace"
     episode = project / "manju" / "ep01"
@@ -559,6 +616,7 @@ def main():
             check_mixed(base, provider, pathlib.Path(tmp))
             check_character_references(base, provider, pathlib.Path(tmp))
             check_episode_batch(base, provider, pathlib.Path(tmp))
+            check_character_batch_import(base, pathlib.Path(tmp))
             check_dialogue_import(base, provider, pathlib.Path(tmp))
             check_director_pipeline(base, provider, pathlib.Path(tmp))
         finally:
