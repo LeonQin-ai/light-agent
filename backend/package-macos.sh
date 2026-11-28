@@ -27,8 +27,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>LightAgent</string>
 <key>CFBundleIconFile</key><string>LightAgent.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>3.5.0</string>
-<key>CFBundleVersion</key><string>1005</string>
+<key>CFBundleShortVersionString</key><string>3.6.0</string>
+<key>CFBundleVersion</key><string>1006</string>
 <key>LSMinimumSystemVersion</key><string>12.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
